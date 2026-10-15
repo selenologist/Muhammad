@@ -235,6 +235,16 @@ void draw(const Gui &g, const State &s, float w, float h)
     for (int i = 0; i < kNumBtns; i++)
         button(g, kBtns[i], s.led[i]);
 
+    // build stamp, bottom-right of the panel — the only way to prove which
+    // binary a host actually mapped when its stderr is unreachable
+    if (s.build && s.build[0])
+    {
+        nvgFontSize(g.vg, 7.0f);
+        const float adv = nvgTextBounds(g.vg, 0, 0, s.build, nullptr, nullptr);
+        nvgFillColor(g.vg, nvgRGBA(92, 92, 100, 230));
+        nvgText(g.vg, kPanelW - adv - 6, kPanelH - 8, s.build, nullptr);
+    }
+
     // silkscreen texts (labels, subheads) — headers drawn with the boxes
     for (const auto &t : kTexts)
     {

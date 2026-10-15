@@ -75,6 +75,9 @@ void fillState(Ctx &c, p5ui::State &st)
         if (b.ledmode == 1) st.led[i] = c.plugin->guiValue(b.pid) != 0.0;
         else if (b.ledmode == 2) st.led[i] = program >= 0 && program == bank * 8 + b.value;
     }
+#ifdef P5_BUILD_INFO
+    st.build = P5_BUILD_INFO;
+#endif
     std::memcpy(st.name, c.plugin->engine.patch().raw + p5::P5_NAME, 20);
     st.name[20] = 0;
     for (char *q = st.name + 19; q >= st.name && *q == ' '; *q-- = 0) {}

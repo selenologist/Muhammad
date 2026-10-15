@@ -77,7 +77,7 @@ const clap_plugin_descriptor_t kDescriptor = {
     "Melodee port",
     "https://github.com/keremimo/melodee",
     nullptr, nullptr,
-    "0.6-gui3",   // bump per shipped build: the version Bitwig shows proves which binary is loaded
+    "0.7-gui4",   // bump per shipped build: the version Bitwig shows proves which binary is loaded
     "Prophet-5 (Rev-4 wire) engine ported from the Melodee firmware",
     kFeatures
 };
@@ -98,9 +98,16 @@ static void applyParam(Plugin *s, clap_id id, double value)
     else if (id == PID_TRIM) s->trim = (float)value;
     else if (id == PID_OS) {
         s->engine.setOverSample(value > 0.5 ? 2 : 1);
-        if (s->host && s->host->get_extension) {           // latency changed with the decimator
-            auto *l = (const clap_host_latency_t *)s->host->get_extension(s->host, CLAP_EXT_LATENCY);
-            if (l && l->changed) l->changed(s->host);
+        // Latency changed with the decimator — but hosts dislike a ping while
+        // activated (old Bitwig logs "plugin misbehaving"). Defer to deactivate;
+        // 3 samples of stale latency mid-session is inaudible, the warning is not.
+        if (!s->active) {
+            if (s->host && s->host->get_extension) {
+                auto *l = (const clap_host_latency_t *)s->host->get_extension(s->host, CLAP_EXT_LATENCY);
+                if (l && l->changed) l->changed(s->host);
+            }
+        } else {
+            s->latencyDirty = true;
         }
     }
     else if (id == PID_TUNE)
@@ -252,7 +259,16 @@ static bool plugin_activate(const clap_plugin_t *p, double sample_rate, uint32_t
     return true;
 }
 
-static void plugin_deactivate(const clap_plugin_t *p) { fromPlugin(p)->active = false; }
+static void plugin_deactivate(const clap_plugin_t *p)
+{
+    auto *s = fromPlugin(p);
+    s->active = false;
+    if (s->latencyDirty && s->host && s->host->get_extension) {
+        auto *l = (const clap_host_latency_t *)s->host->get_extension(s->host, CLAP_EXT_LATENCY);
+        if (l && l->changed) l->changed(s->host);
+    }
+    s->latencyDirty = false;
+}
 
 static bool plugin_start(const clap_plugin_t *) { return true; }
 static void plugin_stop(const clap_plugin_t *) {}

@@ -17,6 +17,15 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${PP_CXX_FLAGS}")
 
 find_library(MATH_LIBRARY m)
 
+# Build stamp: version + git hash + dirty marker + time, shown in the panel
+# corner and the descriptor, so a running binary identifies itself.
+find_program(GIT_EXE git)
+execute_process(COMMAND ${GIT_EXE} rev-parse --short HEAD OUTPUT_VARIABLE P5_GIT OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+execute_process(COMMAND ${GIT_EXE} status --porcelain OUTPUT_VARIABLE P5_DIRTY OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+string(TIMESTAMP P5_BUILDDATE "%Y-%m-%d %H:%M")
+set(P5_VERSION "0.7-gui4")
+set(P5_BUILD_INFO "${P5_VERSION} ${P5_GIT}${P5_DIRTY:+-d} ${P5_BUILDDATE}")
+
 set(ENGINE_SOURCES
     src/p5_engine.cpp
     src/p5_kernel_scalar.cpp
@@ -64,7 +73,7 @@ add_library(prophet_clap MODULE
 )
 target_include_directories(prophet_clap PRIVATE src vendor/clap external ${X11_INCLUDE_DIR})
 if(GUI_DEFINES)
-    target_compile_definitions(prophet_clap PRIVATE ${GUI_DEFINES})
+    target_compile_definitions(prophet_clap PRIVATE ${GUI_DEFINES} P5_BUILD_INFO="${P5_BUILD_INFO}")
     target_link_libraries(prophet_clap PRIVATE p5_gui ${X11_LIBRARIES} ${PROPHET_GL_LIBS})
 endif()
 set_target_properties(prophet_clap PROPERTIES

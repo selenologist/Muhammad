@@ -18,6 +18,7 @@ struct State
     bool   led[kNumBtns] = {};
     char   name[21] = "INIT PROPHET";
     int bank = 1, program = 1;     // shown on the programmer display
+    const char *build = nullptr;   // version+hash, drawn dim in the panel corner
     char bp[24] = "";              // prebuilt bank-program line ("1-2", "1-2 (3)", "(3)")
 };
 

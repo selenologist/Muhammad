@@ -34,6 +34,7 @@ struct Plugin {
     int program = -1;                   // factory program loaded (-1: edited/INIT)
     int bank = 0;                       // panel bank cursor
     void *gui = nullptr;                // owned by gui_x11.cpp when the panel is open
+    bool latencyDirty = false;          // OS changed latency while active: report on deactivate
     // GUI-initiated param changes, latest-value-per-id (coalesced): a fast
     // drag must never queue a catch-up replay behind the host.
     static constexpr int PEND_IDS = 96;
