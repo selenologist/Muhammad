@@ -78,7 +78,7 @@ const clap_plugin_descriptor_t kDescriptor = {
     "selenologist",
     "https://github.com/keremimo/melodee",
     nullptr, nullptr,
-    "1.3-picker",   // bump per shipped build: the version Bitwig shows proves which binary is loaded
+    "1.4-echo",   // bump per shipped build: the version Bitwig shows proves which binary is loaded
     "P5 clone (PROPHET engine ported from the Melodee firmware)",
     kFeatures
 };
@@ -129,7 +129,16 @@ static void applyParam(Plugin *s, clap_id id, double value)
     else if (id == PID_TUNE)
         s->engine.setTuneCents((int)(value < 0 ? value - 0.5 : value + 0.5));
     else if (id == PID_PROGRAM)
+    {
+        // Host echo guard: while the patch is not a factory pick (INIT, PBEUH,
+        // user file, assigned slot) we report PROGRAM=0 as a placeholder; if the
+        // host pushes that same 0 back (flush / restore / automation resend),
+        // loading factory 0 here would silently replace the patch the user just
+        // picked. Only a real change drives loadProgram.
+        if (s->program < 0 && (int)(value + 0.5) == 0) return;   // placeholder echo, always
+        if (s->program >= 0 && (int)(value + 0.5) == s->program) return;
         s->loadProgram((int)(value + 0.5));
+    }
     else if (id == PID_BANK) {
         int v = (int)(value + 0.5);
         if (v < 0) v = 0;
@@ -190,6 +199,7 @@ void Plugin::guiSync(clap_id id)
 
 void Plugin::loadProgram(int k)
 {
+    loadTag_ = "fac";
     if (k < 0 || k >= (int)PW_FACTORY_N) return;
     engine.loadFactory((uint32_t)k);
     markSource(0, k, std::string());
@@ -213,6 +223,7 @@ void Plugin::markSource(int kind, int idx, const std::string &file)
 
 bool Plugin::loadUserPatch(const std::string &name)
 {
+    loadTag_ = "user";
     uint8_t raw[133];
     if (!p5store::loadPatch(name, raw)) return false;
     p5::Patch p;
@@ -236,6 +247,7 @@ void Plugin::syncAllParams()
 
 void Plugin::programSlot(int slot)
 {
+    loadTag_ = "slot";
     const p5store::Source s = p5store::slot(slot);
     if (s.kind == p5store::SourceKind::File)
     {
@@ -246,6 +258,8 @@ void Plugin::programSlot(int slot)
     if (idx >= 0 && idx < (int)PW_FACTORY_N) loadProgram(idx);
     else
     {   // negative source codes: -1 bare INIT, -2 default patch; anything else -> default
+        if (idx == -2 && loadUserPatch("Peace Be Upon Him"))
+            { lastProgClick_ = slot % 8; return; }     // recorded default wins over the seed
         p5::Patch i; p5::patchInit(i);
         if (idx != -1) p5::patchDefaultName(i);
         engine.setPatch(i); program = -1; markSource(0, idx, {}); syncAllParams();
@@ -261,7 +275,8 @@ void Plugin::assignAndLoad(int slot, const p5store::Source &s)
 }
 
 void Plugin::recallBasicInit()
-{   // the real P5's hold-RECORD + PRESET: strip back to the bare INIT patch
+{   // SHIFT+PRESET: strip back to the bare INIT patch
+    loadTag_ = "init";
     p5::Patch i; p5::patchInit(i);
     engine.setPatch(i); program = -1; markSource(0, -1, {});
     floatValid_ = false;
@@ -270,6 +285,7 @@ void Plugin::recallBasicInit()
 
 void Plugin::savePatchNamed(const std::string &name)
 {
+    loadTag_ = "saved";
     const std::string n = p5store::sanitize(name);
     if (n.empty()) return;
     p5::Patch p = engine.patch();
@@ -312,9 +328,9 @@ void Plugin::assignSlotFromText(int slot, const std::string &textRaw)
     p5store::saveMap();
 }
 
-void Plugin::presetRecall()   // PRESET: un-float; press again (nothing touched
-                              // since) and the floating edits come BACK
-{
+void Plugin::presetRecall()
+{   loadTag_ = "recall";
+    // PRESET: un-float; press again (nothing touched since) and the floating edits come BACK
     if (!hasSrc_) return;
     const uint8_t *cur = engine.patch().raw;
     if (!panelDirty() && floatValid_ && std::memcmp(cur, floatSnap_, 133) != 0)
@@ -702,6 +718,7 @@ static bool preset_from_location(const clap_plugin_t *p, uint32_t location_kind,
     if (location_kind != CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN || !load_key) return false;
     int k = atoi(load_key);
     if (k < 0 || k > (int)PW_FACTORY_N) return false;
+    if (k == 0 && s->loadUserPatch("Peace Be Upon Him")) return true;
     if (k == 0) {
         p5::Patch i; p5::patchInit(i); p5::patchDefaultName(i);
         s->engine.setPatch(i); s->program = -1; s->markSource(0, 0, std::string());
@@ -717,6 +734,15 @@ const clap_plugin_preset_load_t kPresetLoad = { preset_from_location };
 // name) so the first thing you see when loading is "Peace Be Upon Him".
 static void seedDefaultPatch(Plugin *s)
 {
+    uint8_t raw[133];
+    if (p5store::loadPatch("Peace Be Upon Him", raw))
+    {   // the user recorded a real default: that file IS the default patch now
+        p5::Patch p; std::memset(&p, 0, sizeof p); std::memcpy(p.raw, raw, 133);
+        p.size = 133; p.model = 0x32; p.command = 3;
+        s->engine.setPatch(p);
+        s->markSource(1, -1, "Peace Be Upon Him");
+        return;
+    }
     p5::Patch i; p5::patchInit(i); p5::patchDefaultName(i);
     s->engine.setPatch(i);
     s->markSource(0, 0, std::string());
@@ -731,5 +757,6 @@ const clap_plugin_t *prophet_create(const clap_host_t *host)
     data->self->plugin_data = data;
     return data->self;
 }
+
 
 } // namespace pw

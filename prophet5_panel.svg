@@ -7,7 +7,7 @@
     .lbl   { font-size: 8.4px; letter-spacing: 0.8px; }
     .sub   { font-size: 8.0px; letter-spacing: 1.4px; }
     .num   { font-size: 9.2px; letter-spacing: 0.5px; }
-    .scale { font-size: 5.6px; fill: #e8e8e8; letter-spacing: 0; stroke: none; }
+    .scale { font-size: 6.6px; fill: #e8e8e8; letter-spacing: 0; stroke: none; }
     .box   { fill: none; stroke: #e6e6e6; stroke-width: 1.2; }
     .rule  { stroke: #e6e6e6; stroke-width: 1; }
     .hdrbg { fill: #101010; stroke: none; }

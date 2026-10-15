@@ -32,7 +32,7 @@ inline constexpr uint32_t kColDispText = 0xff5a3cu;
 
 // text styles: size px and letter-spacing at layout scale 1
 enum TxtStyle { T_HDR = 0, T_LBL, T_SUB, T_NUM, T_SCALE };
-inline constexpr float kTxtSize[5] = {12.0f, 8.4f, 8.0f, 9.2f, 5.6f};
+inline constexpr float kTxtSize[5] = {12.0f, 8.4f, 8.0f, 9.2f, 6.6f};
 inline constexpr float kTxtTrack[5] = {1.6f, 0.8f, 1.4f, 0.5f, 0.0f};
 enum BtnColor { BC_DARK = 0, BC_GRAY, BC_ORANGE };
 enum Glyph { G_NONE = 0, G_SAW, G_TRI, G_SQ };

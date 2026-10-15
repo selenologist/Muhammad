@@ -130,7 +130,7 @@ Gui create(NVGcontext *vg)
 {
     Gui g;
     g.vg = vg;
-    g.fontId = nvgCreateFontMem(vg, "panel", (unsigned char *)kFontNarrowBold, (int)kFontNarrowBoldLen, 0);
+    g.fontId = nvgCreateFontMem(vg, "panel", (unsigned char *)kFontPanel, (int)kFontPanelLen, 0);
     g.screenId = nvgCreateFontMem(vg, "screen", (unsigned char *)kFontScreen, (int)kFontScreenLen, 0);
     return g;
 }

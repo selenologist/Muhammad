@@ -54,7 +54,6 @@ struct Ctx
     int modal = 0;                    // 1 save, 2 assign, 3 overwrite-confirm, 4 picker
     int pickerTab = 0, pickerPage = 0;
     std::vector<std::string> userRows;   // cached dir listing for the picker
-    int heldRecord = -1;                 // RECORD held while another button actuates
     char modalBuf[32] = {};
     char modalHit[36] = {};             // existing file that the typed name folds to
     int modalLen = 0;
@@ -91,19 +90,24 @@ void fillState(Ctx &c, p5ui::State &st)
     for (int i = 0; i < p5ui::kNumBtns; i++)
     {
         const auto &b = p5ui::kBtns[i];
-        if (b.ledmode == 1) st.led[i] = c.plugin->guiValue(b.pid) != 0.0;
-        else if (b.ledmode == 2) st.led[i] = program >= 0 && program == bank * 8 + b.value;
-        else if (b.ledmode == 3) st.led[i] = c.plugin->panelDirty();     // PRESET: floating edits
-        else if (b.ledmode == 4) st.led[i] = c.modal == 1 || c.modal == 3;  // RECORD: armed
-        else if (b.ledmode == 5) st.led[i] = c.modal == 2 || c.modal == 4;  // PRESET: picker/assigning
+        if (b.ledmode == 1) st.led[i] = c.plugin->guiValue(b.pid) != 0.0 ? 2 : 0;
+        else if (b.ledmode == 2) st.led[i] = (program >= 0 && program == bank * 8 + b.value) ? 2 : 0;
+        else if (b.ledmode == 3) st.led[i] = c.plugin->panelDirty() ? 2 : 0;   // PRESET: floating
+        else if (b.ledmode == 4) st.led[i] = (c.modal == 1 || c.modal == 3) ? 2 : 0;  // RECORD armed
+        else if (b.ledmode == 5) st.led[i] = (c.modal == 2 || c.modal == 4) ? 2 : 0;  // PRESET picker
+        else if (b.ledmode == 6)                                          // KEYBD: OFF/HALF/FULL
+        {
+            const double v = c.plugin->guiValue(b.pid);
+            st.led[i] = v > 1.5 ? 2 : v > 0.5 ? 1 : 0;                     // red / amber / off
+        }
     }
 #ifdef P5_BUILD_INFO
     st.build = P5_BUILD_INFO;
 #endif
     {   // live diagnostics in-window: Bitwig's plugin host swallows our stderr
         static char diagBuf[64];
-        std::snprintf(diagBuf, sizeof diagBuf, "svc %s rr %d %s win %ux%u",
-                      c.hostGui ? "y" : "n", c.resizeRequests,
+        std::snprintf(diagBuf, sizeof diagBuf, "svc %s rr %d %s src %s win %ux%u",
+                      c.hostGui ? "y" : "n", c.resizeRequests, c.plugin->loadTag_,
                       c.lastRrOk < 0 ? "-" : c.lastRrOk ? "ok" : "no", c.w, c.h);
         st.diag = diagBuf;
     }
@@ -205,7 +209,7 @@ void render(Ctx &c)
     glXSwapBuffers(c.dpy, c.win);
 }
 
-void actuate(Ctx &c, int btnIdx)
+void actuate(Ctx &c, int btnIdx, unsigned mods = 0)
 {
     const auto &b = p5ui::kBtns[btnIdx];
     if (b.pid == -2)                                  // RECORD: save-patch prompt
@@ -234,8 +238,8 @@ void actuate(Ctx &c, int btnIdx)
     }
     if (b.pid == -4)                                  // PRESET: recall / toggle-back / basic
     {
-        if (c.heldRecord >= 0) c.plugin->recallBasicInit();   // hold RECORD = P5 "basic preset"
-        else c.plugin->presetRecall();                          // 2nd press = re-float
+        if (mods & ShiftMask) c.plugin->recallBasicInit();  // SHIFT+PRESET = bare INIT
+        else c.plugin->presetRecall();                      // press again = re-float
         return;
     }
     if (b.pid < 0) return;                            // decorative
@@ -392,18 +396,15 @@ void pump(Ctx &c)
                 {
                     c.pressBtn = p5ui::btnAt(p5ui::State{}, (float)ev.xbutton.x, (float)ev.xbutton.y,
                                              (float)c.w, (float)c.h);
-                    if (c.pressBtn >= 0 && p5ui::kBtns[c.pressBtn].pid == -2)
-                        c.heldRecord = c.pressBtn;          // RECORD held -> enables basic-preset
                 }
                 break;
             case ButtonRelease:
                 if (ev.xbutton.button != Button1) break;
-                if (ev.xbutton.button == Button1) c.heldRecord = -1;
                 if (c.pointerGrabbed) { XUngrabPointer(c.dpy, CurrentTime); c.pointerGrabbed = false; }
                 if (c.pressBtn >= 0 &&
                     p5ui::btnAt(p5ui::State{}, (float)ev.xbutton.x, (float)ev.xbutton.y,
                                 (float)c.w, (float)c.h) == c.pressBtn)
-                { actuate(c, c.pressBtn); dirty = true; }   // LEDs must flip NOW, not on the next tick
+                { actuate(c, c.pressBtn, ev.xkey.state); dirty = true; }  // LEDs flip NOW
                 if (c.dragKnob >= 0)                        // gesture ends: tell the host the FINAL value
                 { c.plugin->guiSync((clap_id)p5ui::kKnobs[c.dragKnob].pid); dirty = true; }
                 c.dragKnob = -1; c.pressBtn = -1;

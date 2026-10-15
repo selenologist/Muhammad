@@ -40,6 +40,7 @@ struct Plugin {
     uint8_t floatSnap_[133] = {};
     std::string srcFile_;
     int lastProgClick_ = 0;
+    const char *loadTag_ = "seed";           // which path last replaced the patch (diag)
     int bank = 0;                       // panel bank cursor
     void *gui = nullptr;                // owned by gui_x11.cpp when the panel is open
     bool latencyDirty = false;          // OS changed latency while active: report on deactivate

@@ -222,9 +222,18 @@ panel globals on the original, EDIT overlays ride params 64..71.
   loads it. No typing required.
 - **PRESET (far left)** recalls the loaded patch; press it again — having
   touched nothing else — and your floating edits come back.
-- **Hold RECORD + press PRESET** recalls the bare INIT patch (the original
-  P5's "basic preset" gesture). INIT is also a discovery entry (`load_key
-  "init"`) and assignable by name via the picker or `INIT` text.
+- **KEYBD** (filter key tracking) is a 3-state button: LED off = OFF,
+  amber = HALF (x sqrt2/oct), red = FULL (x2/oct) — matching the engine's
+  quantisation exactly.
+- **Bare INIT**: picker row 2 ("INIT (bare patch)"), or a Bitwig *browser*
+  entry named INIT (preset-discovery lets the DAW's own browser list our
+  factory bank; the panel picker above is the in-plugin equivalent), or
+  assigning the text `INIT` to a slot.
+- **"Peace Be Upon Him" is a slot, not a fixed sound.** By default it is the
+  bare INIT content. RECORD it under exactly that name and the file
+  `Documents/Muhammad Synth/Peace Be Upon Him.muhammad` overrides the seed
+  everywhere: fresh instances, the picker row, preset key 0. Re-record or
+  delete the file to retarget it.
 - **KEYBD** (filter key tracking) is a 3-state button: LED off = OFF,
   amber = HALF (x sqrt2/oct), red = FULL (x2/oct) — matching the engine's
   quantisation exactly.

@@ -62,6 +62,27 @@ int main(int argc, char **argv)
         bool okName = okSave && fresh.size() > 8 + 65 + 17 &&
                       !std::memcmp(fresh.data() + 8 + 65, "Peace Be Upon Him", 17);
         check("fresh instance shows default patch", okName);
+        {   // REGRESSION: host echoes the placeholder PROGRAM=0 back after the
+            // fresh PBEUH seed (flush/restore resend). Must NOT hijack the patch.
+            const clap_plugin_params_t *prm = (const clap_plugin_params_t *)plugin->get_extension(plugin, CLAP_EXT_PARAMS);
+            const clap_plugin_state_t *stt = (const clap_plugin_state_t *)plugin->get_extension(plugin, CLAP_EXT_STATE);
+            double reported = -7; prm->get_value(plugin, 83, &reported);
+            clap_event_param_value echo{};
+            echo.header.type = CLAP_EVENT_PARAM_VALUE; echo.header.time = 0;
+            echo.param_id = 83; echo.value = reported;
+            EventList el{ { &echo.header } };
+            clap_input_events_t in{ &el, EL_size, EL_get };
+            prm->flush(plugin, &in, nullptr);
+            prm->flush(plugin, &in, nullptr);              // twice: guard must be stateless
+            std::vector<char> after;
+            struct O2 { static int64_t w2(const clap_ostream_t *o, const void *d, uint64_t n) {
+                auto *v = (std::vector<char> *)o->ctx; const char *p2 = (const char *)d;
+                v->insert(v->end(), p2, p2 + n); return (int64_t)n; } };
+            clap_ostream_t os2{ &after, O2::w2 };
+            bool ok2 = stt->save(plugin, &os2) && after.size() > 8 + 65 + 17 &&
+                       !std::memcmp(after.data() + 8 + 65, "Peace Be Upon Him", 17);
+            check("host PROGRAM=0 echo keeps default patch", ok2);
+        }
     }
     check("create_plugin + init", plugin && plugin->init(plugin));
     if (!plugin) { printf("clap smoke: FAILED (no plugin)\n"); return 1; }
