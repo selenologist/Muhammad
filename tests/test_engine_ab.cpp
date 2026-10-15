@@ -52,16 +52,17 @@ static void writeWav(const char *path, const std::vector<int32_t> &pcm)
     FILE *f = fopen(path, "wb");
     if (!f) return;
     uint32_t ns = (uint32_t)pcm.size();
-    uint32_t bytes = ns * 2 * 4;
+    uint32_t dataBytes = ns * 2 * 4;
+    uint32_t riffBytes = 36 + dataBytes;          // RIFF chunk: file minus its own 8-byte header
+    uint32_t fmtBytes = 16;                        // canonical PCM 'fmt ' subchunk size
     uint32_t rate = 44100;
-    uint16_t ch = 2, bits = 32, fmt = 3;
+    uint16_t ch = 2, bits = 32, fmt = 3;           // 3 = IEEE float
     uint32_t byteRate = rate * ch * 4;
     uint16_t block = ch * 4;
-    uint32_t two = 2;
-    fwrite("RIFF", 1, 4, f); fwrite(&bytes, 4, 1, f); fwrite("WAVE", 1, 4, f);
-    fwrite("fmt ", 1, 4, f); fwrite(&two, 4, 1, f); fwrite(&fmt, 2, 1, f); fwrite(&ch, 2, 1, f);
+    fwrite("RIFF", 1, 4, f); fwrite(&riffBytes, 4, 1, f); fwrite("WAVE", 1, 4, f);
+    fwrite("fmt ", 1, 4, f); fwrite(&fmtBytes, 4, 1, f); fwrite(&fmt, 2, 1, f); fwrite(&ch, 2, 1, f);
     fwrite(&rate, 4, 1, f); fwrite(&byteRate, 4, 1, f); fwrite(&block, 2, 1, f); fwrite(&bits, 2, 1, f);
-    fwrite("data", 1, 4, f); fwrite(&bytes, 4, 1, f);
+    fwrite("data", 1, 4, f); fwrite(&dataBytes, 4, 1, f);
     for (size_t i = 0; i < pcm.size(); i++) {
         float v = (float)pcm[i] * (1.0f / 32768.0f) * 0.8f;
         fwrite(&v, 4, 1, f);
