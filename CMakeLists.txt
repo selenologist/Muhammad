@@ -24,7 +24,11 @@ execute_process(COMMAND ${GIT_EXE} rev-parse --short HEAD OUTPUT_VARIABLE P5_GIT
 execute_process(COMMAND ${GIT_EXE} status --porcelain OUTPUT_VARIABLE P5_DIRTY OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
 string(TIMESTAMP P5_BUILDDATE "%Y-%m-%d %H:%M")
 set(P5_VERSION "0.7-gui4")
-set(P5_BUILD_INFO "${P5_VERSION} ${P5_GIT}${P5_DIRTY:+-d} ${P5_BUILDDATE}")
+set(P5_DIRTY_MARK "")
+if(P5_DIRTY)
+    set(P5_DIRTY_MARK "-d")
+endif()
+set(P5_BUILD_INFO "${P5_VERSION} ${P5_GIT}${P5_DIRTY_MARK} ${P5_BUILDDATE}")
 
 set(ENGINE_SOURCES
     src/p5_engine.cpp
@@ -59,7 +63,7 @@ if(PROPHET_GUI)
     add_executable(render_golden tests/render_golden.cpp ${ENGINE_SOURCES})
     target_include_directories(render_golden PRIVATE src vendor/clap external ${NANOVG_DIR}/src
                                      external/stb ${X11_INCLUDE_DIR})
-    target_compile_definitions(render_golden PRIVATE GL_GLEXT_PROTOTYPES=1)
+    target_compile_definitions(render_golden PRIVATE GL_GLEXT_PROTOTYPES=1 P5_BUILD_INFO="${P5_BUILD_INFO}")
     target_link_libraries(render_golden PRIVATE p5_gui ${PROPHET_GL_LIBS} ${MATH_LIBRARY})
 endif()
 

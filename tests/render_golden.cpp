@@ -21,6 +21,9 @@
 #define NANOVG_GL3 1
 #include <nanovg_gl.h>
 
+#ifndef P5_BUILD_INFO
+#define P5_BUILD_INFO "dev-cmake-unstamped"
+#endif
 #include "p5_common.hpp"
 #include "p5_engine.hpp"
 #include "p5_gui.hpp"
@@ -72,9 +75,16 @@ int main(int argc, char **argv)
     if (argc < 2) { std::fprintf(stderr, "usage: render_golden out.png [init|pad|arp|bass] [width]\n"); return 1; }
     const char *out = argv[1];
     const char *state = argc > 2 ? argv[2] : "init";
-    const int W = argc > 3 ? std::atoi(argv[3]) : (int)p5ui::kPanelW;
-    const int H = argc > 4 ? std::atoi(argv[4])                     // host-forced height
-                            : (int)std::lround(W * p5ui::kPanelH / p5ui::kPanelW);
+    bool stamp = false; int H_arg = 0; (void)stamp;;
+    int argi = 3;
+    const auto take = [&](const char *fl) {
+        while (argi < argc && !std::strcmp(argv[argi], fl)) { stamp = true; argi++; }
+    };
+    take("-stamp");
+    const int W = argi < argc ? std::atoi(argv[argi++]) : (int)p5ui::kPanelW;
+    if (argi < argc && argv[argi][0] != '-') { H_arg = std::atoi(argv[argi++]); }
+    take("-stamp");
+    const int H = H_arg ? H_arg : (int)std::lround(W * p5ui::kPanelH / p5ui::kPanelW);
 
     // Headless-capable EGL: surfaceless (Mesa) -> device platform -> legacy default.
     EGLDisplay dpy = eglGetPlatformDisplay(EGL_PLATFORM_SURFACELESS_MESA,
@@ -131,6 +141,7 @@ int main(int argc, char **argv)
     engine.activate(44100);
     int program = -1;
     p5ui::State st = stateFor(state, engine, program);
+    if (stamp) st.build = P5_BUILD_INFO;
 
     NVGcontext *vg = nvgCreateGL3(NVG_ANTIALIAS | NVG_STENCIL_STROKES);
     p5ui::Gui gui = p5ui::create(vg);
