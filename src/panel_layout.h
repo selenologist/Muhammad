@@ -32,12 +32,12 @@ inline constexpr uint32_t kColDispText = 0xff5a3cu;
 
 // text styles: size px and letter-spacing at layout scale 1
 enum TxtStyle { T_HDR = 0, T_LBL, T_SUB, T_NUM, T_SCALE };
-inline constexpr float kTxtSize[5] = {11.0f, 7.6f, 7.2f, 8.5f, 5.1f};
+inline constexpr float kTxtSize[5] = {12.0f, 8.4f, 8.0f, 9.2f, 5.6f};
 inline constexpr float kTxtTrack[5] = {1.6f, 0.8f, 1.4f, 0.5f, 0.0f};
 enum BtnColor { BC_DARK = 0, BC_GRAY, BC_ORANGE };
 enum Glyph { G_NONE = 0, G_SAW, G_TRI, G_SQ };
 // LED modes: 0 static, 1 lit when param nonzero, 2 lit when PROGRAM == bank*8+value
-struct Knob  { int pid; float x, y; bool white; };
+struct Knob  { int pid; float x, y; bool white; int tickLo, tickHi; };
 struct Btn   { int pid; float x, y; int color; int glyph; bool led; int ledmode; int value; };
 struct Text  { float x, y; int style; const char *txt; };
 struct Box   { float x, y, w, h; const char *header; };
@@ -46,35 +46,35 @@ struct Disp  { float x, y, w, h; };
 
 inline constexpr int kNumKnobs = 29, kNumBtns = 37, kNumTexts = 71, kNumBoxes = 9, kNumRules = 14, kNumDisplays = 1;
 inline constexpr Knob kKnobs[] = {
-    {32, 60.0f, 60.0f, false},
-    {33, 124.0f, 60.0f, false},
-    {21, 110.0f, 196.0f, false},
-    {26, 62.0f, 330.0f, false},
-    {0, 352.0f, 60.0f, false},
-    {8, 540.0f, 60.0f, false},
-    {1, 344.0f, 196.0f, false},
-    {2, 402.0f, 196.0f, false},
-    {9, 562.0f, 196.0f, false},
-    {54, 372.0f, 332.0f, false},
-    {53, 512.0f, 332.0f, false},
-    {14, 756.0f, 64.0f, false},
-    {15, 804.0f, 64.0f, false},
-    {16, 852.0f, 64.0f, false},
-    {13, 756.0f, 196.0f, false},
-    {17, 996.0f, 58.0f, false},
-    {18, 1064.0f, 58.0f, false},
-    {40, 1132.0f, 58.0f, false},
-    {43, 964.0f, 196.0f, false},
-    {45, 1032.0f, 196.0f, false},
-    {47, 1100.0f, 196.0f, false},
-    {49, 1168.0f, 196.0f, false},
-    {82, 1330.0f, 66.0f, true},
-    {80, 1462.0f, 66.0f, true},
-    {44, 1296.0f, 196.0f, false},
-    {46, 1364.0f, 196.0f, false},
-    {48, 1432.0f, 196.0f, false},
-    {50, 1498.0f, 196.0f, false},
-    {37, 1444.0f, 330.0f, false},
+        {32, 60.0f, 60.0f, false, 0, 10},
+        {33, 124.0f, 60.0f, false, 0, 10},
+        {21, 110.0f, 196.0f, false, 0, 10},
+        {26, 62.0f, 330.0f, false, 0, 10},
+        {0, 352.0f, 60.0f, false, 0, 10},
+        {8, 540.0f, 60.0f, false, 0, 10},
+        {1, 344.0f, 196.0f, false, 0, 10},
+        {2, 402.0f, 196.0f, false, 0, 10},
+        {9, 562.0f, 196.0f, false, 0, 10},
+        {54, 372.0f, 332.0f, false, 0, 7},
+        {53, 512.0f, 332.0f, false, 1, 8},
+        {14, 756.0f, 64.0f, false, 0, 10},
+        {15, 804.0f, 64.0f, false, 0, 10},
+        {16, 852.0f, 64.0f, false, 0, 10},
+        {13, 756.0f, 196.0f, false, 0, 10},
+        {17, 996.0f, 58.0f, false, 0, 10},
+        {18, 1064.0f, 58.0f, false, 0, 10},
+        {40, 1132.0f, 58.0f, false, 0, 10},
+        {43, 964.0f, 196.0f, false, 0, 10},
+        {45, 1032.0f, 196.0f, false, 0, 10},
+        {47, 1100.0f, 196.0f, false, 0, 10},
+        {49, 1168.0f, 196.0f, false, 0, 10},
+        {82, 1330.0f, 66.0f, true, 0, 10},
+        {80, 1462.0f, 66.0f, true, 0, 10},
+        {44, 1296.0f, 196.0f, false, 0, 10},
+        {46, 1364.0f, 196.0f, false, 0, 10},
+        {48, 1432.0f, 196.0f, false, 0, 10},
+        {50, 1498.0f, 196.0f, false, 0, 10},
+        {37, 1444.0f, 330.0f, false, 0, 10},
 };
 
 inline constexpr Btn kBtns[] = {
@@ -100,7 +100,7 @@ inline constexpr Btn kBtns[] = {
         {12, 666.0f, 196.0f, BC_DARK, G_NONE, true, 1, 0},
         {52, 442.0f, 332.0f, BC_DARK, G_NONE, true, 1, 0},
         {81, 850.0f, 196.0f, BC_DARK, G_NONE, true, 1, 0},
-        {-1, 928.0f, 62.0f, BC_GRAY, G_NONE, true, 0, 0},
+        {20, 928.0f, 62.0f, BC_GRAY, G_NONE, true, 1, 0},
         {19, 1200.0f, 62.0f, BC_DARK, G_NONE, true, 1, 0},
         {-1, 598.0f, 330.0f, BC_GRAY, G_NONE, true, 0, 0},
         {-1, 640.0f, 330.0f, BC_ORANGE, G_NONE, true, 0, 0},
@@ -155,7 +155,7 @@ inline constexpr Text kTexts[] = {
         {852.0f, 98.0f, T_LBL, "NOISE"},
         {756.0f, 234.0f, T_LBL, "GLIDE"},
         {850.0f, 234.0f, T_LBL, "OVERSAMPLE"},
-        {928.0f, 91.0f, T_LBL, "PRESET"},
+        {928.0f, 91.0f, T_LBL, "MODEL"},
         {996.0f, 92.0f, T_LBL, "CUTOFF"},
         {1064.0f, 92.0f, T_LBL, "RESONANCE"},
         {1132.0f, 92.0f, T_LBL, "ENVELOPE"},
@@ -204,20 +204,20 @@ inline constexpr Box kBoxes[] = {
 };
 
 inline constexpr Rule kRules[] = {
-        {42.1f, 113.4f, 52.1f, 113.4f},
-        {131.9f, 113.4f, 141.9f, 113.4f},
-        {185.7f, 103.4f, 193.7f, 103.4f},
-        {264.3f, 103.4f, 272.3f, 103.4f},
-        {182.5f, 237.4f, 192.5f, 237.4f},
-        {235.5f, 237.4f, 245.5f, 237.4f},
-        {158.7f, 377.4f, 168.7f, 377.4f},
-        {239.3f, 377.4f, 249.3f, 377.4f},
-        {424.5f, 93.4f, 432.5f, 93.4f},
-        {475.5f, 93.4f, 483.5f, 93.4f},
-        {454.5f, 237.4f, 462.5f, 237.4f},
-        {505.5f, 237.4f, 513.5f, 237.4f},
-        {990.8f, 373.4f, 1004.8f, 373.4f},
-        {1089.2f, 373.4f, 1103.2f, 373.4f},
+        {38.85f, 113.4f, 48.85f, 113.4f},
+        {135.15f, 113.4f, 145.15f, 113.4f},
+        {182.95f, 103.4f, 190.95f, 103.4f},
+        {267.05f, 103.4f, 275.05f, 103.4f},
+        {181.25f, 237.4f, 191.25f, 237.4f},
+        {236.75f, 237.4f, 246.75f, 237.4f},
+        {155.95f, 377.4f, 165.95f, 377.4f},
+        {242.05f, 377.4f, 252.05f, 377.4f},
+        {423.25f, 93.4f, 431.25f, 93.4f},
+        {476.75f, 93.4f, 484.75f, 93.4f},
+        {453.25f, 237.4f, 461.25f, 237.4f},
+        {506.75f, 237.4f, 514.75f, 237.4f},
+        {987.3f, 373.4f, 1001.3f, 373.4f},
+        {1092.7f, 373.4f, 1106.7f, 373.4f},
 };
 
 inline constexpr Disp kDisplays[] = {

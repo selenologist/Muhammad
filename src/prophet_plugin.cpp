@@ -380,7 +380,7 @@ static bool par_get_value(const clap_plugin_t *p, clap_id id, double *out)
 }
 static bool par_value_to_text(const clap_plugin_t *, clap_id id, double v, char *buf, uint32_t cap)
 {
-    if (id == 4) { std::snprintf(buf, cap, "%s", v < 1.0 ? "SSI" : "CURTIS"); return true; }
+    if (id == 20) { std::snprintf(buf, cap, "%s", v < 1.0 ? "SSI" : "CURTIS"); return true; }
     if (id == 52 || id == 51) { std::snprintf(buf, cap, "%s", v < 1.0 ? "OFF" : "ON"); return true; }
     if (id == 56) { static const char *const kPr[4] = {"LOW","LOW RET","LAST","LAST RET"};
                     std::snprintf(buf, cap, "%s", kPr[(int)v & 3]); return true; }

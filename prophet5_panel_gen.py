@@ -11,6 +11,9 @@ OUT_SVG = str(HERE / "prophet5_panel.svg")
 OUT_HDR = str(HERE / "src" / "panel_layout.h")
 PW, PH = 1560, 416
 PANEL_BG = "#161616"
+TXT = {"hdr": 12.0, "lbl": 8.4, "sub": 8.0, "num": 9.2, "scale": 5.6}
+TRK = {"hdr": 1.6, "lbl": 0.8, "sub": 1.4, "num": 0.5, "scale": 0.0}
+STY = ("hdr", "lbl", "sub", "num", "scale")
 
 # Panel data-param -> CLAP param id (raw bytes are ids 0..56; GUI-side:
 # 80 TRIM(volume) 82 MASTER TUNE 83 PROGRAM 84 BANK; -1 = decorative)
@@ -28,7 +31,7 @@ PID = {
     "flt_s": 47, "amp_s": 48, "flt_r": 49, "amp_r": 50,
     "release_btn": 51, "unison": 52, "unison_det": 54, "vintage": 37,
     "volume": 80, "master_tune": 82, "prog_bankselect": 84, "os": 81, "unison_cnt": 53,
-    "lfo_preset": -1, "flt_preset": -1, "prog_preset": -1, "prog_record": -1,
+    "lfo_preset": -1, "flt_model": 20, "prog_preset": -1, "prog_record": -1,
     "edit_btn": -1, "tune_btn": -1,
 }
 for _i in range(1, 9):
@@ -39,7 +42,7 @@ SWITCHES = {"osc1_saw", "osc1_sq", "osc2_saw", "osc2_tri", "osc2_sq", "osc1_sync
             "osc2_lofreq", "osc2_keyboard", "lfo_saw", "lfo_tri", "lfo_sq",
             "wm_freq1", "wm_freq2", "wm_pw1", "wm_pw2", "wm_filter",
             "pm_freq1", "pm_pw1", "pm_filter", "unison", "release_btn", "os",
-            "flt_keyboard"}
+            "flt_keyboard", "flt_model"}
 
 def f(x):
     s = f"{x:.1f}"
@@ -51,13 +54,14 @@ def c16(hexcol):
 KNOB_R = 15.0
 BTN_W, BTN_H = 24.0, 34.0
 
-def knob_scale_parts():
+def knob_scale_parts(tlo=0, thi=10):
+    n = thi - tlo
     parts = []
-    for v in range(11):
-        a = math.radians(-140 + 28 * v)
+    for i in range(n + 1):
+        a = math.radians(-140.0 + (280.0 / n) * i)
         s, c = math.sin(a), math.cos(a)
         parts.append(f'<line x1="{f(16.5*s)}" y1="{f(-16.5*c)}" x2="{f(19.5*s)}" y2="{f(-19.5*c)}" stroke-width="0.8"/>')
-        parts.append(f'<text x="{f(25.2*s)}" y="{f(-25.2*c+1.8)}" class="scale">{v}</text>')
+        parts.append(f'<text x="{f(25.2*s)}" y="{f(-25.2*c+1.8)}" class="scale">{tlo + i}</text>')
     return "".join(parts)
 
 DEFS = f'''
@@ -95,10 +99,12 @@ DEFS = f'''
 body = []
 knobs, btns, texts, boxes, rules, displays = [], [], [], [], [], []
 
-def knob(x, y, param, label=None, angle=-60, white=False, label_dy=34, extra=None):
+def knob(x, y, param, label=None, angle=-60, white=False, label_dy=34, extra=None, ticks=(0, 10)):
     dial = "knobDialWhite" if white else "knobDial"
+    scale = ('<use xlink:href="#knobScale" href="#knobScale"/>' if tuple(ticks) == (0, 10)
+             else '<g class="scale">' + knob_scale_parts(*ticks) + '</g>')
     s = [f'<g class="knob" data-param="{param}" transform="translate({f(x)},{f(y)})">',
-         f'<use xlink:href="#knobScale" href="#knobScale"/>',
+         scale,
          f'<g class="dial" transform="rotate({f(angle)})"><use xlink:href="#{dial}" href="#{dial}"/></g>']
     if label:
         s.append(f'<text class="lbl" y="{label_dy}">{label}</text>')
@@ -106,7 +112,7 @@ def knob(x, y, param, label=None, angle=-60, white=False, label_dy=34, extra=Non
         s.append(extra)
     s.append('</g>')
     body.append("".join(s))
-    knobs.append(dict(pid=PID[param], x=x, y=y, white=white))
+    knobs.append(dict(pid=PID[param], x=x, y=y, white=white, ticks=ticks))
     if label:
         texts.append(dict(x=x, y=y + label_dy, style="lbl", text=label))
 
@@ -144,7 +150,7 @@ def notes(*pairs, style="lbl"):
         texts.append(dict(x=x, y=y, style=style, text=t))
 
 def subhead(x, y, text, tail=26):
-    tw = len(text) * 4.6
+    tw = len(text) * 5.1
     l1, l2 = x - tw / 2 - 10, x + tw / 2 + 10
     body.append(
         f'<g class="subhead"><line class="rule" x1="{f(l1-tail)}" y1="{f(y-2.6)}" x2="{f(l1)}" y2="{f(y-2.6)}"/>'
@@ -157,7 +163,7 @@ def subhead(x, y, text, tail=26):
 def box(x, y, w, h, header=None):
     s = [f'<rect class="box" rx="8" x="{f(x)}" y="{f(y)}" width="{f(w)}" height="{f(h)}"/>']
     if header:
-        tw = len(header) * 6.8
+        tw = len(header) * 7.4
         s.append(f'<rect class="hdrbg" x="{f(x+w/2-tw/2-4)}" y="{f(y-6)}" width="{f(tw+8)}" height="12"/>')
         s.append(f'<text class="hdr" x="{f(x+w/2)}" y="{f(y+3.6)}">{header}</text>')
     body.append("".join(s))
@@ -235,9 +241,9 @@ btn(614, 196, "osc2_lofreq", label="LO FREQ", label_dy=48)
 btn(666, 196, "osc2_keyboard", label="KEYBOARD", label_dy=48)
 
 # --- UNISON group (B, r3, unbordered): DETUNE / UNISON / COUNT ---
-knob(372, 332, "unison_det", label="UNISON DET.", label_dy=38)
+knob(372, 332, "unison_det", label="UNISON DET.", label_dy=38, ticks=(0, 7))
 btn(442, 332, "unison", label="UNISON", label_dy=38)
-knob(512, 332, "unison_cnt", label="COUNT", label_dy=38)
+knob(512, 332, "unison_cnt", label="COUNT", label_dy=38, ticks=(1, 8))
 
 # --- MIXER (r1) ---
 box(712, 10, 184, 120, "MIXER")
@@ -251,7 +257,7 @@ btn(850, 196, "os", color="btnDark", label="OVERSAMPLE", label_dy=38)
 
 # --- FILTER (tall r1+r2) ---
 box(902, 10, 334, 248, "FILTER")
-btn(928, 62, "flt_preset", color="btnGray", label="PRESET")
+btn(928, 62, "flt_model", color="btnGray", label="MODEL")   # real-P5 filter PRESET slot -> SSI/Curtis toggle
 knob(996, 58, "flt_cutoff", label="CUTOFF")
 knob(1064, 58, "flt_reso", label="RESONANCE")
 knob(1132, 58, "flt_envamt", label="ENVELOPE")
@@ -296,11 +302,11 @@ svg = f'''<?xml version="1.0" encoding="UTF-8"?>
      viewBox="0 0 {PW} {PH}" width="{PW}" height="{PH}">
   <style>
     text {{ font-family: Helvetica, Arial, sans-serif; fill: #f0f0f0; text-anchor: middle; }}
-    .hdr   {{ font-size: 11px; font-weight: 600; letter-spacing: 1.6px; }}
-    .lbl   {{ font-size: 7.6px; letter-spacing: 0.8px; }}
-    .sub   {{ font-size: 7.2px; letter-spacing: 1.4px; }}
-    .num   {{ font-size: 8.5px; letter-spacing: 0.5px; }}
-    .scale {{ font-size: 5.1px; fill: #e8e8e8; letter-spacing: 0; stroke: none; }}
+    .hdr   {{ font-size: {TXT["hdr"]}px; font-weight: 600; letter-spacing: {TRK["hdr"]}px; }}
+    .lbl   {{ font-size: {TXT["lbl"]}px; letter-spacing: {TRK["lbl"]}px; }}
+    .sub   {{ font-size: {TXT["sub"]}px; letter-spacing: {TRK["sub"]}px; }}
+    .num   {{ font-size: {TXT["num"]}px; letter-spacing: {TRK["num"]}px; }}
+    .scale {{ font-size: {TXT["scale"]}px; fill: #e8e8e8; letter-spacing: 0; stroke: none; }}
     .box   {{ fill: none; stroke: #e6e6e6; stroke-width: 1.2; }}
     .rule  {{ stroke: #e6e6e6; stroke-width: 1; }}
     .hdrbg {{ fill: {PANEL_BG}; stroke: none; }}
@@ -348,12 +354,13 @@ for name, col in [("kColInk", "#f0f0f0"), ("kColScale", "#e8e8e8"), ("kColBox", 
 hdr.append("""
 // text styles: size px and letter-spacing at layout scale 1
 enum TxtStyle { T_HDR = 0, T_LBL, T_SUB, T_NUM, T_SCALE };
-inline constexpr float kTxtSize[5] = {11.0f, 7.6f, 7.2f, 8.5f, 5.1f};
-inline constexpr float kTxtTrack[5] = {1.6f, 0.8f, 1.4f, 0.5f, 0.0f};
-enum BtnColor { BC_DARK = 0, BC_GRAY, BC_ORANGE };
+""")
+hdr.append("inline constexpr float kTxtSize[5] = {" + ", ".join(f"{TXT[s]}f" for s in STY) + "};\n")
+hdr.append("inline constexpr float kTxtTrack[5] = {" + ", ".join(f"{TRK[s]}f" for s in STY) + "};\n")
+hdr.append("""enum BtnColor { BC_DARK = 0, BC_GRAY, BC_ORANGE };
 enum Glyph { G_NONE = 0, G_SAW, G_TRI, G_SQ };
 // LED modes: 0 static, 1 lit when param nonzero, 2 lit when PROGRAM == bank*8+value
-struct Knob  { int pid; float x, y; bool white; };
+struct Knob  { int pid; float x, y; bool white; int tickLo, tickHi; };
 struct Btn   { int pid; float x, y; int color; int glyph; bool led; int ledmode; int value; };
 struct Text  { float x, y; int style; const char *txt; };
 struct Box   { float x, y, w, h; const char *header; };
@@ -372,7 +379,7 @@ def arr(name, plural, items, fmt):
         hdr.append("    " + fmt(it) + "\n")
     hdr.append("};\n\n")
 
-arr("Knob", "kKnobs", knobs, lambda k: f"    {{{k['pid']}, {fx(k['x'])}, {fx(k['y'])}, {'true' if k['white'] else 'false'}}},".strip() + "")
+arr("Knob", "kKnobs", knobs, lambda k: f"    {{{k['pid']}, {fx(k['x'])}, {fx(k['y'])}, {'true' if k['white'] else 'false'}, {int(k['ticks'][0])}, {int(k['ticks'][1])}}},")
 colorid = {"btnDark": "BC_DARK", "btnGray": "BC_GRAY", "btnOrange": "BC_ORANGE"}
 glyphid = {"": "G_NONE", "gSaw": "G_SAW", "gTri": "G_TRI", "gSq": "G_SQ"}
 arr("Btn", "kBtns", btns, lambda b: f"    {{{b['pid']}, {fx(b['x'])}, {fx(b['y'])}, {colorid[b['color']]}, "

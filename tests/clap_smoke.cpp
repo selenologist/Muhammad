@@ -154,7 +154,7 @@ int main(int argc, char **argv)
         check("UNISON CNT over-range clamps to 8", v53 == 8);
         char txt[64] = {0};
         check("PRIORITY value text", params->value_to_text(plugin, 56, 1, txt, sizeof txt) && !std::strcmp(txt, "LOW RET"));
-        check("FILTER MODEL value text", params->value_to_text(plugin, 4, 0, txt, sizeof txt) && !std::strcmp(txt, "SSI"));
+        check("FILTER MODEL value text", params->value_to_text(plugin, 20, 0, txt, sizeof txt) && !std::strcmp(txt, "SSI"));
 
         // programmer params + gui surface
         uint32_t cnt = params->count(plugin);

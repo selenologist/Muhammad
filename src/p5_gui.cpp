@@ -18,44 +18,42 @@ inline NVGcolor col(uint32_t rgb, int a = 255)
 
 double trackedWidth(const Gui &g, const char *txt, double track)
 {
-    double w = 0;
-    for (const char *p = txt; *p; p++)
-    {
-        w += nvgTextBounds(g.vg, 0, 0, p, p + 1, nullptr);
-        if (p[1]) w += track;
-    }
-    return w;
+    nvgTextLetterSpacing(g.vg, (float)track);
+    const float adv = nvgTextBounds(g.vg, 0, 0, txt, nullptr, nullptr);
+    nvgTextLetterSpacing(g.vg, 0.f);
+    return adv;
 }
 
-// center-aligned text with letter-spacing, like the SVG's text-anchor:middle
+// center-aligned text: ONE nvgText call so fontstash applies real kern pairs,
+// with letter-spacing through the native API (the old per-glyph pen ignored
+// kerning entirely and read as bad spacing at most sizes).
 void tracked(const Gui &g, float x, float y, const char *txt, float track,
              NVGcolor c)
 {
-    const double w = trackedWidth(g, txt, track);
-    double pen = x - w / 2;
+    nvgTextLetterSpacing(g.vg, track);
     nvgFillColor(g.vg, c);
-    for (const char *p = txt; *p; p++)
-    {
-        nvgText(g.vg, (float)pen, y, p, p + 1);
-        pen += nvgTextBounds(g.vg, 0, 0, p, p + 1, nullptr) + track;
-    }
+    const float adv = nvgTextBounds(g.vg, 0, 0, txt, nullptr, nullptr);
+    nvgText(g.vg, x - adv / 2, y, txt, nullptr);
+    nvgTextLetterSpacing(g.vg, 0.f);
 }
 
-void knobScale(const Gui &g, float cx, float cy)
+void knobScale(const Gui &g, float cx, float cy, int tlo, int thi)
 {
+    const int n = thi - tlo;
     nvgStrokeColor(g.vg, col(kColScale));
     nvgStrokeWidth(g.vg, 0.8f);
     nvgFillColor(g.vg, col(kColScale));
     nvgFontSize(g.vg, kTxtSize[T_SCALE]);
-    for (int v = 0; v < 11; v++)
+    for (int v = 0; v <= n; v++)
     {
-        const double a = (-140.0 + 28.0 * v) * 3.14159265358979 / 180.0;
+        const double a = (-140.0 + 280.0 * v / n) * 3.14159265358979 / 180.0;
         const double s = std::sin(a), c = std::cos(a);
         nvgBeginPath(g.vg);
         nvgMoveTo(g.vg, cx + (float)(16.5 * s), cy + (float)(-16.5 * c));
         nvgLineTo(g.vg, cx + (float)(19.5 * s), cy + (float)(-19.5 * c));
         nvgStroke(g.vg);
-        char d[2] = {(char)('0' + v), 0};
+        char d[4];
+        std::snprintf(d, sizeof d, "%d", tlo + v);
         tracked(g, cx + (float)(25.2 * s), cy + (float)(-25.2 * c + 1.8), d, 0.0f, col(kColScale));
     }
 }
@@ -229,7 +227,7 @@ void draw(const Gui &g, const State &s, float w, float h)
     for (int i = 0; i < kNumKnobs; i++)
     {
         const auto &k = kKnobs[i];
-        knobScale(g, k.x, k.y);
+        knobScale(g, k.x, k.y, k.tickLo, k.tickHi);
         knobDial(g, k.x, k.y, s.knob[i], k.white);
     }
 

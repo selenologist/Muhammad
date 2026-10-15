@@ -67,7 +67,7 @@ inline const KnobRange *knobRange(int id)
         { 0, 0, 96, false, 0 },   // OSC A FREQUENCY
         { 1, 0, 96, false, 0 },   // OSC B FREQUENCY
         { 2, 0, 127, false, 0 },  // OSC B FINE
-        { 4, 0, 1, false, 0 },    // FILTER MODEL SSI/CURTIS
+        { 20, 0, 1, false, 0 },   // FILTER MODEL SSI/CURTIS (raw byte 20!)
         { 51, 0, 1, false, 0 },   // RELEASE ON
         { 52, 0, 1, false, 0 },   // UNISON
         { 53, 1, 8, true, 5 },    // UNISON CNT: raw 0 means "default 5"
