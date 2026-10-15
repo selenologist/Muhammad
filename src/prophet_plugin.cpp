@@ -77,12 +77,27 @@ const clap_plugin_descriptor_t kDescriptor = {
     "Melodee port",
     "https://github.com/keremimo/melodee",
     nullptr, nullptr,
-    "0.8-gui5",   // bump per shipped build: the version Bitwig shows proves which binary is loaded
+    "0.9-gui6",   // bump per shipped build: the version Bitwig shows proves which binary is loaded
     "Prophet-5 (Rev-4 wire) engine ported from the Melodee firmware",
     kFeatures
 };
 
 // ---- params <-> engine -------------------------------------------------------
+// Raw bytes past 127 only matter where the engine reads the BYTE, not valueOf():
+// the continuous OSC-B freq (KEYBOARD off), the glide rate, and the >1 switch
+// semantics (LOW_B octave shift, B-key off, SSI filter). Everything else
+// sound-wise clamps at 127 in valueOf, so the surface may clamp honestly.
+static bool rawByteCarriesMeaning(int idx)
+{
+    switch (idx) {
+        case p5::P5_FREQ_A: case p5::P5_FREQ_B: case p5::P5_GLIDE:
+        case p5::P5_LOW_B: case p5::P5_KEY_B: case p5::P5_SYNC:
+        case p5::P5_FILTER_REV:
+            return true;
+        default: return false;
+    }
+}
+
 static void applyParam(Plugin *s, clap_id id, double value)
 {
     if (isRawParam(id)) {
@@ -90,7 +105,7 @@ static void applyParam(Plugin *s, clap_id id, double value)
         if (const KnobClamp *k = knobClamp(id)) {
             if (v < (int)k->lo) v = (int)k->lo;
             if (v > (int)k->hi) v = (int)k->hi;
-        } else if (v > 127) v = 127;   // 7-bit law: valueOf clamps at 127 anyway
+        } else if (v > 127 && !rawByteCarriesMeaning(kRawIndex[id])) v = 127;
         s->applyRaw(kRawIndex[id], v);
     }
     else if (isOverlayParam(id))
@@ -255,6 +270,7 @@ static bool plugin_activate(const clap_plugin_t *p, double sample_rate, uint32_t
     s->sr = sample_rate;
     s->engine.activate(sample_rate);
     s->engine.setSmoothing(true);   // PC playability; the A/B harness keeps it off
+    s->engine.setPcMode(true);      // LFO INITIAL = wheel state at patch load
     s->active = true;
     return true;
 }
@@ -278,7 +294,7 @@ static void plugin_reset(const clap_plugin_t *p)
     auto *s = fromPlugin(p);
     s->engine.silenceReset();
     s->engine.setBend(0);
-    s->engine.setModWheel(0);
+    s->engine.wheelReset();   // re-take the patch's wheel position (pc mode)
     s->engine.setAftertouch(0);
 }
 

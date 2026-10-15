@@ -69,7 +69,11 @@ public:
         p5::patchName(name, p);
     }
     void editRaw(int idx, int v) {               // native editor write: exact byte, no state reset
-        if (idx >= 0 && idx < (int)RAW_MAX) { patch_.raw[idx] = (uint8_t)v; trackAccept(); }
+        if (idx >= 0 && idx < (int)RAW_MAX) {
+            patch_.raw[idx] = (uint8_t)v;
+            trackAccept();
+            if (idx == P5_LFO_INITIAL) wheelSeed();   // still the wheel's position, if untouched
+        }
     }
     int rawValue(int idx) const { return idx >= 0 && idx < (int)RAW_MAX ? patch_.raw[idx] : 0; }
     void noteOn(int note, int vel);
@@ -77,7 +81,15 @@ public:
     void allNotesOff();                       // trk_all_off
     void silenceReset();                      // every voice and part state, as at boot
     void setBend(int raw) { bendRaw_ = i_clamp(raw, -8192, 8191); }
-    void setModWheel(int v) { mw_ = i_clamp(v, 0, 127); }
+    // PC playability mode (the plugin turns it on; the bit-exact harness keeps
+    // the firmware's literal maths). LFO INITIAL is the WHEEL STATE at patch
+    // load — real P5 keyboards have a reporting wheel, so the patch value is
+    // the position, not an offset stacked on top of a silent zero. The first
+    // real CC1 takes over and the patch value yields until the next patch.
+    void setPcMode(bool on) { pcMode_ = on; if (on) wheelSeed(); }
+    void wheelSeed() { if (pcMode_ && !wheelTaken_) mw_ = valueOf(P5_LFO_INITIAL); }
+    void wheelReset() { wheelTaken_ = false; if (pcMode_) wheelSeed(); else mw_ = 0; }
+    void setModWheel(int v) { if (pcMode_) wheelTaken_ = true; mw_ = i_clamp(v, 0, 127); }
     void setAftertouch(int v) { at_ = i_clamp(v, 0, 127); }
     void setOverlay(int i, int v) { if (i >= 0 && i < 8) e_[i] = (int16_t)v; }
     int overlay(int i) const { return e_[i]; }
@@ -150,6 +162,8 @@ private:
     int poly_ = MAXV;
     int tuneCents_ = 0;
     bool smooth_ = false;
+    bool pcMode_ = false;
+    bool wheelTaken_ = false;
     float slew_[55] = {};
     int tuneUnits_ = 0;
     int voiceMode_ = 0, voiceModeOverride_ = -1;

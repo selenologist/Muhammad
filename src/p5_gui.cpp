@@ -240,9 +240,17 @@ void draw(const Gui &g, const State &s, float w, float h)
     if (s.build && s.build[0])
     {
         nvgFontSize(g.vg, 11.5f);
+        float x = kPanelW - 8;
         const float adv = nvgTextBounds(g.vg, 0, 0, s.build, nullptr, nullptr);
         nvgFillColor(g.vg, nvgRGBA(206, 206, 216, 255));
-        nvgText(g.vg, kPanelW - adv - 8, kPanelH - 12, s.build, nullptr);
+        nvgText(g.vg, x - adv, kPanelH - 12, s.build, nullptr);
+        x -= adv + 14;
+        if (s.diag && s.diag[0])
+        {
+            const float dadv = nvgTextBounds(g.vg, 0, 0, s.diag, nullptr, nullptr);
+            nvgFillColor(g.vg, nvgRGBA(150, 176, 206, 255));   // cool grey-blue, quieter than the stamp
+            nvgText(g.vg, x - dadv, kPanelH - 12, s.diag, nullptr);
+        }
     }
 
     // silkscreen texts (labels, subheads) — headers drawn with the boxes

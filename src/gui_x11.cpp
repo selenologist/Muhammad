@@ -59,6 +59,7 @@ struct Ctx
     // host-side gui service + aspect negotiation bookkeeping
     const clap_host_gui_t *hostGui = nullptr;
     int resizeRequests = 0;        // give up if the host keeps saying no
+    int lastRrOk = -1;               // last request_resize verdict
     long lastAskMs = 0;
 };
 
@@ -84,6 +85,13 @@ void fillState(Ctx &c, p5ui::State &st)
 #ifdef P5_BUILD_INFO
     st.build = P5_BUILD_INFO;
 #endif
+    {   // live diagnostics in-window: Bitwig's plugin host swallows our stderr
+        static char diagBuf[64];
+        std::snprintf(diagBuf, sizeof diagBuf, "svc %s rr %d %s win %ux%u",
+                      c.hostGui ? "y" : "n", c.resizeRequests,
+                      c.lastRrOk < 0 ? "-" : c.lastRrOk ? "ok" : "no", c.w, c.h);
+        st.diag = diagBuf;
+    }
     std::memcpy(st.name, c.plugin->engine.patch().raw + p5::P5_NAME, 20);
     st.name[20] = 0;
     for (char *q = st.name + 19; q >= st.name && *q == ' '; *q-- = 0) {}
@@ -167,6 +175,7 @@ void askHostForAspect(Ctx &c)
     c.lastAskMs = t;
     c.resizeRequests++;
     const bool ok = c.hostGui->request_resize(c.plugin->host, c.w, wantH);
+    c.lastRrOk = ok ? 1 : 0;
     std::fprintf(stderr, "[p5gui] request_resize %ux%u -> %ux%u accepted=%d\n",
                  c.w, c.h, c.w, wantH, (int)ok);
 }

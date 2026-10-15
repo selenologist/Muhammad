@@ -95,6 +95,8 @@ void Engine::setPatch(const Patch &p)
 {
     patch_ = p;
     trackAccept();
+    wheelTaken_ = false;
+    wheelSeed();
     monoNote_ = 0; nmono_ = 0;
     // the part's shared state starts afresh with a new patch (the p5_ready path)
     lfoPhase_ = 0; modNoise_ = 0; lastPitch_ = 0;
@@ -362,7 +364,7 @@ void Engine::block()
     p5_update_bend();
     uint32_t inc = PW_P5_LFO_INC[value_[P5_LFO_RATE]] / (uint32_t)os_;  // per sub-sample
     if (srScale_ != 1.0) inc = (uint32_t)((double)inc * srScale_);
-    const int amt = i_clamp(valueOf(P5_LFO_INITIAL) + mw_ + (p[P5_PRESS_LFO] ? at_ : 0), 0, 127);
+    const int amt = i_clamp((pcMode_ ? 0 : valueOf(P5_LFO_INITIAL)) + mw_ + (p[P5_PRESS_LFO] ? at_ : 0), 0, 127);
     modSamples(inc, PW_P5_AMOUNT[amt], (float)valueOf(P5_WHEEL_MIX) * (1.0f / 127.0f), wheelLen_);
 }
 
