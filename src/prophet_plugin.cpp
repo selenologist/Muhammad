@@ -78,7 +78,7 @@ const clap_plugin_descriptor_t kDescriptor = {
     "selenologist",
     "https://github.com/keremimo/melodee",
     nullptr, nullptr,
-    "1.0-muh",   // bump per shipped build: the version Bitwig shows proves which binary is loaded
+    "1.1-case",  // bump per shipped build: the version Bitwig shows proves which binary is loaded
     "P5 clone (PROPHET engine ported from the Melodee firmware)",
     kFeatures
 };
@@ -656,16 +656,31 @@ static bool preset_from_location(const clap_plugin_t *p, uint32_t location_kind,
     if (location_kind != CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN || !load_key) return false;
     int k = atoi(load_key);
     if (k < 0 || k > (int)PW_FACTORY_N) return false;
-    if (k == 0) { p5::Patch i; p5::patchInit(i); s->engine.setPatch(i); }
+    if (k == 0) {
+        p5::Patch i; p5::patchInit(i); p5::patchDefaultName(i);
+        s->engine.setPatch(i); s->program = -1; s->markSource(0, 0, std::string());
+        for (clap_id id = 0; id < 57; id++) s->markPending(id, paramValue(s, id));
+        requestHostParamFlush(s);
+        return true;
+    }
     else s->engine.loadFactory((uint32_t)(k - 1));
     return true;
 }
 const clap_plugin_preset_load_t kPresetLoad = { preset_from_location };
+// A brand-new instance shows the default patch (bare INIT content, curated
+// name) so the first thing you see when loading is "Peace Be Upon Him".
+static void seedDefaultPatch(Plugin *s)
+{
+    p5::Patch i; p5::patchInit(i); p5::patchDefaultName(i);
+    s->engine.setPatch(i);
+    s->markSource(0, 0, std::string());
+}
 
 // ---- instance creation ----------------------------------------------------------
 const clap_plugin_t *prophet_create(const clap_host_t *host)
 {
     auto *data = new Plugin(host);
+    seedDefaultPatch(data);
     data->self = new clap_plugin_t(kPluginTemplate);
     data->self->plugin_data = data;
     return data->self;

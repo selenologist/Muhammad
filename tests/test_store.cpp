@@ -22,7 +22,14 @@ int main()
         for (auto &s : v) if (s == "TEST PATCH") return true; return false; }());
     uint8_t back[133] = {};
     check("load roundtrip", p5store::loadPatch("TEST PATCH", back) && !std::memcmp(raw, back, 133));
-    check("sanitize", p5store::sanitize("a/b\\c*?") == "ABC");
+    check("sanitize keeps case", p5store::sanitize("a/b\\c*?") == "abc");
+    check("sanitize faithful mixed", p5store::sanitize("Peace Be 5") == "Peace Be 5");
+    check("foldCollision finds PEACE vs peace", [&]{
+        uint8_t r2[133]; std::memset(r2, 3, sizeof r2);
+        if (!p5store::savePatch("peace", r2)) return false;
+        const std::string hit = p5store::foldCollision("PEACE");
+        return hit == "peace" && p5store::foldCollision("brave").empty();
+    }());
     check("empty name refused", !p5store::savePatch("///", raw));
     p5store::clearSlot(9);
     check("default slot = factory", p5store::slot(9).kind == p5store::SourceKind::Factory && p5store::slot(9).factory == 9);

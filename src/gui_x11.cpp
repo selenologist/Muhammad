@@ -51,8 +51,9 @@ struct Ctx
     int dragKnob = -1, pressBtn = -1;
 
     // text-entry modal: 0 none, 1 save patch (RECORD), 2 assign slot (PRESET)
-    int modal = 0;
+    int modal = 0;                    // 1 save, 2 assign, 3 overwrite-confirm
     char modalBuf[32] = {};
+    char modalHit[36] = {};             // existing file that the typed name folds to
     int modalLen = 0;
     int modalSlot = 0;
     int dragStartY = 0;
@@ -90,7 +91,7 @@ void fillState(Ctx &c, p5ui::State &st)
         if (b.ledmode == 1) st.led[i] = c.plugin->guiValue(b.pid) != 0.0;
         else if (b.ledmode == 2) st.led[i] = program >= 0 && program == bank * 8 + b.value;
         else if (b.ledmode == 3) st.led[i] = c.plugin->panelDirty();     // PRESET: floating edits
-        else if (b.ledmode == 4) st.led[i] = c.modal == 1;               // RECORD: armed
+        else if (b.ledmode == 4) st.led[i] = c.modal == 1 || c.modal == 3;  // RECORD: armed
         else if (b.ledmode == 5) st.led[i] = c.modal == 2;               // PRESET: assigning
     }
 #ifdef P5_BUILD_INFO
@@ -108,8 +109,17 @@ void fillState(Ctx &c, p5ui::State &st)
     for (char *q = st.name + 19; q >= st.name && *q == ' '; *q-- = 0) {}
     if (c.modal)
     {
-        st.modalTitle = c.modal == 1 ? "SAVE PATCH" : "ASSIGN BANK/PROGRAM";
-        if (c.modal == 1)
+        st.modalTitle = c.modal == 2 ? "ASSIGN BANK/PROGRAM"
+                          : c.modal == 3 ? "OVERWRITE ?" : "SAVE PATCH";
+        if (c.modal == 3)
+        {
+            static char prompt[128];
+            std::snprintf(prompt, sizeof prompt,
+                          "\"%s\" already exists (name differs only by case)  -  ENTER overwrites",
+                          c.modalHit);
+            st.modalPrompt = prompt;
+        }
+        else if (c.modal == 1)
         {
             static char prompt[96];
             std::snprintf(prompt, sizeof prompt, "write to  %s/<name>.muhammad",
@@ -349,25 +359,34 @@ void pump(Ctx &c)
                 if (!c.modal) break;
                 char xb[8]; KeySym ks = NoSymbol;
                 const int n = XLookupString(&ev.xkey, xb, sizeof xb - 1, &ks, nullptr);
-                if (ks == XK_Escape) { c.modal = 0; c.modalLen = 0; dirty = true; break; }
+                if (ks == XK_Escape) { if (c.modal == 3) c.modal = 1; else c.modal = 0; dirty = true; break; }
                 if (ks == XK_BackSpace) { if (c.modalLen > 0) c.modalBuf[--c.modalLen] = 0; dirty = true; break; }
                 if (ks == XK_Return || ks == XK_KP_Enter)
                 {
                     c.modalBuf[c.modalLen] = 0;
-                    if (c.modal == 1) c.plugin->savePatchNamed(c.modalBuf);
-                    else c.plugin->assignSlotFromText(c.modalSlot, c.modalBuf);
-                    c.modal = 0; c.modalLen = 0; dirty = true; break;
+                    if (c.modal == 1)
+                    {
+                        const std::string hit = p5store::foldCollision(c.modalBuf);
+                        if (!hit.empty())     // faithful case, but "peace"==... -> confirm
+                        {
+                            std::snprintf(c.modalHit, sizeof c.modalHit, "%s", hit.c_str());
+                            c.modal = 3; dirty = true; break;
+                        }
+                        c.plugin->savePatchNamed(c.modalBuf);
+                        c.modal = 0; c.modalLen = 0;
+                    }
+                    else if (c.modal == 2) { c.plugin->assignSlotFromText(c.modalSlot, c.modalBuf); c.modal = 0; c.modalLen = 0; }
+                    else if (c.modal == 3) { c.plugin->savePatchNamed(c.modalBuf); c.modal = 0; c.modalLen = 0; }
+                    dirty = true; break;
                 }
                 if (n > 0)
                 {
                     const char ch = xb[0];
-                    if ((ch >= '!' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
+                    if ((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
                         (ch >= '0' && ch <= '9') || ch == ' ' || ch == '.' || ch == '_' || ch == '-')
-                    {
-                        char u = ch;
-                        if (u >= 'a' && u <= 'z') u = (char)(u - 'a' + 'A');
+                    {   // faithful case: XLookupString has already applied shift
                         if (c.modalLen < (int)sizeof c.modalBuf - 1)
-                            c.modalBuf[c.modalLen++] = u;
+                            c.modalBuf[c.modalLen++] = ch;
                         dirty = true;
                     }
                 }

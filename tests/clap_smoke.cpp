@@ -50,6 +50,19 @@ int main(int argc, char **argv)
     host.host_data = nullptr;
     host.get_extension = [](const clap_host_t *, const char *) -> const void * { return nullptr; };
     const clap_plugin_t *plugin = factory->create_plugin(factory, &host, desc->id);
+    {   // A brand-new instance must show the default patch: INIT content, raw
+        // name "Peace Be Upon Him" (the bare patch itself stays "INIT").
+        struct O { static int64_t w(const clap_ostream_t *o, const void *d, uint64_t n) {
+            auto *v = (std::vector<char> *)o->ctx; const char *p2 = (const char *)d;
+            v->insert(v->end(), p2, p2 + n); return (int64_t)n; } };
+        std::vector<char> fresh;
+        clap_ostream_t osf{ &fresh, O::w };
+        const auto *st0 = (const clap_plugin_state_t *)plugin->get_extension(plugin, CLAP_EXT_STATE);
+        bool okSave = st0 && st0->save(plugin, &osf);
+        bool okName = okSave && fresh.size() > 8 + 65 + 17 &&
+                      !std::memcmp(fresh.data() + 8 + 65, "Peace Be Upon Him", 17);
+        check("fresh instance shows default patch", okName);
+    }
     check("create_plugin + init", plugin && plugin->init(plugin));
     if (!plugin) { printf("clap smoke: FAILED (no plugin)\n"); return 1; }
     const void *ap = plugin->get_extension(plugin, CLAP_EXT_AUDIO_PORTS);

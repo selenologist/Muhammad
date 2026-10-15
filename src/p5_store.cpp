@@ -48,11 +48,10 @@ std::string baseDir() { return rawDir(); }
 std::string sanitize(const std::string &name)
 {
     std::string out;
-    for (char ch : name)
+    for (char ch : name)                       // faithful: keep the typed case
     {
-        const char u = (char)std::toupper((unsigned char)ch);
-        if (std::isalnum((unsigned char)u) || u == '.' || u == '_' || u == '-' || u == ' ')
-            out.push_back(u);
+        if (std::isalnum((unsigned char)ch) || ch == '.' || ch == '_' || ch == '-' || ch == ' ')
+            out.push_back(ch);
     }
     while (!out.empty() && out.back() == ' ') out.pop_back();
     if (out.size() > 24) out.resize(24);
@@ -74,6 +73,21 @@ bool savePatch(const std::string &name, const uint8_t raw[133])
     f.write((const char *)&kMagic, sizeof kMagic);
     f.write((const char *)raw, 133);
     return (bool)f;
+}
+
+namespace { char foldc(char c){ return (char)std::tolower((unsigned char)c); }
+bool foldEq(const std::string &a, const std::string &b)
+{
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); i++) if (foldc(a[i]) != foldc(b[i])) return false;
+    return true;
+} }
+
+std::string foldCollision(const std::string &name)
+{
+    const std::string n = sanitize(name);
+    for (const auto &f : listPatches()) if (foldEq(f, n)) return f;
+    return {};
 }
 
 bool loadPatch(const std::string &name, uint8_t raw[133])

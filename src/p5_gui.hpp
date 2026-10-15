@@ -16,7 +16,7 @@ struct State
 {
     double knob[kNumKnobs] = {};   // 0..1 normalized position
     bool   led[kNumBtns] = {};
-    char   name[21] = "INIT PROPHET";
+    char   name[21] = "Peace Be Upon Him";
     int bank = 1, program = 1;     // shown on the programmer display
     const char *build = nullptr;   // version+hash, drawn dim in the panel corner
     const char *diag = nullptr;    // live gui diagnostics (host service, negotiation, size)

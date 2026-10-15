@@ -49,7 +49,7 @@ inline void patchInit(Patch &p)
     p.raw[P5_RELEASE_ON] = 1;
     p.raw[P5_UNISON_COUNT] = 5;
     std::memset(p.raw + P5_NAME, ' ', P5_NAME_LEN);
-    std::memcpy(p.raw + P5_NAME, "INIT PROPHET", 12);
+    std::memcpy(p.raw + P5_NAME, "INIT", 4);
 }
 
 // Effective host-facing ranges for knobs whose raw semantics are clamped or
@@ -144,6 +144,14 @@ inline uint32_t patchEncode(const Patch &p, uint8_t *f, uint32_t cap)
     return n;
 }
 
+// The patch a fresh instance shows: bare INIT content, curated name. The raw
+// name bytes carry it, because the screen reads raw and factory programs
+// already arrive in proper case from Sequential's files (no case-forcing).
+inline void patchDefaultName(Patch &p)
+{
+    std::memset(p.raw + P5_NAME, ' ', P5_NAME_LEN);
+    std::memcpy(p.raw + P5_NAME, "Peace Be Upon Him", 17);
+}
 inline void patchName(char *name, const Patch &p)
 {
     uint32_t end = 0;

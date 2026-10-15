@@ -304,7 +304,7 @@ void draw(const Gui &g, const State &s, float w, float h)
         nvgFontFaceId(g.vg, g.fontId);
         nvgFontSize(g.vg, 8.0f);
         nvgFillColor(g.vg, nvgRGBA(180, 180, 190, 255));
-        nvgText(g.vg, bx + 14, by + 112, "ENTER confirm   ESC cancel   BS delete   A-Z 0-9 . _ -", nullptr);
+        nvgText(g.vg, bx + 14, by + 112, "ENTER confirm   ESC cancel   BS delete   upper+lower case kept", nullptr);
     }
 
     nvgRestore(g.vg);

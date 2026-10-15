@@ -62,7 +62,7 @@ public:
     const Patch &patch() const { return patch_; }
     void patchName(char *name) const { p5::patchName(name, patch_); }
     static void patchNameAt(uint32_t factoryIndex, char *name) {   // index 0 = INIT
-        if (factoryIndex == 0) { std::snprintf(name, P5_NAME_LEN + 1, "INIT PROPHET"); return; }
+        if (factoryIndex == 0) { std::snprintf(name, P5_NAME_LEN + 1, "Peace Be Upon Him"); return; }
         Patch p;
         std::memset(&p, 0, sizeof p);
         std::memcpy(p.raw, PW_FACTORY_RAW[factoryIndex - 1], RAW_MAX);

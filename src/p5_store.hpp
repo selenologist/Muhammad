@@ -29,6 +29,10 @@ std::string patchPath(const std::string &name);         // baseDir/<NAME>.muhamm
 std::vector<std::string> listPatches();                 // sorted, name without extension
 
 bool savePatch(const std::string &name, const uint8_t raw[133]);
+// Case-insensitive collision on purpose: filenames stay faithful to the typed
+// case, but "peace" and "PEACE" must confirm as an overwrite even on a
+// case-sensitive fs, because they collide the moment the folder is copied.
+std::string foldCollision(const std::string &name);   // existing name or ""
 bool loadPatch(const std::string &name, uint8_t raw[133]);
 
 // bank/program retrieval map (persisted in baseDir/bank-program.map)
