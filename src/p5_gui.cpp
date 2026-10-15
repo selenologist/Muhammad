@@ -157,6 +157,12 @@ void draw(const Gui &g, const State &s, float w, float h)
     nvgTranslate(g.vg, xoff, yoff);
     nvgScale(g.vg, sc, sc);
 
+    // device-pixel-grid snap for text: a fractional origin makes the bilinear
+    // atlas sampling smear an extra half pixel; rounding the DEVICE position
+    // first keeps glyph stems on pixel boundaries.
+    auto sxp = [&](float v, float dev = 0.f) { return (std::round(xoff + sc * v) + dev - xoff) / sc; };
+    auto syp = [&](float v, float dev = 0.f) { return (std::round(yoff + sc * v) + dev - yoff) / sc; };
+
     nvgBeginPath(g.vg);
     nvgRect(g.vg, 0, 0, kPanelW, kPanelH);
     nvgFillColor(g.vg, col(kColPanel));
@@ -211,7 +217,7 @@ void draw(const Gui &g, const State &s, float w, float h)
         {
             const float nw = nvgTextBounds(g.vg, 0, 0, s.name, s.name + std::strlen(s.name), nullptr);
             nvgFillColor(g.vg, col(kColDispText));
-            nvgText(g.vg, d.x + (float)((d.w - nw) / 2), d.y + d.h * ((s.bpSlot[0] || s.bpPend[0]) ? 0.44f : 0.72f), s.name, nullptr);
+            nvgText(g.vg, sxp(d.x + (float)((d.w - nw) / 2)), syp(d.y + d.h * ((s.bpSlot[0] || s.bpPend[0]) ? 0.44f : 0.72f)), s.name, nullptr);
         }
         if (s.bpSlot[0] || s.bpPend[0])
         {   // two reserved fixed columns: "(n)" then "b-p" — appearance never shifts digits
@@ -224,13 +230,13 @@ void draw(const Gui &g, const State &s, float w, float h)
             {
                 const float q = nvgTextBounds(g.vg, 0, 0, s.bpPend, s.bpPend + std::strlen(s.bpPend), nullptr);
                 nvgFillColor(g.vg, col(kColDispText));
-                nvgText(g.vg, x0 + pw - q, d.y + d.h * 0.92f, s.bpPend, nullptr);   // right-align in column
+                nvgText(g.vg, sxp(x0 + pw - q), syp(d.y + d.h * 0.92f), s.bpPend, nullptr);   // right-align in column
             }
             if (s.bpSlot[0])
             {
                 const float q = nvgTextBounds(g.vg, 0, 0, s.bpSlot, s.bpSlot + std::strlen(s.bpSlot), nullptr);
                 nvgFillColor(g.vg, col(kColDispText));
-                nvgText(g.vg, x0 + pw + gap + (sw - q) / 2.f, d.y + d.h * 0.92f, s.bpSlot, nullptr);
+                nvgText(g.vg, sxp(x0 + pw + gap + (sw - q) / 2.f), syp(d.y + d.h * 0.92f), s.bpSlot, nullptr);
             }
         }
         if (s.bindHint)
@@ -239,7 +245,7 @@ void draw(const Gui &g, const State &s, float w, float h)
             nvgFontSize(g.vg, 13.f);
             nvgTextAlign(g.vg, NVG_ALIGN_CENTER | NVG_ALIGN_BASELINE);
             nvgFillColor(g.vg, nvgRGBA(255, 120, 60, 255));
-            nvgText(g.vg, 876.f, 372.f, s.bindHint, nullptr);
+            nvgText(g.vg, sxp(876.f), syp(372.f), s.bindHint, nullptr);
             nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_BASELINE);
             nvgFontFaceId(g.vg, g.fontId);
         }
@@ -313,7 +319,7 @@ void draw(const Gui &g, const State &s, float w, float h)
             nvgFontSize(g.vg, 16.f);
             nvgTextAlign(g.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
             nvgFillColor(g.vg, s.pickerTab == t ? col(kColDispText) : col(kColInk));
-            nvgText(g.vg, tx + 72, pick::y + 25, t ? "USER" : "FACTORY", nullptr);
+            nvgText(g.vg, sxp(tx + 72), syp(pick::y + 25), t ? "USER" : "FACTORY", nullptr);
         }
         // page controls + close
         const char *pp[2] = { "<", ">" };
@@ -343,12 +349,12 @@ void draw(const Gui &g, const State &s, float w, float h)
         nvgFontSize(g.vg, 14.f);
         nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_BASELINE);
         nvgFillColor(g.vg, nvgRGBA(220, 220, 230, 255));
-        nvgText(g.vg, pick::x + 320, pick::y + 28, s.pickerTitle, nullptr);
+        nvgText(g.vg, sxp(pick::x + 320), syp(pick::y + 28), s.pickerTitle, nullptr);
         char pg[16];
         std::snprintf(pg, sizeof pg, "%d/%d", s.pickerPage + 1, s.pickerPages < 1 ? 1 : s.pickerPages);
         nvgTextAlign(g.vg, NVG_ALIGN_RIGHT | NVG_ALIGN_BASELINE);
         nvgFontSize(g.vg, 14.f);
-        nvgText(g.vg, pick::x + pick::w - 182, pick::y + 28, pg, nullptr);
+        nvgText(g.vg, sxp(pick::x + pick::w - 182), syp(pick::y + 28), pg, nullptr);
         nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
         nvgFontFaceId(g.vg, g.screenId);
         nvgFontSize(g.vg, 30.f);
@@ -367,9 +373,12 @@ void draw(const Gui &g, const State &s, float w, float h)
                 nvgStroke(g.vg);
             }
             nvgFillColor(g.vg, col(kColDispText));
+            nvgFontFaceId(g.vg, g.screenId);
+            nvgFontSize(g.vg, 30.f);                      // per row: chip code below changes it
             const char *rt = s.pickerRows[i];
-            nvgText(g.vg, pick::x + 26, ry + pick::rowH / 2, rt, nullptr);
-            nvgText(g.vg, pick::x + 26.8f, ry + pick::rowH / 2, rt, nullptr);   // faux-bold
+            const float rtx = sxp(pick::x + 26), rty = syp(ry + pick::rowH / 2);
+            nvgText(g.vg, rtx, rty, rt, nullptr);
+            nvgText(g.vg, sxp(pick::x + 26, 1), rty, rt, nullptr);   // faux-bold: +1 device px
             // ASSIGN chip at the right end of the row
             const float ax = pick::x + pick::w - 12 - pick::assignW();
             nvgBeginPath(g.vg);
@@ -382,9 +391,8 @@ void draw(const Gui &g, const State &s, float w, float h)
             nvgFontSize(g.vg, 13.f);
             nvgTextAlign(g.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
             nvgFillColor(g.vg, col(kColInk));
-            nvgText(g.vg, ax + pick::assignW() / 2, ry + pick::rowH / 2, "ASSIGN", nullptr);
-            nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
-            nvgFontFaceId(g.vg, g.screenId);
+            nvgText(g.vg, sxp(ax + pick::assignW() / 2), syp(ry + pick::rowH / 2), "ASSIGN", nullptr);
+            nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);   // next rows center again
         }
         nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_BASELINE);
         nvgFontFaceId(g.vg, g.fontId);
@@ -424,7 +432,7 @@ void draw(const Gui &g, const State &s, float w, float h)
         nvgFillColor(g.vg, col(kColDispText));
         char shown[32];
         std::snprintf(shown, sizeof shown, "%.*s", s.modalLen, s.modalText ? s.modalText : "");
-        nvgText(g.vg, bx + 22, by + 76, shown, nullptr);
+        nvgText(g.vg, sxp(bx + 22), syp(by + 76), shown, nullptr);
         const float cw = nvgTextBounds(g.vg, 0, 0, shown, nullptr, nullptr);
         nvgBeginPath(g.vg);
         nvgRect(g.vg, bx + 23 + cw, by + 62, 7, 18);          // block cursor
