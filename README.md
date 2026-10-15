@@ -26,6 +26,10 @@ and SSE2 as the fallback.
     is bit-identical between the two kernels (the 2x path can only be
     kernel-vs-kernel checked — the firmware has no 48k reference).
 
+    Width independence: rebuilt with -DSIMDE_NO_NATIVE (the portable
+    two-128-bit decomposition of every __m256 op — structurally what NEON
+    does on ARM) the whole suite is still bit-identical.
+
     Machine: x86-64 with AVX2, gcc 13, -O3.
 
     tests/clap_smoke.cpp dlopens the built prophet.clap and drives the CLAP
