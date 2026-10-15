@@ -70,6 +70,12 @@ if(DEFINED MELODEE_DIR AND EXISTS "${MELODEE_DIR}/tests/hostsim.c")
     endif()
 endif()
 
+add_executable(render_demo tests/render_demo.cpp ${ENGINE_SOURCES})
+target_include_directories(render_demo PRIVATE src external)
+if(MATH_LIBRARY)
+    target_link_libraries(render_demo PRIVATE ${MATH_LIBRARY})
+endif()
+
 # ---- CLAP smoke test: dlopens the built plugin and drives its surface --------
 add_executable(clap_smoke tests/clap_smoke.cpp)
 target_include_directories(clap_smoke PRIVATE vendor/clap)
