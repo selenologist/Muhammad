@@ -9,7 +9,6 @@ through [SIMDe](https://github.com/simd-everywhere/simde) — the same portable
 vectorization layer Surge uses — so one source emits AVX2 on x86, NEON on ARM,
 and SSE2 as the fallback.
 
-
 ## Attribution & licensing
 
 - Engine port: **GPL-3.0-only**, from the Melodee firmware
@@ -222,9 +221,7 @@ panel globals on the original, EDIT overlays ride params 64..71.
   loads it. No typing required.
 - **PRESET (far left)** recalls the loaded patch; press it again — having
   touched nothing else — and your floating edits come back.
-- **KEYBD** (filter key tracking) is a 3-state button: LED off = OFF,
-  amber = HALF (x sqrt2/oct), red = FULL (x2/oct) — matching the engine's
-  quantisation exactly.
+
 - **Bare INIT**: picker row 2 ("INIT (bare patch)"), or a Bitwig *browser*
   entry named INIT (preset-discovery lets the DAW's own browser list our
   factory bank; the panel picker above is the in-plugin equivalent), or
