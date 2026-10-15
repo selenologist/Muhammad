@@ -44,7 +44,9 @@ struct Plugin {
     void applyRaw(int idx, int v);
     int rawOf(int idx) const;
     double guiValue(clap_id id);                    // same units as par_get_value
-    void guiSet(clap_id id, double v);              // apply + queue host sync event
+    void guiSetLocal(clap_id id, double v);         // engine only (drag in progress)
+    void guiSet(clap_id id, double v);              // apply + one host sync event
+    void guiSync(clap_id id);                       // push current value once (gesture end)
     void loadProgram(int k);
     static const char *nameOf(clap_id id);
 };

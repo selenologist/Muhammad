@@ -143,10 +143,25 @@ static double paramValue(Plugin *s, clap_id id)
 
 double Plugin::guiValue(clap_id id) { return paramValue(this, id); }
 
+void Plugin::guiSetLocal(clap_id id, double v)
+{
+    // Gesture in progress: the engine follows instantly; the host learns the
+    // FINAL value at gesture end. Pushing per-motion events would make the
+    // host echo the whole drag history back at us as input events, and the
+    // stale echoes re-apply old positions — the audible "catch-up trail".
+    applyParam(this, id, v);
+}
+
 void Plugin::guiSet(clap_id id, double v)
 {
     applyParam(this, id, v);
-    markPending(id, paramValue(this, id));   // latest value wins; no backlog
+    markPending(id, paramValue(this, id));
+    requestHostParamFlush(this);
+}
+
+void Plugin::guiSync(clap_id id)
+{
+    markPending(id, paramValue(this, id));
     requestHostParamFlush(this);
 }
 

@@ -32,6 +32,7 @@ struct Ctx
     Plugin *plugin;
     Display *dpy = nullptr;
     Window parent = 0, win = 0;
+    Atom xembed = None, xembedInfo = None;
     GLXContext gl = nullptr;
     Atom wmDelete = None;
     NVGcontext *vg = nullptr;
@@ -138,6 +139,17 @@ void actuate(Ctx &c, int btnIdx)
 void pump(Ctx &c)
 {
     bool dirty = false;
+    if (c.parent && c.win)
+    {
+        XWindowAttributes pa{};
+        if (XGetWindowAttributes(c.dpy, c.parent, &pa) && pa.width > 1 && pa.height > 1 &&
+            ((uint32_t)pa.width != c.w || (uint32_t)pa.height != c.h))
+        {
+            XResizeWindow(c.dpy, c.win, pa.width, pa.height);
+            c.w = (uint32_t)pa.width; c.h = (uint32_t)pa.height;
+            dirty = true;
+        }
+    }
     XEvent ev;
     while (XPending(c.dpy))
     {
@@ -201,6 +213,8 @@ void pump(Ctx &c)
                     p5ui::btnAt(p5ui::State{}, (float)ev.xbutton.x, (float)ev.xbutton.y,
                                 (float)c.w, (float)c.h) == c.pressBtn)
                 { actuate(c, c.pressBtn); dirty = true; }   // LEDs must flip NOW, not on the next tick
+                if (c.dragKnob >= 0)                        // gesture ends: tell the host the FINAL value
+                { c.plugin->guiSync((clap_id)p5ui::kKnobs[c.dragKnob].pid); dirty = true; }
                 c.dragKnob = -1; c.pressBtn = -1;
                 break;
             case MotionNotify:
@@ -213,12 +227,12 @@ void pump(Ctx &c)
                     if (norm < 0) norm = 0;
                     if (norm > 1) norm = 1;
                     const int pid = p5ui::kKnobs[c.dragKnob].pid;
-                    c.plugin->guiSet((clap_id)pid, normToValue(pid, norm));
+                    c.plugin->guiSetLocal((clap_id)pid, normToValue(pid, norm));
                     render(c);
                 }
                 break;
             case ClientMessage:
-                if ((Atom)ev.xclient.data.l[0] == c.wmDelete) { /* embedded: ignore */ }
+                if (ev.xclient.message_type == c.xembed) { /* EMBEDDED/FOCUS/CONFIGURE lifecycle */ }
                 break;
             default:
                 break;
@@ -255,7 +269,7 @@ bool setupEmbedded(Ctx &c, Window parent)
     XSetWindowAttributes swa{};
     swa.colormap = XCreateColormap(c.dpy, parent, vi->visual, AllocNone);
     swa.event_mask = ExposureMask | ButtonPressMask | ButtonReleaseMask | PointerMotionMask |
-                     StructureNotifyMask;
+                     StructureNotifyMask;   // ClientMessage needs no mask
     uint32_t w, h;
     if (c.reqW && c.reqH) { w = c.reqW; h = c.reqH; }          // host already told us
     else
@@ -271,6 +285,38 @@ bool setupEmbedded(Ctx &c, Window parent)
     if (!c.win) { teardown(c); return false; }
     XStoreName(c.dpy, c.win, "Prophet-5");
     c.wmDelete = XInternAtom(c.dpy, "WM_DELETE_WINDOW", False);
+
+    // Announce XEmbed (the clap spec's x11 embedding protocol) so the host
+    // manages us as an embedded window, and pin the aspect in WM hints.
+    c.xembed = XInternAtom(c.dpy, "_XEMBED", False);
+    c.xembedInfo = XInternAtom(c.dpy, "_XEMBED_INFO", False);
+    const long xembedInfoVal[2] = { 0 /*version*/, 1 /*XEMBED_MAPPED*/ };
+    XChangeProperty(c.dpy, c.win, c.xembedInfo, c.xembedInfo, 32, PropModeReplace,
+                    (const unsigned char *)xembedInfoVal, 2);
+    XClassHint classHint{};
+    classHint.res_name = const_cast<char *>("prophet");
+    classHint.res_class = const_cast<char *>("Prophet-5");
+    XSetClassHint(c.dpy, c.win, &classHint);
+    XSizeHints *sh = XAllocSizeHints();
+    sh->flags = PAspect | PMinSize;
+    sh->min_aspect.x = sh->max_aspect.x = (int)p5ui::kPanelW;   // 1560:416, exactly
+    sh->min_aspect.y = sh->max_aspect.y = (int)p5ui::kPanelH;
+    sh->min_width = 520; sh->min_height = 139;
+    XSetWMNormalHints(c.dpy, c.win, sh);
+    XFree(sh);
+    {   // XEMBED_EMBEDDED_NOTIFY(0) to the parent
+        XEvent ce{};
+        ce.xclient.type = ClientMessage;
+        ce.xclient.window = parent;
+        ce.xclient.message_type = c.xembed;
+        ce.xclient.format = 32;
+        ce.xclient.data.l[0] = (long)CurrentTime;
+        ce.xclient.data.l[1] = 0;               // XEMBED_EMBEDDED_NOTIFY
+        ce.xclient.data.l[2] = (long)c.win;
+        ce.xclient.data.l[3] = (long)parent;
+        ce.xclient.data.l[4] = 0;
+        XSendEvent(c.dpy, parent, False, NoEventMask, &ce);
+    }
 
     if (!glXMakeCurrent(c.dpy, c.win, c.gl)) { teardown(c); return false; }
     c.vg = nvgCreateGL3(NVG_ANTIALIAS | NVG_STENCIL_STROKES);
