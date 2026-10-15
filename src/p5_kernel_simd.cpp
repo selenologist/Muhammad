@@ -53,11 +53,13 @@ inline V fabsfV(V a) { return andnotf(spl(-0.0f), a); }                    // cl
 inline V negf(V a) { return xorf(a, spl(-0.0f)); }
 
 // uint32 -> float like the C cast (split at 2^31)
+// uint32 -> float with the same single correct rounding as the C cast: split into
+// two 16-bit halves (each exact as float) and round once at the end.
 inline V u2f(VI u)
 {
-    VI lo = iand(u, spli(0x7FFFFFFF));                    // low 31 bits, as a positive signed value
-    V hi = simde_mm256_cvtepi32_ps(isrli(u, 31));
-    return add(simde_mm256_cvtepi32_ps(lo), mul(hi, spl(2147483648.0f)));
+    V hi = simde_mm256_cvtepi32_ps(isrli(u, 16));         // exact, < 2^16
+    V lo = simde_mm256_cvtepi32_ps(iand(u, spli(0xFFFF)));
+    return add(mul(hi, spl(65536.0f)), lo);
 }
 // float -> uint32 like the C cast (values below 2^32)
 inline VI cvtf2u(V f)

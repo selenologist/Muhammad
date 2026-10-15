@@ -12,7 +12,7 @@ namespace p5 {
 
 static const int V_POLY = 0, V_MONO = 1, V_LEGATO = 2, V_UNISON = 3;
 
-Engine::Engine(bool simd) : simd_(simd)
+Engine::Engine(KernelMode mode) : mode_(mode)
 {
     Patch p;
     patchInit(p);
@@ -558,7 +558,14 @@ void Engine::process(int32_t *out, uint32_t n)
         }
     }
     if (mask) {
-        if (simd_) p5KernelSimd(*this, mask, out, n);
+        // Auto: below two live voices the vector kernel's fixed cost dominates,
+        // so the scalar path wins; both compute bit-identical results (proven by
+        // tests/test_engine_ab against the firmware reference), switching mid-stream
+        // is safe.
+        const int lanes = __builtin_popcount(mask);
+        const bool wide = mode_ == KernelMode::Wide ||
+                          (mode_ == KernelMode::Auto && lanes >= 2);
+        if (wide) p5KernelSimd(*this, mask, out, n);
         else p5KernelScalar(*this, mask, out, n);
     }
 

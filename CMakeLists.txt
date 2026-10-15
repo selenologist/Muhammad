@@ -69,3 +69,9 @@ if(DEFINED MELODEE_DIR AND EXISTS "${MELODEE_DIR}/tests/hostsim.c")
         target_link_libraries(ref_dump PRIVATE ${MATH_LIBRARY})
     endif()
 endif()
+
+# ---- CLAP smoke test: dlopens the built plugin and drives its surface --------
+add_executable(clap_smoke tests/clap_smoke.cpp)
+target_include_directories(clap_smoke PRIVATE vendor/clap)
+target_link_libraries(clap_smoke PRIVATE ${CMAKE_DL_LIBS})
+add_dependencies(clap_smoke prophet_clap)

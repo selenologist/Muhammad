@@ -17,10 +17,10 @@ struct Plugin {
 
     const clap_host_t *host = nullptr;
     clap_plugin_t *self = nullptr;
-    p5::Engine engine{true};
+    p5::Engine engine{p5::KernelMode::Auto};
     double sr = 44100.0;
     bool active = false;
-    float trim = 1.0f;
+    float trim = 0.7f;   // headroom for stacked full-velocity voices (parameter 0..2)
     int32_t scratch[32] = {0};
     int bendRaw = 0;
 

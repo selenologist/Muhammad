@@ -39,6 +39,7 @@ struct LaneParams {
     uint32_t ia, ib;
 };
 
+enum class KernelMode { Scalar, Wide, Auto };
 class Engine;
 // The two render kernels (p5_kernel_scalar.cpp / p5_kernel_simd.cpp):
 // render the lanes of `mask`, n samples into out (additive), advancing the hot state.
@@ -49,7 +50,7 @@ class Engine {
 public:
     friend void p5KernelScalar(Engine &, uint32_t, int32_t *, uint32_t);
     friend void p5KernelSimd(Engine &, uint32_t, int32_t *, uint32_t);
-    explicit Engine(bool simd = true);
+    explicit Engine(KernelMode mode = KernelMode::Auto);
 
     // ---- lifecycle / performance -------------------------------------------
     void activate(double sampleRate);         // scales every rate table by 44100/sr
@@ -84,7 +85,7 @@ public:
     void setVoiceModeOverride(int m) { voiceModeOverride_ = m; }
     uint32_t liveVoices() const { return live_; }
     const int32_t *lastMix() const { return mixTap_; }   // pre-post block (debug)
-    void setUseSimd(bool s) { simd_ = s; }
+    void setKernelMode(KernelMode m) { mode_ = m; }
 
     // ---- audio ----------------------------------------------------------------
     void process(int32_t *out, uint32_t n);   // n <= 32; mono int32 mix, part post applied
@@ -147,7 +148,7 @@ private:
     uint32_t phaseA_[MAXV], phaseB_[MAXV], noise_[MAXV];
     float z_[4][MAXV], triangle_[MAXV], syncTail_[MAXV];
 
-    bool simd_ = true;
+    KernelMode mode_ = KernelMode::Auto;
 };
 
 } // namespace p5

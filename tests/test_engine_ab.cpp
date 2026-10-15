@@ -76,7 +76,7 @@ int main(int argc, char **argv)
     int failures = 0;
     for (int s = 0; s < NSCEN; s++) {
         std::vector<int32_t> a, b;
-        p5::Engine scalar(false), simd(true);
+        p5::Engine scalar(p5::KernelMode::Scalar), simd(p5::KernelMode::Wide);
         scalar.setPolyphony(5);
         simd.setPolyphony(5);
         scalar.activate(44100);
@@ -85,6 +85,8 @@ int main(int argc, char **argv)
         runScenario(scenarios[s], simd, b);
 
         long diffCount = 0, maxDiff = 0;
+        { for (size_t i = 0; i < a.size(); i++) if (a[i] != b[i] && getenv("FIRSTDIFF")) {
+            printf("first s-d diff at %zu: scalar %d simd %d\n", i, a[i], b[i]); break; } }
         double signal = 0, noise = 0;
         for (size_t i = 0; i < a.size(); i++) {
             long d = labs(a[i] - b[i]);

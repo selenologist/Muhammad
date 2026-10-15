@@ -7,9 +7,9 @@
 #include <string>
 #include "p5_engine.hpp"
 
-static double bench(bool simd, int voices)
+static double bench(p5::KernelMode mode, int voices)
 {
-    p5::Engine e(simd);
+    p5::Engine e(mode);
     e.activate(44100);
     e.setPolyphony(8);
     p5::Patch p;
@@ -30,9 +30,10 @@ static double bench(bool simd, int voices)
 
 int main()
 {
-    printf("8 voices scalar: %6.1f ns/sample\n", bench(false, 8));
-    printf("8 voices simd  : %6.1f ns/sample\n", bench(true, 8));
-    printf("1 voice  scalar: %6.1f ns/sample\n", bench(false, 1));
-    printf("1 voice  simd  : %6.1f ns/sample\n", bench(true, 1));
+    printf("8 voices scalar: %6.1f ns/sample\n", bench(p5::KernelMode::Scalar, 8));
+    printf("8 voices simd  : %6.1f ns/sample\n", bench(p5::KernelMode::Wide, 8));
+    printf("8 voices auto  : %6.1f ns/sample\n", bench(p5::KernelMode::Auto, 8));
+    printf("1 voice  scalar: %6.1f ns/sample\n", bench(p5::KernelMode::Scalar, 1));
+    printf("1 voice  auto  : %6.1f ns/sample\n", bench(p5::KernelMode::Auto, 1));
     return 0;
 }
