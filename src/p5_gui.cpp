@@ -205,8 +205,7 @@ void draw(const Gui &g, const State &s, float w, float h)
         nvgStroke(g.vg);
         // Retro terminal readout (VT323): patch name + bank-program, amber on dark.
         nvgFontFaceId(g.vg, g.screenId);
-        char bp[16] = "";
-        if (s.bank > 0) std::snprintf(bp, sizeof bp, "%d-%d", s.bank, s.program);
+        const char *bp = s.bp;
         float fs = d.h * 0.46f;
         nvgFontSize(g.vg, fs);
         while (fs > 6.0f && nvgTextBounds(g.vg, 0, 0, s.name, s.name + std::strlen(s.name), nullptr) > d.w - 8)

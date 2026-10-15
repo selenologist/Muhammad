@@ -26,7 +26,7 @@ PID = {
     "flt_envamt": 40,
     "flt_a": 43, "amp_a": 44, "flt_d": 45, "amp_d": 46,
     "flt_s": 47, "amp_s": 48, "flt_r": 49, "amp_r": 50,
-    "release_btn": 51, "unison": 52,
+    "release_btn": 51, "unison": 52, "unison_det": 54, "vintage": 37,
     "volume": 80, "master_tune": 82, "prog_bankselect": 84, "os": 81, "unison_cnt": 53,
     "lfo_preset": -1, "flt_preset": -1, "prog_preset": -1, "prog_record": -1,
     "edit_btn": -1, "tune_btn": -1,
@@ -38,7 +38,8 @@ for _i in range(1, 9):
 SWITCHES = {"osc1_saw", "osc1_sq", "osc2_saw", "osc2_tri", "osc2_sq", "osc1_sync",
             "osc2_lofreq", "osc2_keyboard", "lfo_saw", "lfo_tri", "lfo_sq",
             "wm_freq1", "wm_freq2", "wm_pw1", "wm_pw2", "wm_filter",
-            "pm_freq1", "pm_pw1", "pm_filter", "unison", "release_btn", "os"}
+            "pm_freq1", "pm_pw1", "pm_filter", "unison", "release_btn", "os",
+            "flt_keyboard"}
 
 def f(x):
     s = f"{x:.1f}"
@@ -233,9 +234,9 @@ knob(562, 196, "osc2_pw", label="PULSE WIDTH", label_dy=48)
 btn(614, 196, "osc2_lofreq", label="LO FREQ", label_dy=48)
 btn(666, 196, "osc2_keyboard", label="KEYBOARD", label_dy=48)
 
-# --- GLIDE / UNISON (B, r3, unbordered) ---
-knob(372, 332, "glide", label="GLIDE", label_dy=38)
-btn(444, 332, "unison", label="UNISON", label_dy=38)
+# --- UNISON group (B, r3, unbordered): DETUNE / UNISON / COUNT ---
+knob(372, 332, "unison_det", label="UNISON DET.", label_dy=38)
+btn(442, 332, "unison", label="UNISON", label_dy=38)
 knob(512, 332, "unison_cnt", label="COUNT", label_dy=38)
 
 # --- MIXER (r1) ---
@@ -244,21 +245,22 @@ knob(756, 64, "mix_osc1", label="OSC 1")
 knob(804, 64, "mix_osc2", label="OSC 2")
 knob(852, 64, "mix_noise", label="NOISE")
 
-# --- OVERSAMPLE (PC-side feature; fills the dead strip under MIXER) ---
-btn(804, 196, "os", color="btnDark", label="OVERSAMPLE", label_dy=38)
+# --- GLIDE + OVERSAMPLE (PC-side feature; the strip under MIXER) ---
+knob(756, 196, "glide", label="GLIDE", label_dy=38)
+btn(850, 196, "os", color="btnDark", label="OVERSAMPLE", label_dy=38)
 
 # --- FILTER (tall r1+r2) ---
 box(902, 10, 334, 248, "FILTER")
 btn(928, 62, "flt_preset", color="btnGray", label="PRESET")
-knob(988, 58, "flt_cutoff", label="CUTOFF")
-knob(1060, 58, "flt_reso", label="RESONANCE")
-knob(1140, 58, "flt_envamt", label="ENVELOPE")
-notes((1140, 100, "AMOUNT"))
-btn(1204, 62, "flt_keyboard", label="KEYBOARD")
-knob(952, 196, "flt_a", label="ATTACK", label_dy=42)
-knob(1018, 196, "flt_d", label="DECAY", label_dy=42)
-knob(1084, 196, "flt_s", label="SUSTAIN", label_dy=42)
-knob(1152, 196, "flt_r", label="RELEASE", label_dy=42)
+knob(996, 58, "flt_cutoff", label="CUTOFF")
+knob(1064, 58, "flt_reso", label="RESONANCE")
+knob(1132, 58, "flt_envamt", label="ENVELOPE")
+notes((1132, 100, "AMOUNT"))
+btn(1200, 62, "flt_keyboard", label="KEYBOARD")
+knob(964, 196, "flt_a", label="ATTACK", label_dy=42)
+knob(1032, 196, "flt_d", label="DECAY", label_dy=42)
+knob(1100, 196, "flt_s", label="SUSTAIN", label_dy=42)
+knob(1168, 196, "flt_r", label="RELEASE", label_dy=42)
 
 # --- MASTER TUNE / VOLUME (white knobs, unbordered, right) ---
 knob(1330, 66, "master_tune", label="MASTER TUNE", white=True, label_dy=40)
@@ -266,10 +268,10 @@ knob(1462, 66, "volume", label="VOLUME", white=True, label_dy=40)
 
 # --- AMPLIFIER (right, r2) ---
 box(1242, 138, 310, 120, "AMPLIFIER")
-knob(1292, 196, "amp_a", label="ATTACK", label_dy=44)
-knob(1360, 196, "amp_d", label="DECAY", label_dy=44)
-knob(1428, 196, "amp_s", label="SUSTAIN", label_dy=44)
-knob(1494, 196, "amp_r", label="RELEASE", label_dy=44)
+knob(1296, 196, "amp_a", label="ATTACK", label_dy=44)
+knob(1364, 196, "amp_d", label="DECAY", label_dy=44)
+knob(1432, 196, "amp_s", label="SUSTAIN", label_dy=44)
+knob(1498, 196, "amp_r", label="RELEASE", label_dy=44)
 
 # --- PROGRAMMER (r3, shifted right; larger display; spread program row) ---
 box(560, 266, 676, 138, "PROGRAMMER")
@@ -284,8 +286,9 @@ subhead(1047, 376, "PROGRAM SELECT", 14)
 
 # --- RELEASE / EDIT / TUNE (r3 right, unbordered) ---
 btn(1288, 330, "release_btn", color="btnDark", label="RELEASE", label_dy=36)
-btn(1372, 330, "edit_btn", color="btnGray", led=False, label="EDIT", label_dy=36)
-btn(1444, 330, "tune_btn", color="btnGray", led=False, label="TUNE", label_dy=36)
+btn(1366, 330, "edit_btn", color="btnGray", led=False, label="EDIT", label_dy=36)
+# VINTAGE replaces the hardware TUNE button (0 = stable Rev4 .. 127 = loose Rev1)
+knob(1444, 330, "vintage", label="VINTAGE", label_dy=36)
 
 # ================= assemble SVG =================
 svg = f'''<?xml version="1.0" encoding="UTF-8"?>

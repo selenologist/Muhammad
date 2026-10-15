@@ -50,6 +50,8 @@ struct Ctx
 
     clap_id timerId = 0;
     bool timerRegistered = false;
+
+    uint32_t reqW = 0, reqH = 0;   // set_size may arrive before set_parent
 };
 
 Ctx *ctxFrom(const clap_plugin_t *p)
@@ -76,6 +78,16 @@ void fillState(Ctx &c, p5ui::State &st)
     for (char *q = st.name + 19; q >= st.name && *q == ' '; *q-- = 0) {}
     st.bank = program >= 0 ? program / 8 + 1 : 0;
     st.program = program >= 0 ? program % 8 + 1 : 0;
+    // A bank cursor that has moved away from the loaded patch's bank shows in
+    // parentheses, so stepping banks never looks like the patch moved.
+    const int pb = c.plugin->bank + 1;
+    if (program >= 0)
+    {
+        if (pb != st.bank) std::snprintf(st.bp, sizeof st.bp, "%d-%d (%d)", st.bank, st.program, pb);
+        else std::snprintf(st.bp, sizeof st.bp, "%d-%d", st.bank, st.program);
+    }
+    else if (c.plugin->bank != 0) std::snprintf(st.bp, sizeof st.bp, "(%d)", pb);
+    else st.bp[0] = 0;
 }
 
 // param value from a normalized knob position, in the param's own units
@@ -245,8 +257,12 @@ bool setupEmbedded(Ctx &c, Window parent)
     swa.event_mask = ExposureMask | ButtonPressMask | ButtonReleaseMask | PointerMotionMask |
                      StructureNotifyMask;
     uint32_t w, h;
-    w = (uint32_t)(p5ui::kPanelW * 0.75 * (c.scale > 0.0 ? c.scale : 1.0));
-    h = (uint32_t)(w * p5ui::kPanelH / p5ui::kPanelW);
+    if (c.reqW && c.reqH) { w = c.reqW; h = c.reqH; }          // host already told us
+    else
+    {
+        w = (uint32_t)(p5ui::kPanelW * 0.75 * (c.scale > 0.0 ? c.scale : 1.0));
+        h = (uint32_t)(w * p5ui::kPanelH / p5ui::kPanelW);
+    }
     c.w = w; c.h = h;
 
     c.win = XCreateWindow(c.dpy, parent, 0, 0, (int)w, (int)h, 0, vi->depth, InputOutput, vi->visual,
@@ -341,12 +357,18 @@ bool gui_adjust_size(const clap_plugin_t *, uint32_t *w, uint32_t *h)
 bool gui_set_size(const clap_plugin_t *p, uint32_t w, uint32_t h)
 {
     auto *c = ctxFrom(p);
-    if (!c || !c->win) return false;
-    (void)h;
-    uint32_t nh = w;
-    gui_adjust_size(p, &w, &nh);
-    XResizeWindow(c->dpy, c->win, (int)w, (int)nh);
-    c->w = w; c->h = nh;
+    if (!c) return false;
+    // The host's size is authoritative: resize EXACTLY to it. (Forcing our own
+    // aspect here left a host-painted band under the window — that was the
+    // "tall window". Aspect belongs to the drag hints, not to set_size.)
+    if (w == 0 || h == 0) return false;
+    c->reqW = w; c->reqH = h;
+    if (c->win)
+    {
+        XResizeWindow(c->dpy, c->win, (int)w, (int)h);
+        c->w = w; c->h = h;
+        render(*c);
+    }
     return true;
 }
 bool gui_set_parent(const clap_plugin_t *p, const clap_window_t *window)

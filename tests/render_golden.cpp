@@ -63,6 +63,7 @@ static p5ui::State stateFor(const char *name, p5::Engine &e, int &programOut)
     for (char *q = s.name + 19; q >= s.name && *q == ' '; *q-- = 0) {}
     s.bank = program >= 0 ? program / 8 + 1 : 0;
     s.program = program >= 0 ? program % 8 + 1 : 0;
+    if (s.bank > 0) std::snprintf(s.bp, sizeof s.bp, "%d-%d", s.bank, s.program);
     return s;
 }
 
