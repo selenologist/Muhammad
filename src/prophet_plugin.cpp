@@ -77,7 +77,7 @@ const clap_plugin_descriptor_t kDescriptor = {
     "Melodee port",
     "https://github.com/keremimo/melodee",
     nullptr, nullptr,
-    "0.7-gui4",   // bump per shipped build: the version Bitwig shows proves which binary is loaded
+    "0.8-gui5",   // bump per shipped build: the version Bitwig shows proves which binary is loaded
     "Prophet-5 (Rev-4 wire) engine ported from the Melodee firmware",
     kFeatures
 };

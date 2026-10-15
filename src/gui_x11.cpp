@@ -17,6 +17,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 
 #include "prophet_plugin.hpp"
 #include "p5_common.hpp"
@@ -54,6 +55,11 @@ struct Ctx
     bool timerRegistered = false;
 
     uint32_t reqW = 0, reqH = 0;   // set_size may arrive before set_parent
+
+    // host-side gui service + aspect negotiation bookkeeping
+    const clap_host_gui_t *hostGui = nullptr;
+    int resizeRequests = 0;        // give up if the host keeps saying no
+    long lastAskMs = 0;
 };
 
 Ctx *ctxFrom(const clap_plugin_t *p)
@@ -140,6 +146,31 @@ void actuate(Ctx &c, int btnIdx)
     c.plugin->guiSet((clap_id)b.pid, c.plugin->guiValue((clap_id)b.pid) != 0.0 ? 0.0 : 1.0);
 }
 
+long nowMs()
+{
+    timespec ts{};
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec * 1000L + ts.tv_nsec / 1000000L;
+}
+
+// The host owns the container size; when it hands us one whose height exceeds
+// the layout aspect, ask once per second for the correct height (final clap-gui
+// request_resize). After 2 ignored requests we stop pestering and accept the
+// letterbox — better a quiet band than a fight.
+void askHostForAspect(Ctx &c)
+{
+    if (!c.hostGui || !c.hostGui->request_resize || c.w < 40u || c.resizeRequests >= 2) return;
+    const uint32_t wantH = (uint32_t)(c.w * p5ui::kPanelH / p5ui::kPanelW);
+    if (c.h <= wantH + 2) return;                        // already fine
+    const long t = nowMs();
+    if (t - c.lastAskMs < 1000) return;
+    c.lastAskMs = t;
+    c.resizeRequests++;
+    const bool ok = c.hostGui->request_resize(c.plugin->host, c.w, wantH);
+    std::fprintf(stderr, "[p5gui] request_resize %ux%u -> %ux%u accepted=%d\n",
+                 c.w, c.h, c.w, wantH, (int)ok);
+}
+
 void pump(Ctx &c)
 {
     bool dirty = false;
@@ -165,7 +196,7 @@ void pump(Ctx &c)
         switch (ev.type)
         {
             case Expose:
-                if (ev.xexpose.count == 0) render(c);
+                if (ev.xexpose.count == 0) dirty = true;
                 break;
             case ConfigureNotify:
                 if (ev.xconfigure.width > 0 && ev.xconfigure.height > 0 &&
@@ -173,7 +204,8 @@ void pump(Ctx &c)
                 {
                     c.w = (uint32_t)ev.xconfigure.width;
                     c.h = (uint32_t)ev.xconfigure.height;
-                    render(c);
+                    c.resizeRequests = 0;   // host answered (or user dragged): renegotiate
+                    dirty = true;
                 }
                 break;
             case ButtonPress:
@@ -235,7 +267,7 @@ void pump(Ctx &c)
                     if (norm > 1) norm = 1;
                     const int pid = p5ui::kKnobs[c.dragKnob].pid;
                     c.plugin->guiSetLocal((clap_id)pid, normToValue(pid, norm));
-                    render(c);
+                    dirty = true;   // rendered once after the burst drains
                 }
                 break;
             case ClientMessage:
@@ -245,7 +277,12 @@ void pump(Ctx &c)
                 break;
         }
     }
+    // The whole X backlog is applied and drawn exactly once. Rendering per
+    // motion event serialized us on glXSwapBuffers: after a fast drag the
+    // stale backlog kept replaying positions (and their blocking swaps) long
+    // after release — that was the audible "trail", ours, not the host's.
     if (dirty) render(c);
+    askHostForAspect(c);
 }
 
 // ---- lifecycle ---------------------------------------------------------------
@@ -370,7 +407,14 @@ bool gui_create(const clap_plugin_t *p, const char *api, bool is_floating)
     std::fprintf(stderr, "[p5gui] create api=%s floating=%d\n", api ? api : "(null)", (int)is_floating);
     if (!gui_is_api_supported(p, api, is_floating)) return false;
     auto *s = static_cast<Plugin *>(p->plugin_data);
-    if (!s->gui) s->gui = new Ctx(s);
+    if (!s->gui)
+    {
+        s->gui = new Ctx(s);
+        Ctx &c = *static_cast<Ctx *>(s->gui);
+        if (s->host && s->host->get_extension)
+            c.hostGui = (const clap_host_gui_t *)s->host->get_extension(s->host, CLAP_EXT_GUI);
+        std::fprintf(stderr, "[p5gui] host clap.gui service %s\n", c.hostGui ? "present" : "absent");
+    }
     return true;
 }
 void gui_destroy(const clap_plugin_t *p)
