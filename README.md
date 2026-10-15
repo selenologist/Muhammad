@@ -1,12 +1,30 @@
-# Prophet — the Melodee Prophet-5 engine as a CLAP plugin
+# Muhammad
 
-A port of the **PROPHET** engine from the [Melodee](https://github.com/keremimo/melodee)
-firmware (`eng_prophet_test.c`, the Rev-4 wire-format Prophet-5) to PC-like
-platforms, packaged as a [CLAP](https://clap.audio) plugin. The per-sample
+*A P5 clone — the PROPHET engine ported from the Melodee firmware to CLAP.*
+
+A port of the **PROPHET** engine from [Melodee](https://keremimo.github.io/melodee/)
+(`eng_prophet_test.c`, bespoke to Melodee) to PC-like platforms, packaged as a [CLAP](https://clap.audio) plugin. The per-sample
 kernel processes the **eight voices as the eight lanes of a float32x8 vector**
 through [SIMDe](https://github.com/simd-everywhere/simde) — the same portable
 vectorization layer Surge uses — so one source emits AVX2 on x86, NEON on ARM,
 and SSE2 as the fallback.
+
+
+## Attribution & licensing
+
+- Engine port: **GPL-3.0-only**, from the Melodee firmware
+  (`eng_prophet_test.c`, `voice.c`, `dsp.c`, `prophet_patch.c`). The PROPHET
+  engine is bespoke Melodee work; Melodee's license text is inherited verbatim
+  in `LICENSE`. Author of the upstream engine work: **keremimo** (Melodee).
+- Factory patch data (`p5_tables.h`, 200 programs): **Sequential's** 2025 v1.03
+  Prophet-5 Rev-4 SysEx program files, carried as raw wire bytes unmodified —
+  they are *not* part of the engine's authorship claim.
+- "Prophet-5" / "PROPHET" appear only as statements of fact about wire formats
+  and the upstream engine. This plugin is **Muhammad**; it is not a Prophet
+  product and is not affiliated with Sequential.
+- This port: **selenologist**. Plugin identifier: `muhammad.unresolvable`
+  (no domain is claimed; CLAP identifiers require uniqueness, not
+  resolvability).
 
 ## Verification (the point of the exercise)
 
