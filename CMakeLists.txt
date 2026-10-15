@@ -23,7 +23,7 @@ find_program(GIT_EXE git)
 execute_process(COMMAND ${GIT_EXE} rev-parse --short HEAD OUTPUT_VARIABLE P5_GIT OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
 execute_process(COMMAND ${GIT_EXE} status --porcelain OUTPUT_VARIABLE P5_DIRTY OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
 string(TIMESTAMP P5_BUILDDATE "%Y-%m-%d %H:%M")
-set(P5_VERSION "0.9-gui6")
+set(P5_VERSION "1.0-muh")
 set(P5_DIRTY_MARK "")
 if(P5_DIRTY)
     set(P5_DIRTY_MARK "-d")
@@ -72,6 +72,7 @@ add_library(prophet_clap MODULE
     src/clap_entry.cpp
     src/prophet_plugin.cpp
     src/p5_prophet_discovery.cpp
+    src/p5_store.cpp
     ${GUI_PLUGIN_SOURCES}
     ${ENGINE_SOURCES}
 )
@@ -82,7 +83,7 @@ if(GUI_DEFINES)
 endif()
 set_target_properties(prophet_clap PROPERTIES
     PREFIX ""
-    OUTPUT_NAME "prophet"
+    OUTPUT_NAME "muhammed"
     SUFFIX ".clap"
 )
 if(MATH_LIBRARY)
@@ -124,6 +125,10 @@ target_include_directories(render_demo PRIVATE src external)
 if(MATH_LIBRARY)
     target_link_libraries(render_demo PRIVATE ${MATH_LIBRARY})
 endif()
+
+# ---- patch store unit test (headless; P5_STORE_DIR override) -----------------
+add_executable(test_store tests/test_store.cpp src/p5_store.cpp)
+target_include_directories(test_store PRIVATE src)
 
 # ---- CLAP smoke test: dlopens the built plugin and drives its surface --------
 add_executable(clap_smoke tests/clap_smoke.cpp)

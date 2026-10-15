@@ -20,6 +20,11 @@ struct State
     int bank = 1, program = 1;     // shown on the programmer display
     const char *build = nullptr;   // version+hash, drawn dim in the panel corner
     const char *diag = nullptr;    // live gui diagnostics (host service, negotiation, size)
+    // text-entry modal over the programmer (RECORD save / PRESET assign)
+    const char *modalTitle = nullptr;
+    const char *modalPrompt = nullptr;
+    const char *modalText = nullptr;
+    int modalLen = 0;
     char bp[24] = "";              // prebuilt bank-program line ("1-2", "1-2 (3)", "(3)")
 };
 

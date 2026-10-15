@@ -261,6 +261,52 @@ void draw(const Gui &g, const State &s, float w, float h)
         tracked(g, t.x, t.y, t.txt, kTxtTrack[t.style], col(kColInk));
     }
 
+    // ---- text-entry modal over the programmer area (RECORD save / PRESET assign) ----
+    if (s.modalTitle && s.modalTitle[0])
+    {
+        const float bx = 600, by = 292, bw = 580, bh = 124;
+        nvgBeginPath(g.vg);
+        nvgRect(g.vg, 0, 0, kPanelW, kPanelH);
+        nvgFillColor(g.vg, nvgRGBA(0, 0, 0, 150));          // dim the panel behind
+        nvgFill(g.vg);
+        nvgBeginPath(g.vg);
+        nvgRoundedRect(g.vg, bx, by, bw, bh, 6);
+        nvgFillColor(g.vg, col(kColPanel));
+        nvgFill(g.vg);
+        nvgStrokeColor(g.vg, col(kColBox));
+        nvgStrokeWidth(g.vg, 1.5f);
+        nvgStroke(g.vg);
+        nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_BASELINE);
+        nvgFontSize(g.vg, kTxtSize[T_HDR]);
+        nvgFillColor(g.vg, col(kColInk));
+        nvgText(g.vg, bx + 14, by + 22, s.modalTitle, nullptr);
+        nvgFontSize(g.vg, 8.5f);
+        nvgFillColor(g.vg, nvgRGBA(180, 180, 190, 255));
+        nvgText(g.vg, bx + 14, by + 40, s.modalPrompt ? s.modalPrompt : "", nullptr);
+        nvgBeginPath(g.vg);                                   // text field
+        nvgRoundedRect(g.vg, bx + 14, by + 52, bw - 28, 34, 3);
+        nvgFillColor(g.vg, col(kColDispBg));
+        nvgFill(g.vg);
+        nvgStrokeColor(g.vg, col(kColDispStroke));
+        nvgStrokeWidth(g.vg, 1.f);
+        nvgStroke(g.vg);
+        nvgFontFaceId(g.vg, g.screenId);
+        nvgFontSize(g.vg, 18.f);
+        nvgFillColor(g.vg, col(kColDispText));
+        char shown[32];
+        std::snprintf(shown, sizeof shown, "%.*s", s.modalLen, s.modalText ? s.modalText : "");
+        nvgText(g.vg, bx + 22, by + 76, shown, nullptr);
+        const float cw = nvgTextBounds(g.vg, 0, 0, shown, nullptr, nullptr);
+        nvgBeginPath(g.vg);
+        nvgRect(g.vg, bx + 23 + cw, by + 62, 7, 18);          // block cursor
+        nvgFillColor(g.vg, nvgRGBA(255, 90, 60, 200));
+        nvgFill(g.vg);
+        nvgFontFaceId(g.vg, g.fontId);
+        nvgFontSize(g.vg, 8.0f);
+        nvgFillColor(g.vg, nvgRGBA(180, 180, 190, 255));
+        nvgText(g.vg, bx + 14, by + 112, "ENTER confirm   ESC cancel   BS delete   A-Z 0-9 . _ -", nullptr);
+    }
+
     nvgRestore(g.vg);
 }
 

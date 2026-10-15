@@ -5,6 +5,7 @@
 #include <clap/ext/latency.h>
 #include <clap/ext/timer-support.h>
 #include <cstring>
+#include <string>
 
 #include "p5_engine.hpp"
 
@@ -32,9 +33,28 @@ struct Plugin {
     int32_t scratch[32] = {0};
     int bendRaw = 0;
     int program = -1;                   // factory program loaded (-1: edited/INIT)
+    bool hasSrc_ = false;
+    uint8_t srcRaw_[133] = {};
+    std::string srcFile_;
+    int lastProgClick_ = 0;
     int bank = 0;                       // panel bank cursor
     void *gui = nullptr;                // owned by gui_x11.cpp when the panel is open
     bool latencyDirty = false;          // OS changed latency while active: report on deactivate
+
+    // ---- patch store / bank-program retrieval (see p5_store.hpp) ----
+    // The loaded SOURCE (factory index or user file) is the "preset state" the
+    // programmer PRESET button recalls; the LED floats lit while the panel
+    // disagrees with it, exactly like the original's parameter floating.
+    void programSlot(int slot);                       // resolve retrieval map -> load
+    bool loadUserPatch(const std::string &name);      // false if missing
+    void savePatchNamed(const std::string &name);     // writes file + becomes source
+    void assignSlotFromText(int slot, const std::string &text);
+    bool panelDirty() const { return hasSrc_ && std::memcmp(engine.patch().raw, srcRaw_, 133) != 0; }
+    void presetRecall();                              // PRESET: back to loaded source
+    const std::string &currentFile() const { return srcFile_; }
+    void markSource(int kind, int idx, const std::string &file);  // after any load
+    int assignTarget() const { return bank * 8 + (program >= 0 ? program % 8 : lastProgClick_); }
+    void noteProgramClick(int p8) { lastProgClick_ = p8 & 7; }
     // GUI-initiated param changes, latest-value-per-id (coalesced): a fast
     // drag must never queue a catch-up replay behind the host.
     static constexpr int PEND_IDS = 96;

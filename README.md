@@ -58,9 +58,9 @@ and SSE2 as the fallback.
 
     cmake -B build -DMELODEE_DIR=/path/to/melodee
     cmake --build build -j
-    build/prophet.clap                    # the plugin (a single shared object)
+    build/muhammed.clap                    # the plugin (a single shared object)
     build/test_engine_ab build/ref.bin    # the A/B, after ./build/ref_dump > build/ref.bin
-    build/clap_smoke build/prophet.clap
+    build/clap_smoke build/muhammed.clap
     build/bench_engine
 
 `MELODEE_DIR` only gates `ref_dump` (the firmware cross-check); the plugin and
@@ -169,3 +169,26 @@ available; macOS would add an NSView+GL3 shim (~150 lines, CI-built). The
 draw code is platform-neutral; only the embedding file changes.
 
 Disable with `-DPROPHET_GUI=OFF` for headless engine-only builds.
+
+## Patch store & retrieval (v1.0-muh)
+
+Patches really live as files: `~/Documents/Muhammad Synth/<NAME>.muhammed`
+(133 raw wire bytes; name inside). The PROGRAMMER grid is only a retrieval map:
+
+- **RECORD** (orange) → in-window text-entry modal → saves the current panel as
+  `<NAME>.muhammed`.
+- **PRESET** (programmer) → modal assigns the current bank/program slot to a
+  user patch by name, or `FAC:<n>` / `<n>` for a factory program. Persisted in
+  `bank-program.map`. Program buttons 1–8 and MIDI resolve through this map:
+  **PC** = `bank*8 + pc` (pc<8) or flat 0..199; **CC0** moves the bank cursor.
+- **PRESET (far left)** recalls the loaded source and un-floats the panel —
+  the original P5 button's function; its LED is lit while the panel floats
+  away from the loaded patch.
+- clap-preset-discovery reports factory programs *and* the user folder, so
+  Bitwig's browser sees both. `P5_STORE_DIR` env overrides the directory
+  (tests/CI).
+
+New panel knobs: VEL>AMP (left of VOLUME), VEL>FLT (filter top row; KEYBOARD
+moved after filter RELEASE). Still host-only by design: PRESS>× (2), LFO INIT
+(wheel state), BEND RANGE, PRIORITY, EDIT overlays — no hardware silkscreen
+equivalents.

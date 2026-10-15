@@ -31,7 +31,8 @@ PID = {
     "flt_s": 47, "amp_s": 48, "flt_r": 49, "amp_r": 50,
     "release_btn": 51, "unison": 52, "unison_det": 54, "vintage": 37,
     "volume": 80, "master_tune": 82, "prog_bankselect": 84, "os": 81, "unison_cnt": 53,
-    "lfo_preset": -1, "flt_model": 20, "prog_preset": -1, "prog_record": -1,
+    "vel_amp": 42, "vel_flt": 41,
+    "lfo_preset": -4, "flt_model": 20, "prog_preset": -3, "prog_record": -2,
     "edit_btn": -1, "tune_btn": -1,
 }
 for _i in range(1, 9):
@@ -133,6 +134,9 @@ def btn(x, y, param, color="btnDark", label=None, glyph=None, led=True,
     s.append('</g>')
     body.append("".join(s))
     ledmode = 1 if param in SWITCHES else (2 if param.startswith("program_") else 0)
+    if param == "lfo_preset": ledmode = 3      # lit while the panel floats over the loaded source
+    if param == "prog_record": ledmode = 4     # armed (modal open)
+    if param == "prog_preset": ledmode = 5     # assigning
     value = int(param.split("_")[1]) - 1 if param.startswith("program_") else 0
     btns.append(dict(pid=PID[param], x=x, y=y, color=color, glyph=glyph or "",
                      led=led, ledmode=ledmode, value=value))
@@ -262,14 +266,16 @@ knob(996, 58, "flt_cutoff", label="CUTOFF")
 knob(1064, 58, "flt_reso", label="RESONANCE")
 knob(1132, 58, "flt_envamt", label="ENVELOPE")
 notes((1132, 100, "AMOUNT"))
-btn(1200, 62, "flt_keyboard", label="KEYBOARD")
-knob(964, 196, "flt_a", label="ATTACK", label_dy=42)
-knob(1032, 196, "flt_d", label="DECAY", label_dy=42)
-knob(1100, 196, "flt_s", label="SUSTAIN", label_dy=42)
-knob(1168, 196, "flt_r", label="RELEASE", label_dy=42)
+knob(1200, 58, "vel_flt", label="VEL>FLT")
+knob(956, 196, "flt_a", label="ATTACK", label_dy=42)
+knob(1020, 196, "flt_d", label="DECAY", label_dy=42)
+knob(1084, 196, "flt_s", label="SUSTAIN", label_dy=42)
+knob(1148, 196, "flt_r", label="RELEASE", label_dy=42)
+btn(1212, 196, "flt_keyboard", label="KEYBOARD", label_dy=42)
 
 # --- MASTER TUNE / VOLUME (white knobs, unbordered, right) ---
 knob(1330, 66, "master_tune", label="MASTER TUNE", white=True, label_dy=40)
+knob(1396, 66, "vel_amp", label="VEL>AMP", label_dy=40)
 knob(1462, 66, "volume", label="VOLUME", white=True, label_dy=40)
 
 # --- AMPLIFIER (right, r2) ---

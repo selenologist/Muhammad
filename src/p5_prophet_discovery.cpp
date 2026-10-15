@@ -4,6 +4,9 @@
 #include <cstdlib>
 #include "p5_prophet_discovery.h"
 #include "p5_engine.hpp"
+#include "p5_store.hpp"
+#include <string>
+#include <vector>
 
 namespace {
 
@@ -19,14 +22,18 @@ bool provider_init(const clap_preset_discovery_provider *p)
     auto *d = static_cast<Provider *>(p->provider_data);
     clap_preset_discovery_location_t loc{};
     loc.kind = CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN;
-    loc.name = "Prophet-5 factory bank";
+    loc.name = "Muhammad factory + user patches";
     loc.flags = CLAP_PRESET_DISCOVERY_IS_FACTORY_CONTENT;
     loc.location = nullptr;
     if (!d->indexer || !d->indexer->declare_location(d->indexer, &loc)) return false;
     clap_preset_discovery_soundpack_t pack{};
     pack.id = "muhammad.unresolvable.factory";
-    pack.name = "Prophet-5 (v1.03 factory)";
+    pack.name = "P5 clone (v1.03 factory programs)";
     pack.flags = CLAP_PRESET_DISCOVERY_IS_FACTORY_CONTENT;
+    d->indexer->declare_soundpack(d->indexer, &pack);
+    pack.id = "muhammad.unresolvable.user";
+    pack.name = "Muhammad user patches";
+    pack.flags = 0;
     d->indexer->declare_soundpack(d->indexer, &pack);
     return true;
 }
@@ -58,6 +65,18 @@ bool provider_get_metadata(const clap_preset_discovery_provider *p, uint32_t loc
         receiver->set_flags(receiver, CLAP_PRESET_DISCOVERY_IS_FACTORY_CONTENT);
         receiver->add_feature(receiver, "synthesizer");
     }
+    // user patch files: scanned fresh per query, load_key "user:<name>"
+    for (const std::string &name : p5store::listPatches())
+    {
+        if (!receiver->begin_preset(receiver, name.c_str(), ("user:" + name).c_str())) return false;
+        clap_universal_plugin_id_t upid{};
+        upid.abi = "clap";
+        upid.id = "muhammad.unresolvable";
+        receiver->add_plugin_id(receiver, &upid);
+        receiver->set_soundpack_id(receiver, "muhammad.unresolvable.user");
+        receiver->set_flags(receiver, CLAP_PRESET_DISCOVERY_IS_FAVORITE);
+        receiver->add_feature(receiver, "synthesizer");
+    }
     return true;
 }
 
@@ -67,7 +86,7 @@ const void *provider_get_extension(const clap_preset_discovery_provider *, const
 }
 
 const clap_preset_discovery_provider_descriptor_t kProviderDesc = {
-    CLAP_VERSION_INIT, kProviderId, "Prophet factory presets", "Melodee port"
+    CLAP_VERSION_INIT, kProviderId, "Muhammad presets (factory + user patches)", "Melodee community"
 };
 
 uint32_t factory_count(const clap_preset_discovery_factory *) { return 1; }

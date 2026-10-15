@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // CLAP plugin wrapper for the Prophet engine (see prophet_plugin.hpp).
 #include "prophet_plugin.hpp"
+#include "p5_store.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -73,12 +74,12 @@ static const char *const kFeatures[] = { CLAP_PLUGIN_FEATURE_INSTRUMENT,
 const clap_plugin_descriptor_t kDescriptor = {
     CLAP_VERSION_INIT,
     "muhammad.unresolvable",
-    "Prophet",
-    "Melodee port",
+    "Muhammad",
+    "Melodee community / Melodee port",
     "https://github.com/keremimo/melodee",
     nullptr, nullptr,
-    "0.9-gui6",   // bump per shipped build: the version Bitwig shows proves which binary is loaded
-    "Prophet-5 (Rev-4 wire) engine ported from the Melodee firmware",
+    "1.0-muh",   // bump per shipped build: the version Bitwig shows proves which binary is loaded
+    "P5 clone (PROPHET engine ported from the Melodee firmware)",
     kFeatures
 };
 
@@ -191,9 +192,103 @@ void Plugin::loadProgram(int k)
 {
     if (k < 0 || k >= (int)PW_FACTORY_N) return;
     engine.loadFactory((uint32_t)k);
+    markSource(0, k, std::string());
     program = k;
     bank = k / 8;
     // the whole patch changed under the host's feet: sync every knob
+    for (clap_id id = 0; id < 57; id++)
+        markPending(id, paramValue(this, id));
+    requestHostParamFlush(this);
+}
+
+void Plugin::markSource(int kind, int idx, const std::string &file)
+{
+    std::memcpy(srcRaw_, engine.patch().raw, 133);
+    hasSrc_ = true;
+    srcFile_.clear();
+    if (kind == 1) srcFile_ = file;
+    (void)idx;
+}
+
+bool Plugin::loadUserPatch(const std::string &name)
+{
+    uint8_t raw[133];
+    if (!p5store::loadPatch(name, raw)) return false;
+    p5::Patch p;
+    std::memset(&p, 0, sizeof p);
+    std::memcpy(p.raw, raw, 133);
+    p.size = 133; p.model = 0x32; p.command = 3;
+    engine.setPatch(p);
+    program = -1;
+    markSource(1, -1, p5store::sanitize(name));
+    for (clap_id id = 0; id < 57; id++)
+        markPending(id, paramValue(this, id));
+    requestHostParamFlush(this);
+    return true;
+}
+
+void Plugin::programSlot(int slot)
+{
+    const p5store::Source s = p5store::slot(slot);
+    if (s.kind == p5store::SourceKind::File)
+    {
+        if (loadUserPatch(s.file)) { bank = slot / 8; lastProgClick_ = slot % 8; return; }
+        // missing file: fall through to factory default for that slot
+    }
+    const int idx = s.kind == p5store::SourceKind::Factory ? s.factory : slot;
+    if (idx >= 0 && idx < (int)PW_FACTORY_N) loadProgram(idx);
+    else { p5::Patch i; p5::patchInit(i); engine.setPatch(i); program = -1; markSource(0, -1, {}); }
+    lastProgClick_ = slot % 8;
+}
+
+void Plugin::savePatchNamed(const std::string &name)
+{
+    const std::string n = p5store::sanitize(name);
+    if (n.empty()) return;
+    p5::Patch p = engine.patch();
+    std::memset(p.raw + p5::P5_NAME, ' ', p5::P5_NAME_LEN);
+    const size_t len = n.size() < p5::P5_NAME_LEN ? n.size() : p5::P5_NAME_LEN;
+    std::memcpy(p.raw + p5::P5_NAME, n.data(), len);
+    engine.setPatch(p);
+    program = -1;
+    p5store::savePatch(n, engine.patch().raw);
+    markSource(1, -1, n);
+    for (clap_id id = 0; id < 57; id++)
+        markPending(id, paramValue(this, id));
+    requestHostParamFlush(this);
+}
+
+void Plugin::assignSlotFromText(int slot, const std::string &textRaw)
+{
+    std::string t = textRaw;
+    while (!t.empty() && t.back() == ' ') t.pop_back();
+    if (t.empty()) { p5store::clearSlot(slot); p5store::saveMap(); return; }
+    p5store::Source s;
+    size_t i = 0;
+    bool numeric = true;
+    for (; i < t.size(); i++) if (!std::isdigit((unsigned char)t[i])) { numeric = false; break; }
+    if (numeric || (t.size() >= 3 && t.compare(0, 3, "FAC") == 0))
+    {
+        s.kind = p5store::SourceKind::Factory;
+        s.factory = std::atoi(numeric ? t.c_str() : t.c_str() + 3);
+        if (s.factory < 0 || s.factory >= (int)PW_FACTORY_N) return;
+    }
+    else
+    {
+        s.kind = p5store::SourceKind::File;
+        s.file = p5store::sanitize(t);
+        if (s.file.empty()) return;
+    }
+    p5store::setSlot(slot, s);
+    p5store::saveMap();
+}
+
+void Plugin::presetRecall()   // the original PRESET button: un-float the panel
+{
+    if (!hasSrc_) return;
+    p5::Patch p = engine.patch();
+    std::memcpy(p.raw, srcRaw_, 133);
+    engine.setPatch(p);
     for (clap_id id = 0; id < 57; id++)
         markPending(id, paramValue(this, id));
     requestHostParamFlush(this);
@@ -235,7 +330,11 @@ static void dispatchEvent(Plugin *s, const clap_event_header_t *ev)
         case 0x90: if (d2) dispatchNoteOn(s, d1, d2); else s->engine.noteOff(d1); break;
         case 0x80: s->engine.noteOff(d1); break;
         case 0xE0: s->bendRaw = (int)(((d2 << 7) | d1) - 8192); s->engine.setBend(s->bendRaw); break;
-        case 0xB0: if (d1 == 1) s->engine.setModWheel(d2); break;
+        case 0xB0:
+            if (d1 == 1) s->engine.setModWheel(d2);
+            else if (d1 == 0) applyParam(s, PID_BANK, d2 / 8);      // CC0: bank cursor
+            break;
+        case 0xC0: s->programSlot(d1 < 8 ? s->bank * 8 + d1 : d1); break;  // legacy grid or flat
         case 0xD0: s->engine.setAftertouch(d2); break;
         default: break;
         }
@@ -251,7 +350,7 @@ static Plugin *fromPlugin(const clap_plugin_t *p)
 
 static bool plugin_init(const clap_plugin_t *p)
 {
-    std::fprintf(stderr, "[p5] plugin init: Prophet build %s (gui-x11, 7-bit law, coalesced gestures, xembed)\n",
+    std::fprintf(stderr, "[p5] plugin init: Muhammad build %s (gui-x11, 7-bit law, coalesced gestures, xembed)\n",
                  kDescriptor.version);
     return fromPlugin(p) != nullptr;
 }
@@ -271,6 +370,7 @@ static bool plugin_activate(const clap_plugin_t *p, double sample_rate, uint32_t
     s->engine.activate(sample_rate);
     s->engine.setSmoothing(true);   // PC playability; the A/B harness keeps it off
     s->engine.setPcMode(true);      // LFO INITIAL = wheel state at patch load
+    p5store::loadMap();             // bank/program retrieval map
     s->active = true;
     return true;
 }
@@ -391,7 +491,7 @@ static bool np_get(const clap_plugin_t *, uint32_t idx, bool is_input, clap_note
     info->id = 0;
     info->supported_dialects = CLAP_NOTE_DIALECT_CLAP | CLAP_NOTE_DIALECT_MIDI;
     info->preferred_dialect = CLAP_NOTE_DIALECT_CLAP;
-    std::snprintf(info->name, sizeof info->name, "Prophet Keys");
+    std::snprintf(info->name, sizeof info->name, "Muhammad Keys");
     return true;
 }
 const clap_plugin_note_ports_t kNotePorts = { np_count, np_get };
@@ -421,7 +521,7 @@ static bool par_get_info(const clap_plugin_t *, uint32_t index, clap_param_info_
                   (stepped ? CLAP_PARAM_IS_STEPPED : 0);
     std::snprintf(info->name, sizeof info->name, "%s", Plugin::nameOf(id));
     std::snprintf(info->module, sizeof info->module,
-                  isRawParam(id) ? "PROPHET" : isOverlayParam(id) ? "EDIT" : "PERFORM");
+                  isRawParam(id) ? "P5" : isOverlayParam(id) ? "EDIT" : "PERFORM");
     return true;
 }
 static bool par_get_value(const clap_plugin_t *p, clap_id id, double *out)
@@ -536,6 +636,7 @@ static bool state_load(const clap_plugin_t *p, const clap_istream_t *in)
     std::memcpy(patch.raw, raw, 133);
     patch.size = 133; patch.model = 0x32; patch.command = 3;
     s->engine.setPatch(patch);
+    s->markSource(0, s->program, s->srcFile_);   // restored session floats as saved
     for (int i = 0; i < 8; i++) s->engine.setOverlay(i, ov[i]);
     s->trim = trim;
     s->engine.setOverSample((int)os);
@@ -549,6 +650,8 @@ static bool preset_from_location(const clap_plugin_t *p, uint32_t location_kind,
                                  const char *location, const char *load_key)
 {
     auto *s = fromPlugin(p);
+    if (location_kind == CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN && load_key &&
+        !std::strncmp(load_key, "user:", 5)) return s->loadUserPatch(load_key + 5);
     (void)location;
     if (location_kind != CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN || !load_key) return false;
     int k = atoi(load_key);

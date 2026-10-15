@@ -5,6 +5,7 @@
 // Linux is the primary target; win32/cocoa tables can follow the same shape.
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
+#include <X11/keysym.h>
 #include <GL/glx.h>
 #include <GL/gl.h>
 
@@ -22,6 +23,7 @@
 #include "prophet_plugin.hpp"
 #include "p5_common.hpp"
 #include "p5_gui.hpp"
+#include "p5_store.hpp"
 
 namespace pw {
 
@@ -47,6 +49,12 @@ struct Ctx
 
     // drag state
     int dragKnob = -1, pressBtn = -1;
+
+    // text-entry modal: 0 none, 1 save patch (RECORD), 2 assign slot (PRESET)
+    int modal = 0;
+    char modalBuf[32] = {};
+    int modalLen = 0;
+    int modalSlot = 0;
     int dragStartY = 0;
     double dragStartNorm = 0.0;
     bool pointerGrabbed = false;
@@ -81,6 +89,9 @@ void fillState(Ctx &c, p5ui::State &st)
         const auto &b = p5ui::kBtns[i];
         if (b.ledmode == 1) st.led[i] = c.plugin->guiValue(b.pid) != 0.0;
         else if (b.ledmode == 2) st.led[i] = program >= 0 && program == bank * 8 + b.value;
+        else if (b.ledmode == 3) st.led[i] = c.plugin->panelDirty();     // PRESET: floating edits
+        else if (b.ledmode == 4) st.led[i] = c.modal == 1;               // RECORD: armed
+        else if (b.ledmode == 5) st.led[i] = c.modal == 2;               // PRESET: assigning
     }
 #ifdef P5_BUILD_INFO
     st.build = P5_BUILD_INFO;
@@ -95,6 +106,27 @@ void fillState(Ctx &c, p5ui::State &st)
     std::memcpy(st.name, c.plugin->engine.patch().raw + p5::P5_NAME, 20);
     st.name[20] = 0;
     for (char *q = st.name + 19; q >= st.name && *q == ' '; *q-- = 0) {}
+    if (c.modal)
+    {
+        st.modalTitle = c.modal == 1 ? "SAVE PATCH" : "ASSIGN BANK/PROGRAM";
+        if (c.modal == 1)
+        {
+            static char prompt[96];
+            std::snprintf(prompt, sizeof prompt, "write to  %s/<name>.muhammed",
+                          p5store::baseDir().c_str());
+            st.modalPrompt = prompt;
+        }
+        else
+        {
+            static char prompt[96];
+            std::snprintf(prompt, sizeof prompt,
+                          "slot %d-%d  <-  patch name   (or FAC:n for factory 0..%d)",
+                          c.modalSlot / 8 + 1, c.modalSlot % 8 + 1, (int)PW_FACTORY_N - 1);
+            st.modalPrompt = prompt;
+        }
+        st.modalText = c.modalBuf;
+        st.modalLen = c.modalLen;
+    }
     st.bank = program >= 0 ? program / 8 + 1 : 0;
     st.program = program >= 0 ? program % 8 + 1 : 0;
     // A bank cursor that has moved away from the loaded patch's bank shows in
@@ -138,11 +170,41 @@ void render(Ctx &c)
 void actuate(Ctx &c, int btnIdx)
 {
     const auto &b = p5ui::kBtns[btnIdx];
+    if (b.pid == -2)                                  // RECORD: save-patch prompt
+    {
+        c.modal = c.modal == 1 ? 0 : 1;
+        c.modalLen = 0; c.modalBuf[0] = 0;
+        if (c.modal)
+        {
+            std::string seed = c.plugin->currentFile();
+            if (seed.empty()) seed.assign((const char *)c.plugin->engine.patch().raw + p5::P5_NAME, p5::P5_NAME_LEN);
+            while (!seed.empty() && seed.back() == ' ') seed.pop_back();
+            std::strncpy(c.modalBuf, seed.c_str(), sizeof c.modalBuf - 1);
+            c.modalBuf[sizeof c.modalBuf - 1] = 0;
+            c.modalLen = (int)std::strlen(c.modalBuf);
+        }
+        XSetInputFocus(c.dpy, c.win, RevertToParent, CurrentTime);
+        return;
+    }
+    if (b.pid == -3)                                  // PRESET: assign prompt
+    {
+        c.modal = c.modal == 2 ? 0 : 2;
+        c.modalLen = 0; c.modalBuf[0] = 0;
+        c.modalSlot = c.plugin->assignTarget();
+        XSetInputFocus(c.dpy, c.win, RevertToParent, CurrentTime);
+        return;
+    }
+    if (b.pid == -4)                                  // LFO PRESET = recall preset state
+    {
+        c.plugin->presetRecall();
+        return;
+    }
     if (b.pid < 0) return;                            // decorative
-    if (b.ledmode == 2)                               // program select
+    if (b.ledmode == 2)                               // program select: retrieval map first
     {
         const int k = c.plugin->bank * 8 + b.value;
-        if (k < (int)PW_FACTORY_N) c.plugin->guiSet(PID_PROGRAM, k);
+        c.plugin->noteProgramClick(b.value);
+        c.plugin->programSlot(k);
         return;
     }
     if (b.pid == PID_BANK)
@@ -282,6 +344,35 @@ void pump(Ctx &c)
             case ClientMessage:
                 if (ev.xclient.message_type == c.xembed) { /* EMBEDDED/FOCUS/CONFIGURE lifecycle */ }
                 break;
+            case KeyPress:
+            {
+                if (!c.modal) break;
+                char xb[8]; KeySym ks = NoSymbol;
+                const int n = XLookupString(&ev.xkey, xb, sizeof xb - 1, &ks, nullptr);
+                if (ks == XK_Escape) { c.modal = 0; c.modalLen = 0; dirty = true; break; }
+                if (ks == XK_BackSpace) { if (c.modalLen > 0) c.modalBuf[--c.modalLen] = 0; dirty = true; break; }
+                if (ks == XK_Return || ks == XK_KP_Enter)
+                {
+                    c.modalBuf[c.modalLen] = 0;
+                    if (c.modal == 1) c.plugin->savePatchNamed(c.modalBuf);
+                    else c.plugin->assignSlotFromText(c.modalSlot, c.modalBuf);
+                    c.modal = 0; c.modalLen = 0; dirty = true; break;
+                }
+                if (n > 0)
+                {
+                    const char ch = xb[0];
+                    if ((ch >= '!' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
+                        (ch >= '0' && ch <= '9') || ch == ' ' || ch == '.' || ch == '_' || ch == '-')
+                    {
+                        char u = ch;
+                        if (u >= 'a' && u <= 'z') u = (char)(u - 'a' + 'A');
+                        if (c.modalLen < (int)sizeof c.modalBuf - 1)
+                            c.modalBuf[c.modalLen++] = u;
+                        dirty = true;
+                    }
+                }
+                break;
+            }
             default:
                 break;
         }
@@ -322,7 +413,7 @@ bool setupEmbedded(Ctx &c, Window parent)
     XSetWindowAttributes swa{};
     swa.colormap = XCreateColormap(c.dpy, parent, vi->visual, AllocNone);
     swa.event_mask = ExposureMask | ButtonPressMask | ButtonReleaseMask | PointerMotionMask |
-                     StructureNotifyMask;   // ClientMessage needs no mask
+                     StructureNotifyMask | KeyPressMask;   // ClientMessage needs no mask
     uint32_t w, h;
     if (c.reqW && c.reqH) { w = c.reqW; h = c.reqH; }          // host already told us
     else
@@ -336,7 +427,7 @@ bool setupEmbedded(Ctx &c, Window parent)
                           CWColormap | CWEventMask, &swa);
     XFree(vi);
     if (!c.win) { teardown(c); return false; }
-    XStoreName(c.dpy, c.win, "Prophet-5");
+    XStoreName(c.dpy, c.win, "Muhammad");
     std::fprintf(stderr, "[p5gui] child window created: 0x%lx parent 0x%lx size %ux%u\n",
                  (unsigned long)c.win, (unsigned long)c.parent, c.w, c.h);
     c.wmDelete = XInternAtom(c.dpy, "WM_DELETE_WINDOW", False);
@@ -349,8 +440,8 @@ bool setupEmbedded(Ctx &c, Window parent)
     XChangeProperty(c.dpy, c.win, c.xembedInfo, XA_CARDINAL, 32, PropModeReplace,
                     (const unsigned char *)xembedInfoVal, 2);
     XClassHint classHint{};
-    classHint.res_name = const_cast<char *>("prophet");
-    classHint.res_class = const_cast<char *>("Prophet-5");
+    classHint.res_name = const_cast<char *>("muhammed");
+    classHint.res_class = const_cast<char *>("Muhammad");
     XSetClassHint(c.dpy, c.win, &classHint);
     XSizeHints *sh = XAllocSizeHints();
     sh->flags = PAspect | PMinSize;
