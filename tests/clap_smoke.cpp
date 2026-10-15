@@ -2,6 +2,7 @@
  * a host would: entry, factory, init, activate, events, process, params,
  * preset-load, state save/load. Fails loudly on any contract violation. */
 #include <clap/clap.h>
+#include <clap/ext/latency.h>
 #include <dlfcn.h>
 #include <cstdio>
 #include <cstdlib>
@@ -155,6 +156,81 @@ int main(int argc, char **argv)
         double v17 = -1; params->get_value(plugin, 17, &v17);
         check("state restored the patch (42)", v17 == 42);
         (void)mid;
+    }
+
+    // ---- oversample toggle + latency contract ----
+    {
+        auto *params = (const clap_plugin_params_t *)pp;
+        clap_event_param_value po{};
+        po.header.type = CLAP_EVENT_PARAM_VALUE; po.header.time = 0;
+        po.param_id = 81; po.value = 1;
+        EventList pe{ { &po.header } };
+        clap_input_events_t pin{ &pe, EL_size, EL_get };
+        params->flush(plugin, &pin, &out);
+        double ov = -1;
+        check("oversample param readback", params->get_value(plugin, 81, &ov) && ov == 1);
+        const void *lat = plugin->get_extension(plugin, CLAP_EXT_LATENCY);
+        check("latency extension present", lat != nullptr);
+        if (lat) check("latency reports 3 with 2x on",
+                       ((const clap_plugin_latency_t *)lat)->get(plugin) == 3u);
+        // hold a chord through the 2x stretch (patch loads above reset the part)
+        std::vector<clap_event_note> nn2;
+        auto push2 = [&](uint32_t frame, uint16_t type, int16_t key, double vel) {
+            nn2.emplace_back(); auto &e = nn2.back(); memset(&e, 0, sizeof e);
+            e.header.time = frame; e.header.type = type; e.channel = 0; e.key = key; e.velocity = vel; };
+        push2(0, CLAP_EVENT_NOTE_ON, 60, 127.0 / 127.0);
+        push2(0, CLAP_EVENT_NOTE_ON, 64, 0.9);
+        push2(0, CLAP_EVENT_NOTE_ON, 67, 0.8);
+        EventList all2; for (auto &e : nn2) all2.evs.push_back(&e.header);
+        size_t p2 = 0;
+        float L2[512], R2[512]; float *ch2[2] = { L2, R2 };
+        clap_audio_buffer_t ab2{}; ab2.channel_count = 2; ab2.data32 = ch2;
+        double peak2 = 0; bool fin2 = true, nz2 = false;
+        for (uint32_t done = 0; done < 44100; done += 512) {
+            EventList due2;
+            while (p2 < all2.evs.size() && all2.evs[p2]->time <= done) {
+                auto *ev = const_cast<clap_event_header_t *>(all2.evs[p2]); ev->time = 0;
+                due2.evs.push_back(ev); p2++;
+            }
+            clap_input_events_t din{ &due2, EL_size, EL_get };
+            clap_process_t pr2{};
+            pr2.in_events = &din; pr2.out_events = &out;
+            pr2.audio_outputs = &ab2; pr2.frames_count = 512;
+            plugin->process(plugin, &pr2);
+            for (uint32_t i = 0; i < 512; i++) {
+                if (!std::isfinite(L2[i]) || !std::isfinite(R2[i])) fin2 = false;
+                if (std::fabs(L2[i]) > 1e-6) nz2 = true;
+                if (std::fabs(L2[i]) > peak2) peak2 = std::fabs(L2[i]);
+            }
+        }
+        check("2x renders finite non-silent audio", fin2 && nz2 && peak2 > 0.01 && peak2 <= 2.0);
+        printf("clap: 2x peak %.3f\n", peak2);
+        po.value = 0; params->flush(plugin, &pin, &out);
+        if (lat) check("latency back to 0 with 2x off",
+                       ((const clap_plugin_latency_t *)lat)->get(plugin) == 0u);
+
+        // state round-trip must carry the oversample flag
+        if (st) {
+            auto *state = (const clap_plugin_state_t *)st;
+            po.value = 1; params->flush(plugin, &pin, &out);       // 2x on
+            std::vector<char> blob2;
+            auto w2 = [](const clap_ostream_t *s, const void *b, uint64_t n) -> int64_t {
+                auto *v = (std::vector<char> *)s->ctx; v->insert(v->end(), (const char *)b, (const char *)b + n); return (int64_t)n; };
+            clap_ostream_t os2{ &blob2, w2 };
+            state->save(plugin, &os2);
+            po.value = 0; params->flush(plugin, &pin, &out);       // 2x off
+            auto r2 = [](const clap_istream_t *s, void *b, uint64_t n) -> int64_t {
+                auto *v = (std::vector<char> *)s->ctx;
+                if (v->size() < (size_t)n) return -1;
+                for (uint64_t i = 0; i < n; i++) ((char *)b)[i] = (*v)[i];
+                v->erase(v->begin(), v->begin() + (long)n); return (int64_t)n; };
+            std::vector<char> copy2 = blob2;
+            clap_istream_t is2{ &copy2, r2 };
+            state->load(plugin, &is2);
+            double ov2 = -1; params->get_value(plugin, 81, &ov2);
+            check("state round-trip carries oversample=on", ov2 == 1);
+            po.value = 0; params->flush(plugin, &pin, &out);
+        }
     }
 
     plugin->deactivate(plugin);

@@ -71,6 +71,14 @@ static void writeWav(const char *path, const std::vector<int32_t> &pcm)
     fclose(f);
 }
 
+static double goertzel(const std::vector<int32_t> &x, double f, int N)
+{
+    const double PI = 3.14159265358979323846;
+    double w = 2.0 * PI * f / 44100.0, cw = cos(w), coeff = 2.0 * cw, s1 = 0, s2 = 0;
+    for (int i = 0; i < N; i++) { double s0 = (double)x[i] / 32768.0 + coeff * s1 - s2; s2 = s1; s1 = s0; }
+    return sqrt(s1 * s1 + s2 * s2 - coeff * s1 * s2);
+}
+
 int main(int argc, char **argv)
 {
     const char *refPath = argc > 1 ? argv[1] : nullptr;
@@ -129,6 +137,104 @@ int main(int argc, char **argv)
 
         if (s == 0) writeWav("prophet_ab_simd.wav", b);
     }
+
+    // ---- 2x oversample: the halfband path must agree scalar<->SIMD too ----
+    {
+        p5::Engine A(p5::KernelMode::Scalar), B(p5::KernelMode::Wide);
+        A.setPolyphony(5); B.setPolyphony(5);
+        A.activate(44100); B.activate(44100);
+        A.setOverSample(2); B.setOverSample(2);
+        for (int s = 0; s < NSCEN; s++) {
+            std::vector<int32_t> a, b;
+            runScenario(scenarios[s], A, a);
+            runScenario(scenarios[s], B, b);
+            long d = 0;
+            for (size_t i = 0; i < a.size(); i++) if (a[i] != b[i]) d++;
+            printf("os2 scenario %d: scalar-vs-simd mismatches %ld\n", s + 1, d);
+            if (d) failures++;
+        }
+    }
+
+    // ---- 48 kHz: kernels must agree, output sane (pitch/env/LFO/cutoff all
+    //      track the host rate; the cutoff table rebuilds for it) ----
+    {
+        p5::Engine A(p5::KernelMode::Scalar), B(p5::KernelMode::Wide);
+        A.setPolyphony(5); B.setPolyphony(5);
+        A.activate(48000); B.activate(48000);
+        for (int s = 0; s < NSCEN; s++) {
+            std::vector<int32_t> a, b;
+            runScenario(scenarios[s], A, a);
+            runScenario(scenarios[s], B, b);
+            long d = 0; double peak = 0; bool bad = false;
+            for (size_t i = 0; i < a.size(); i++) {
+                if (a[i] != b[i]) d++;
+                double v = (double)a[i] / 32768.0;
+                if (!std::isfinite(v)) bad = true;
+                if (std::fabs(v) > peak) peak = std::fabs(v);
+            }
+            printf("48k scenario %d: mismatches %ld, peak %.1f%s\n", s + 1, d, peak, bad ? " NONFINITE" : "");
+            if (d || bad || peak < 0.05) failures++;
+        }
+    }
+
+    // ---- 48 kHz + 2x: same agreement on the oversampled path ----
+    {
+        p5::Engine A(p5::KernelMode::Scalar), B(p5::KernelMode::Wide);
+        A.setPolyphony(5); B.setPolyphony(5);
+        A.activate(48000); B.activate(48000);
+        A.setOverSample(2); B.setOverSample(2);
+        for (int s = 0; s < NSCEN; s++) {
+            std::vector<int32_t> a, b;
+            runScenario(scenarios[s], A, a);
+            runScenario(scenarios[s], B, b);
+            long d = 0;
+            if (a.size() != b.size()) { printf("size mismatch\n"); failures++; continue; }
+            for (size_t i = 0; i < a.size(); i++) if (a[i] != b[i]) d++;
+            printf("48k+os2 scenario %d: mismatches %ld\n", s + 1, d);
+            if (d) failures++;
+        }
+    }
+
+    // ---- aliasing / oversampling audit: hard-sync dual saws at note 96
+    //      (f0 = 2093 Hz). The engine's BLEP keeps inter-harmonic bins at a
+    //      deep floor already; 2x + halfband must not raise it and must lower
+    //      it (the fold-back and nonlinear products move above the transition
+    //      band). Assert: both floors below -60 dB vs the fundamental, and the
+    //      2x floor no higher than 1x. ----
+    {
+        double v1[8], v2[8];
+        const double f0 = 440.0 * pow(2.0, (96 - 69) / 12.0);
+        double bins[6];
+        for (int k = 0; k < 6; k++) {
+            double band = 0.35 + 0.6 * k / 5.0;
+            double m = std::floor(22050.0 * band / f0);
+            bins[k] = (m + 0.5) * f0;
+        }
+        for (int oi = 0; oi < 2; oi++) {
+            const int os = oi == 0 ? 1 : 2;
+            p5::Engine e(p5::KernelMode::Auto);
+            e.activate(44100); e.setOverSample(os);
+            p5::Patch p; p5::patchInit(p);
+            p.raw[p5::P5_LEVEL_A] = 110; p.raw[p5::P5_LEVEL_B] = 110; p.raw[p5::P5_NOISE] = 0;
+            p.raw[p5::P5_SAW_A] = 1; p.raw[p5::P5_SAW_B] = 1; p.raw[p5::P5_SYNC] = 2;
+            p.raw[p5::P5_CUTOFF] = 127; p.raw[p5::P5_RESONANCE] = 20; p.raw[p5::P5_ENV_FILTER] = 0;
+            p.raw[p5::P5_KEY_FILTER] = 0; p.raw[p5::P5_POLY_FILTER] = 0; p.raw[p5::P5_WHEEL_FILTER] = 0;
+            e.setPatch(p); e.noteOn(96, 110);
+            std::vector<int32_t> pcm; int32_t out[32];
+            for (int blk = 0; blk < 2048; blk++) { e.process(out, 32); for (int i = 0; i < 32; i++) pcm.push_back(out[i]); }
+            double *v = oi == 0 ? v1 : v2;
+            const int N = 32768;
+            for (int k = 0; k < 6; k++) v[k] = goertzel(pcm, bins[k], N);
+            v[6] = goertzel(pcm, f0, N);
+        }
+        double p1 = 0, p2 = 0;
+        for (int k = 0; k < 6; k++) { p1 += v1[k]*v1[k]; p2 += v2[k]*v2[k]; }
+        double f1 = 10*log10(p1/(v1[6]*v1[6])), f2 = 10*log10(p2/(v1[6]*v1[6]));
+        printf("alias floor (sync saws note 96, inter-harmonic bins): 1x %.1f dB, 2x %.1f dB (%.1f dB cleaner)\n",
+               f1, f2, f1 - f2);
+        if (!(f1 < -60.0 && f2 < -60.0 && f2 <= f1 + 0.5)) failures++;
+    }
+
     printf("%s\n", failures ? "A/B: DIFFERENCES FOUND" : "A/B: bit-exact");
     return failures ? 1 : 0;
 }

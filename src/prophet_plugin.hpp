@@ -2,6 +2,7 @@
 // CLAP plugin wrapper for the Prophet engine: params, events, state, preset load.
 #pragma once
 #include <clap/clap.h>
+#include <clap/ext/latency.h>
 #include "p5_engine.hpp"
 
 namespace pw {
@@ -11,6 +12,7 @@ namespace pw {
 //            80     = output trim
 constexpr int NUM_OVERLAYS = 8;
 constexpr clap_id PID_TRIM = 80;
+constexpr clap_id PID_OS = 81;      // 0 = base rate (bit-exact), 1 = 2x oversample + Surge halfband
 
 struct Plugin {
     explicit Plugin(const clap_host_t *host) : host(host) {}
@@ -34,6 +36,7 @@ extern const clap_plugin_note_ports_t kNotePorts;
 extern const clap_plugin_params_t kParams;
 extern const clap_plugin_state_t kState;
 extern const clap_plugin_preset_load_t kPresetLoad;
+extern const clap_plugin_latency_t kLatency;
 extern const clap_plugin_descriptor_t kDescriptor;
 
 const clap_plugin_t *prophet_create(const clap_host_t *host);

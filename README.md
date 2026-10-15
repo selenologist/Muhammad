@@ -22,6 +22,10 @@ and SSE2 as the fallback.
     the exact SSE2/AVX2 instruction; `-ffp-contract=off` forbids FMA fusion;
     the BLEP saw uses correctly-rounded uint32→float via a 16+16-bit split.)
 
+    The same scripts also run 44.1k/48k × 1x/2x × scalar/wide: every pairing
+    is bit-identical between the two kernels (the 2x path can only be
+    kernel-vs-kernel checked — the firmware has no 48k reference).
+
     Machine: x86-64 with AVX2, gcc 13, -O3.
 
     tests/clap_smoke.cpp dlopens the built prophet.clap and drives the CLAP
@@ -72,8 +76,26 @@ its A/B build standalone.
   are bit-identical (verified), so switching mid-stream is inaudible.
 * 8 voices by default (the firmware's dual-core Prophet cap); `setPolyphony(5)`
   reproduces the single-core chip's five.
-* Sample-rate independence: phase increments, envelope steps, the LFO and the
-  DC coupling capacitor scale by 44100/sr; everything is exact at 44.1k.
+* Sample-rate independence: oscillator increments, envelope steps, the LFO,
+  glide, and the DC coupling capacitor all scale by 44100/sr; the filter
+  cutoff table is rebuilt for the host rate with the generator's own formula
+  (`g = tan(pi fc/fs)/(1+...)` inverted and re-derived per index), so knob
+  positions keep their Hertz at any sample rate. At exactly 44.1 kHz/1x the
+  dumped firmware table is used verbatim, keeping the bit-exact path intact.
+  (One benign leftover: the bend slew and per-block noise wheel advance per
+  control block, so their rates track the host clock ~8% at 48k.)
+* **2x oversampling toggle** (param 81 "OVERSAMPLE 2X"): the firmware's own
+  P5_OVERSAMPLE=2 design — oscillators/noise/filter integrate at twice the
+  host rate with halved increments, the CTL-wheel covers 2 entries per
+  sub-sample, the cutoff table rebuilds at the internal rate — but each
+  voice's 2x stream is decimated by the **Surge XT cascaded-allpass halfband**
+  (M=6 soft, the same coefficients vasynth uses; ~82 dB into the stopband)
+  instead of the firmware's 2-tap box average. Not bit-exact by design (the
+  decimator IS the difference); the 1x path remains bit-exact. Reports 3
+  samples via the CLAP latency extension; state blob v2 carries the flag.
+  Cost: 8 voices at 690 ns/sample (~3% of one core at 44.1k), and measured
+  on hard-sync saws it cleans the inter-harmonic alias floor from -74 dB to
+  -78 dB — modest because the firmware's BLEP already does the heavy lifting.
 * **The >110-velocity filter accent is a no-op on this engine** — the firmware
   computes `m.cutoff += (m.envq15*24)>>7` while `envq15` is still the forced-
   zero common-envelope value (p5 overwrites it *after* the accent line, in

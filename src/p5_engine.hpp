@@ -11,6 +11,8 @@
 #include "p5_common.hpp"
 #include "p5_tables.h"
 #include "p5_math.hpp"
+#include "p5_halfband.hpp"
+#include "p5_halfband.hpp"
 
 namespace p5 {
 
@@ -80,6 +82,15 @@ public:
     void setOverlay(int i, int v) { if (i >= 0 && i < 8) e_[i] = (int16_t)v; }
     int overlay(int i) const { return e_[i]; }
     void setPolyphony(int n) { poly_ = n == 5 ? 5 : MAXV; }  // 5: the firmware's single-core cap
+    // 1 = the firmware's base rate (the bit-exact path); 2 = the firmware's
+    // P5_OVERSAMPLE=2 scheme (oscillators/noise/filter integrate at 2x the
+    // host rate) decimated per voice by the Surge halfband instead of the
+    // firmware's 2-tap box average. Not bit-exact with the firmware by
+    // design; the filter cutoff table and every rate table rebuild for the
+    // internal rate, so pitch, cutoff Hz and envelope times stay exact.
+    void setOverSample(int os);               // 1 or 2
+    int oversample() const { return os_; }
+    uint32_t latencySamples() const { return os_ == 2 ? 3u : 0u; }  // halfband group delay
     int polyphony() const { return poly_; }
     int voiceMode() const { return voiceMode_; }             // 0 poly, 1 mono, 2 legato, 3 unison
     void setVoiceModeOverride(int m) { voiceModeOverride_ = m; }
@@ -123,7 +134,7 @@ private:
     uint8_t value_[55] = {0};                 // part->value: p5_value-clamped knobs
     uint32_t lfoPhase_ = 0;
     int32_t lastPitch_ = 0, modNoise_ = 0;
-    float wheel_[CTL_], wheelPitch_[CTL_];
+    float wheel_[CTL_ * 2], wheelPitch_[CTL_ * 2];   // CTL * oversample entries
     uint32_t wheelLen_ = CTL_;
     int32_t dcX1_ = 0, dcY1_ = 0;
     uint32_t dcK_ = DC_K_DEFAULT;
@@ -139,6 +150,15 @@ private:
     int32_t bendRaw_ = 0, bendQ8_ = 0, bendTarget_ = 0;
     int mw_ = 0, at_ = 0;
     double srScale_ = 1.0;                    // 44100 / host sr
+    double hostSr_ = 44100.0;
+    int os_ = 1;                              // runtime P5_OVERSAMPLE
+    // cutoff->g table: PW_P5_TPT_G verbatim at (44100, 1x) so the bit-exact
+    // A/B never sees a recomputed value; rebuilt for the internal rate
+    // (oversample * host sr) otherwise, keeping every index's cutoff Hz.
+    const float *tpt_ = PW_P5_TPT_G;
+    float tptGen_[128];
+    void buildTpt();
+    HbState hb_[MAXV];                        // per-voice 2x decimators
     uint32_t vage_ = 0;                       // voice ages: one clock for every part
     uint32_t unisonSeed_ = 0x1234567u;        // mono_play's phase-seeding LCG
 

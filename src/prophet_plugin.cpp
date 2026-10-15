@@ -13,7 +13,7 @@ static const char *kRawNames[57] = {
     "OSC A COARSE", "OSC B COARSE", "OSC B FINE", "OSC A SAW", "OSC A PULSE",
     "OSC B SAW", "OSC B TRI", "OSC B PULSE", "OSC A PULSE W", "OSC B PULSE W",
     "SYNC", "OSC B LOW", "OSC B KEYBD", "GLIDE", "OSC A LEVEL", "OSC B LEVEL",
-    "NOISE", "CUTOFF", "RESONANCE", "KEYBD>FLT", "FILTER REV",
+    "NOISE", "CUTOFF", "RESONANCE", "KEYBD>FLT", "FILTER MODEL",
     "LFO RATE", "LFO INIT", "LFO SAW", "LFO TRI", "LFO PULSE",
     "WHEEL MIX", "WHEEL>OSCA", "WHEEL>OSCB", "PW WHEEL A", "PW WHEEL B",
     "WHEEL>FLT", "POLYMOD AMT", "POLYMOD B", "POLYMOD>OSCA", "POLYMOD>PW",
@@ -36,7 +36,7 @@ static const char *kOverlayNames[8] = {
 static const double kOverlayMin[8] = { -63, -63, -24, -24, -63, -63, -63, -63 };
 static const double kOverlayMax[8] = {  63,  63,  24,  24,  63,  63,  63,  63 };
 
-constexpr uint32_t PARAM_COUNT = 57 + NUM_OVERLAYS + 1;   // + trim
+constexpr uint32_t PARAM_COUNT = 57 + NUM_OVERLAYS + 2;   // + trim, oversample
 
 static bool isRawParam(clap_id id) { return id < 57; }
 static bool isOverlayParam(clap_id id) { return id >= 64 && id < 64 + NUM_OVERLAYS; }
@@ -46,6 +46,7 @@ const char *Plugin::nameOf(clap_id id)
     if (isRawParam(id)) return kRawNames[id];
     if (isOverlayParam(id)) return kOverlayNames[id - 64];
     if (id == PID_TRIM) return "OUTPUT";
+    if (id == PID_OS) return "OVERSAMPLE 2X";
     return "?";
 }
 
@@ -79,6 +80,13 @@ static void applyParam(Plugin *s, clap_id id, double value)
     else if (isOverlayParam(id))
         s->engine.setOverlay((int)(id - 64), (int)(value < 0 ? value - 0.5 : value + 0.5));
     else if (id == PID_TRIM) s->trim = (float)value;
+    else if (id == PID_OS) {
+        s->engine.setOverSample(value > 0.5 ? 2 : 1);
+        if (s->host && s->host->get_extension) {           // latency changed with the decimator
+            auto *l = (const clap_host_latency_t *)s->host->get_extension(s->host, CLAP_EXT_LATENCY);
+            if (l && l->changed) l->changed(s->host);
+        }
+    }
 }
 
 static double paramValue(Plugin *s, clap_id id)
@@ -86,6 +94,7 @@ static double paramValue(Plugin *s, clap_id id)
     if (isRawParam(id)) return (double)s->rawOf(kRawIndex[id]);
     if (isOverlayParam(id)) return (double)s->engine.overlay((int)(id - 64));
     if (id == PID_TRIM) return s->trim;
+    if (id == PID_OS) return (double)(s->engine.oversample() - 1);
     return 0;
 }
 
@@ -214,6 +223,13 @@ static clap_process_status plugin_process(const clap_plugin_t *p, const clap_pro
     return CLAP_PROCESS_CONTINUE;
 }
 
+static uint32_t lat_get(const clap_plugin_t *p)
+{
+    auto *s = fromPlugin(p);
+    return s ? s->engine.latencySamples() : 0u;
+}
+const clap_plugin_latency_t kLatency = { lat_get };
+
 static const void *plugin_get_extension(const clap_plugin_t *, const char *id)
 {
     if (!std::strcmp(id, CLAP_EXT_AUDIO_PORTS)) return &kAudioPorts;
@@ -221,6 +237,7 @@ static const void *plugin_get_extension(const clap_plugin_t *, const char *id)
     if (!std::strcmp(id, CLAP_EXT_PARAMS)) return &kParams;
     if (!std::strcmp(id, CLAP_EXT_STATE)) return &kState;
     if (!std::strcmp(id, CLAP_EXT_PRESET_LOAD)) return &kPresetLoad;
+    if (!std::strcmp(id, CLAP_EXT_LATENCY)) return &kLatency;
     return nullptr;
 }
 
@@ -269,7 +286,8 @@ static bool par_get_info(const clap_plugin_t *, uint32_t index, clap_param_info_
     else if (index < 57 + NUM_OVERLAYS) {
         int o = (int)(index - 57); id = (clap_id)(64 + o);
         info->min_value = kOverlayMin[o]; info->max_value = kOverlayMax[o];
-    } else { id = PID_TRIM; info->min_value = 0; info->max_value = 2; }
+    } else if (index < 57 + NUM_OVERLAYS + 1) { id = PID_TRIM; info->min_value = 0; info->max_value = 2; }
+    else { id = PID_OS; info->min_value = 0; info->max_value = 1; }
     info->id = id;
     info->flags = CLAP_PARAM_IS_AUTOMATABLE | CLAP_PARAM_IS_MODULATABLE |
                   (isRawParam(id) ? CLAP_PARAM_IS_STEPPED : 0);
@@ -287,6 +305,7 @@ static bool par_get_value(const clap_plugin_t *p, clap_id id, double *out)
 }
 static bool par_value_to_text(const clap_plugin_t *, clap_id id, double v, char *buf, uint32_t cap)
 {
+    if (id == 4) { std::snprintf(buf, cap, "%s", v < 1.0 ? "SSI" : "CURTIS"); return true; }
     if (isOverlayParam(id)) std::snprintf(buf, cap, "%+g", v);
     else std::snprintf(buf, cap, "%g", v);
     return true;
@@ -297,6 +316,7 @@ static bool par_text_to_value(const clap_plugin_t *, clap_id id, const char *tex
     if (std::sscanf(text, "%lf", &v) != 1) return false;
     if (isRawParam(id)) v = v < 0 ? 0 : v > 255 ? 255 : v;
     else if (id == PID_TRIM) v = v < 0 ? 0 : v > 2 ? 2 : v;
+    else if (id == PID_OS) v = v < 0 ? 0 : v > 1 ? 1 : v;
     *out = v;
     return true;
 }
@@ -315,36 +335,48 @@ const clap_plugin_params_t kParams = { par_count, par_get_info, par_get_value,
 
 // ---- state (versioned binary blob) --------------------------------------------
 #define PW_STATE_MAGIC 0x5035434Cu            // "P5CL"
-#define PW_STATE_VERSION 1u
-struct StateBlob {
-    uint32_t magic, version;
-    uint8_t raw[133];
-    int16_t overlay[8];
-    float trim;
-};
+#define PW_STATE_VERSION 2u
+static bool wr(const clap_ostream_t *o, const void *b, size_t n)
+{ return o->write(o, b, (uint64_t)n) == (int64_t)n; }
 static bool state_save(const clap_plugin_t *p, const clap_ostream_t *out)
 {
     auto *s = fromPlugin(p);
-    StateBlob blob{};
-    blob.magic = PW_STATE_MAGIC; blob.version = PW_STATE_VERSION;
-    std::memcpy(blob.raw, s->engine.patch().raw, 133);
-    for (int i = 0; i < 8; i++) blob.overlay[i] = (int16_t)s->engine.overlay(i);
-    blob.trim = s->trim;
-    return out->write(out, &blob, sizeof blob) == (int64_t)sizeof blob;
+    uint32_t head[2] = { PW_STATE_MAGIC, PW_STATE_VERSION };
+    int16_t ov[8];
+    for (int i = 0; i < 8; i++) ov[i] = (int16_t)s->engine.overlay(i);
+    float trim = s->trim;
+    int32_t os = s->engine.oversample();
+    return wr(out, head, sizeof head) && wr(out, s->engine.patch().raw, 133) &&
+           wr(out, ov, sizeof ov) && wr(out, &trim, sizeof trim) && wr(out, &os, sizeof os);
 }
+static bool rd(const clap_istream_t *i, void *b, size_t n)
+{ return i->read(i, b, (uint64_t)n) == (int64_t)n; }
 static bool state_load(const clap_plugin_t *p, const clap_istream_t *in)
 {
     auto *s = fromPlugin(p);
-    StateBlob blob{};
-    if (in->read(in, &blob, sizeof blob) != (int64_t)sizeof blob) return false;
-    if (blob.magic != PW_STATE_MAGIC || blob.version != PW_STATE_VERSION) return false;
+    uint32_t head[2];
+    if (!rd(in, head, sizeof head)) return false;
+    if (head[0] != PW_STATE_MAGIC || head[1] == 0u || head[1] > PW_STATE_VERSION) return false;
+    uint8_t raw[133]; int16_t ov[8]; float trim; int32_t os = 1;
+    if (head[1] == 1u) {
+        struct StateBlobV1 { uint32_t magic, version; uint8_t raw[133]; int16_t overlay[8]; float trim; } b;
+        b.magic = head[0]; b.version = head[1];
+        if (!rd(in, &b.raw, sizeof b - offsetof(StateBlobV1, raw))) return false;   // includes v1 padding
+        std::memcpy(raw, b.raw, 133);
+        std::memcpy(ov, b.overlay, sizeof ov);
+        trim = b.trim;
+    } else {
+        if (!rd(in, raw, sizeof raw) || !rd(in, ov, sizeof ov) ||
+            !rd(in, &trim, sizeof trim) || !rd(in, &os, sizeof os)) return false;
+    }
     p5::Patch patch;
     std::memset(&patch, 0, sizeof patch);
-    std::memcpy(patch.raw, blob.raw, 133);
+    std::memcpy(patch.raw, raw, 133);
     patch.size = 133; patch.model = 0x32; patch.command = 3;
     s->engine.setPatch(patch);
-    for (int i = 0; i < 8; i++) s->engine.setOverlay(i, blob.overlay[i]);
-    s->trim = blob.trim;
+    for (int i = 0; i < 8; i++) s->engine.setOverlay(i, ov[i]);
+    s->trim = trim;
+    s->engine.setOverSample((int)os);
     return true;
 }
 const clap_plugin_state_t kState = { state_save, state_load };

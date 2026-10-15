@@ -5,6 +5,7 @@
 // eng_prophet_test.c (p5_block, the p5_render parameter math, p5_post).
 // The per-sample synthesis lives in the two kernels; this file is control-rate,
 // so bit-for-bit fidelity at 44.1 kHz costs nothing per sample here.
+#include <cmath>
 #include "p5_engine.hpp"
 #include "p5_math.hpp"
 
@@ -23,6 +24,8 @@ Engine::Engine(KernelMode mode) : mode_(mode)
 void Engine::activate(double sampleRate)
 {
     srScale_ = sampleRate > 0.0 ? 44100.0 / sampleRate : 1.0;
+    hostSr_ = sampleRate > 0.0 ? sampleRate : 44100.0;
+    buildTpt();
     if (sampleRate == 44100.0) {
         dcK_ = DC_K_DEFAULT;            // the firmware's P5_DC_K literal, bit for bit
     } else {
@@ -33,6 +36,37 @@ void Engine::activate(double sampleRate)
     }
     dcX1_ = dcY1_ = 0;
     bendQ8_ = bendTarget_ = 0;
+    for (int i = 0; i < MAXV; i++) hbReset(hb_[i]);
+}
+
+// Rebuild the cutoff->g table for the internal rate (os_ * hostSr_). The
+// firmware table is tan(pi*fc_i/44100)/(1+tan(pi*fc_i/44100)) per index; the
+// firmware's own P5_OVERSAMPLE=2 variant is the same expression at 2*FS.
+// At (44100, 1x) we use the dumped table verbatim so the bit-exact A/B never
+// sees a recomputed value. (Inverting g -> tan -> rescale -> g keeps every
+// index's cutoff in exact Hertz at any host sample rate.)
+void Engine::buildTpt()
+{
+    if (os_ == 1 && hostSr_ == 44100.0) { tpt_ = PW_P5_TPT_G; return; }
+    const double scale = 44100.0 / ((double)os_ * hostSr_);
+    for (int i = 0; i < 128; i++) {
+        const double g0 = PW_P5_TPT_G[i];
+        const double t = g0 / (1.0 - g0);                 // tan(pi fc_i / 44100)
+        double tn = std::tan(std::atan(t) * scale);
+        if (!(tn < 1.0e6)) tn = 1.0e6;                    // never at/past Nyquist in practice
+        tptGen_[i] = (float)(tn / (1.0 + tn));
+    }
+    tpt_ = tptGen_;
+}
+
+void Engine::setOverSample(int os)
+{
+    const int os2 = (os == 2) ? 2 : 1;
+    if (os2 == os_) return;
+    os_ = os2;
+    wheelLen_ = (uint32_t)(CTL_ * os_);
+    buildTpt();
+    for (int i = 0; i < MAXV; i++) hbReset(hb_[i]);
 }
 
 // p5_track_accept: native performance controls become the track's allocator settings
@@ -88,6 +122,7 @@ void Engine::silenceReset()
         triangle_[i] = 0.0f; syncTail_[i] = 0.0f;
     }
     lfoPhase_ = 0; lastPitch_ = 0; modNoise_ = 0; dcX1_ = dcY1_ = 0;
+    for (int i = 0; i < MAXV; i++) hbReset(hb_[i]);
     live_ = 0; monoNote_ = 0; nmono_ = 0;
     vage_ = 0;   // (the firmware's vage clock is process-global; the A/B harness resets it per scenario)
 }
@@ -109,6 +144,7 @@ void Engine::synthNoteOn(int lane, int voiceWas)
         for (int j = 0; j < 4; j++) z_[j][lane] = 0.0f;
         triangle_[lane] = 1.0f;
         syncTail_[lane] = 0.0f;
+        hbReset(hb_[lane]);           // fresh note: restart the 2x decimator too
         // Thermal excitation lets resonance start with the oscillator mixer shut,
         // as native self-oscillating factory programs require: seed the filter.
         if (p[P5_RESONANCE] >= 110u && !p[P5_LEVEL_A] && !p[P5_LEVEL_B] && !p[P5_NOISE]) {
@@ -299,7 +335,7 @@ void Engine::block()
     const uint8_t *p = patch_.raw;
     for (uint32_t k = 0; k < 55u; k++) value_[k] = (uint8_t)valueOf((int)k);
     p5_update_bend();
-    uint32_t inc = PW_P5_LFO_INC[value_[P5_LFO_RATE]]; // / P5_OVERSAMPLE (1)
+    uint32_t inc = PW_P5_LFO_INC[value_[P5_LFO_RATE]] / (uint32_t)os_;  // per sub-sample
     if (srScale_ != 1.0) inc = (uint32_t)((double)inc * srScale_);
     const int amt = i_clamp(valueOf(P5_LFO_INITIAL) + mw_ + (p[P5_PRESS_LFO] ? at_ : 0), 0, 127);
     modSamples(inc, PW_P5_AMOUNT[amt], (float)valueOf(P5_WHEEL_MIX) * (1.0f / 127.0f), wheelLen_);
@@ -443,6 +479,10 @@ bool Engine::renderLane(Lane &l, int32_t mPitch16, int32_t mFine, int32_t mCutof
         ia = (uint32_t)((double)ia * srScale_);
         ib = (uint32_t)((double)ib * srScale_);
     }
+    if (os_ != 1) {                                   // increments for the 2x sub-rate
+        ia /= (uint32_t)os_;
+        ib /= (uint32_t)os_;
+    }
     // Lo Freq drops B seven octaves.
     if (p[P5_LOW_B]) ib >>= 7;
     const int32_t filterVelocity = p[P5_VEL_FILTER] ? (int32_t)v.mvel * 258 : 32767;
@@ -499,7 +539,9 @@ bool Engine::renderLane(Lane &l, int32_t mPitch16, int32_t mFine, int32_t mCutof
 // the sample kernel for the live lanes, and p5_post's coupling capacitor.
 void Engine::process(int32_t *out, uint32_t n)
 {
-    wheelLen_ = n <= CTL_ ? n : CTL_;             // callers chop host blocks to <= CTL
+    // the wheel covers SUB-samples of this chunk (the LFO runs at the internal
+    // rate); callers chop host blocks to <= CTL, so this is <= CTL_*os entries
+    wheelLen_ = (n <= CTL_ ? n : CTL_) * (uint32_t)os_;
     for (uint32_t i = 0; i < n; i++) out[i] = 0;
 
     uint32_t live = 0;

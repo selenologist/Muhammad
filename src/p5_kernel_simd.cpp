@@ -157,12 +157,12 @@ inline VI pwOfV(V value)                                       // p5_pw
 
 // p5_filter_core over lanes: four trapezoidal one-poles, algebraic feedback.
 // Curtis saturates only the input and output; SSI saturates every stage.
-inline V filterCoreV(HotV &h, V input, V cutoff, V k, V gain, int curtis)
+inline V filterCoreV(HotV &h, V input, V cutoff, V k, V gain, int curtis, const float *tab)
 {
     V cc = minv(maxv(cutoff, spl(0.0f)), spl(127.0f));
     VI i = cvtf2u(cc);
-    V g0 = gather(PW_P5_TPT_G, i);
-    V g1 = gather(PW_P5_TPT_G, iand(iadd(i, spli(1)), spli(127)));
+    V g0 = gather(tab, i);
+    V g1 = gather(tab, iand(iadd(i, spli(1)), spli(127)));
     V g = sel(castsi(cmt(spli(127), i)), g0, add(g0, mul(sub(g1, g0), sub(cc, cvti2f(i)))));  // interp when i < 127
     V g2 = mul(g, g), g3 = mul(g2, g), g4 = mul(g3, g);
     V recip = div(spl(1.0f), add(spl(1.0f), mul(k, g4)));
@@ -189,6 +189,8 @@ void p5KernelSimd(Engine &e, uint32_t mask, int32_t *out, uint32_t n)
 {
     const uint8_t *p = e.patch_.raw;
     const int curtis = !!p[P5_FILTER_REV];
+    const uint32_t os = (uint32_t)e.os_;
+    const float *tab = e.tpt_;
 
     // transpose the per-lane block parameters (LaneParams is 24 floats + 2 u32)
     V parF[23];
@@ -235,11 +237,38 @@ void p5KernelSimd(Engine &e, uint32_t mask, int32_t *out, uint32_t n)
 
     alignas(32) int32_t lastArr[8];
 
+    // the per-lane halfband decimator state, 8 voices at a time (2x mode only)
+    V hax[6], hay[6], hbx[6], hby[6], hodd;
+    {
+        alignas(32) float t[8];
+        for (int j = 0; j < 6; j++) {
+            for (int q = 0; q < 8; q++) t[q] = e.hb_[q].ax[j]; hax[j] = ld(t);
+            for (int q = 0; q < 8; q++) t[q] = e.hb_[q].ay[j]; hay[j] = ld(t);
+            for (int q = 0; q < 8; q++) t[q] = e.hb_[q].bx[j]; hbx[j] = ld(t);
+            for (int q = 0; q < 8; q++) t[q] = e.hb_[q].by[j]; hby[j] = ld(t);
+        }
+        for (int q = 0; q < 8; q++) t[q] = e.hb_[q].odd; hodd = ld(t);
+    }
+    // hbDecim across lanes, identical arithmetic to p5_halfband.hpp's scalar form
+    auto hbDecimV = [&](V ev, V od) -> V {
+        V a = ev, b = hodd;
+        hodd = od;
+        for (int j = 0; j < 6; j++) {
+            V ya = add(hax[j], mul(spl(hbcoeff::A[j]), sub(a, hay[j])));
+            hax[j] = a; hay[j] = ya; a = ya;
+            V yb = add(hbx[j], mul(spl(hbcoeff::B[j]), sub(b, hby[j])));
+            hbx[j] = b; hby[j] = yb; b = yb;
+        }
+        return mul(add(a, b), spl(0.5f));
+    };
+
     for (uint32_t i = 0; i < n; i++) {
         const V time = spl((float)i * (1.0f / CTL_));
         const V fe = add(parF[F_F0], mul(sub(parF[F_F1], parF[F_F0]), time));
         const V ae = add(parF[F_A0], mul(sub(parF[F_A1], parF[F_A0]), time));
-        const V lfo = spl(e.wheel_[i]), wheelPitch = spl(e.wheelPitch_[i]);
+        V y0 = spl(0.0f), y1 = spl(0.0f);
+        for (uint32_t o = 0; o < os; o++) {          // the firmware's P5_OVERSAMPLE loop
+        const V lfo = spl(e.wheel_[i * os + o]), wheelPitch = spl(e.wheelPitch_[i * os + o]);
 
         // p5_fast_noise32 across lanes
         {
@@ -310,14 +339,17 @@ void p5KernelSimd(Engine &e, uint32_t mask, int32_t *out, uint32_t n)
         if (p[P5_POLY_FILTER]) fc = add(fc, add(mul(fe, parF[F_PFENV]), mul(bn, parF[F_PFB])));
         if (p[P5_WHEEL_FILTER]) fc = add(fc, mul(lfo, spl(112.0f)));
 
-        const V y = filterCoreV(h, softclipV(x), fc, parF[F_K], parF[F_FG], curtis);
+        const V y = filterCoreV(h, softclipV(x), fc, parF[F_K], parF[F_FG], curtis, tab);
+        if (o == 0u) y0 = y; else y1 = y;
 
+        }
+        const V ysum = (os == 1u) ? y0 : hbDecimV(y0, y1);
 
         // the VCA ramp and the int32 quantisation, identical to p5_samples
         const V gain = mul(mul(ae, parF[F_AVEL]), add(spl(1.0f), mul(ampDriftN, spl(1.0f / 32768.0f))));
         const V amp = mul(mul(add(parF[F_AMP0], mul(sub(parF[F_AMP1], parF[F_AMP0]), time)),
                               spl(1.0f / 32768.0f)), laneLive);
-        VI last = simde_mm256_cvttps_epi32(mul(mul(mul(y, gain), amp), spl(2.0f * VOICE_FS)));
+        VI last = simde_mm256_cvttps_epi32(mul(mul(mul(ysum, gain), amp), spl(2.0f * VOICE_FS)));
         simde_mm256_storeu_si256((simde__m256i *)lastArr, last);
         for (int j = 0; j < 8; j++) out[i] += lastArr[j];
     }
@@ -326,6 +358,18 @@ void p5KernelSimd(Engine &e, uint32_t mask, int32_t *out, uint32_t n)
     st(h.z0, e.z_[0]); st(h.z1, e.z_[1]); st(h.z2, e.z_[2]); st(h.z3, e.z_[3]);
     st(h.tri, e.triangle_); st(h.syncTail, e.syncTail_);
     stu(h.noise, e.noise_);
+    // store the decimator state back only for lanes that ran (the scalar kernel
+    // never touches an unmasked lane's state); lanes restart on note-on anyway
+    if (os > 1u) {
+        alignas(32) float t[8];
+        for (int j = 0; j < 6; j++) {
+            st(hax[j], t); for (int q = 0; q < 8; q++) if ((mask >> q) & 1u) e.hb_[q].ax[j] = t[q];
+            st(hay[j], t); for (int q = 0; q < 8; q++) if ((mask >> q) & 1u) e.hb_[q].ay[j] = t[q];
+            st(hbx[j], t); for (int q = 0; q < 8; q++) if ((mask >> q) & 1u) e.hb_[q].bx[j] = t[q];
+            st(hby[j], t); for (int q = 0; q < 8; q++) if ((mask >> q) & 1u) e.hb_[q].by[j] = t[q];
+        }
+        st(hodd, t); for (int q = 0; q < 8; q++) if ((mask >> q) & 1u) e.hb_[q].odd = t[q];
+    }
 
     for (int j = 0; j < 8; j++)
         if ((mask >> j) & 1u) e.lanes_[j].lastPcm = lastArr[j];
