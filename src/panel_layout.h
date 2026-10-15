@@ -8,7 +8,7 @@ namespace p5ui {
 inline constexpr float kPanelW = 1560.0f, kPanelH = 416.0f;
 inline constexpr float kKnobR = 15.0f, kKnobLoDeg = -140.0f, kKnobHiDeg = 140.0f;
 inline constexpr float kBtnW = 24.0f, kBtnH = 34.0f;
-inline constexpr uint32_t kColPanel = 0x161616u;
+inline constexpr uint32_t kColPanel = 0x101010u;
 inline constexpr uint32_t kColInk = 0xf0f0f0u;
 inline constexpr uint32_t kColScale = 0xe8e8e8u;
 inline constexpr uint32_t kColBox = 0xe6e6e6u;

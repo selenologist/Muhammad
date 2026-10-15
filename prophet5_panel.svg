@@ -10,7 +10,7 @@
     .scale { font-size: 5.6px; fill: #e8e8e8; letter-spacing: 0; stroke: none; }
     .box   { fill: none; stroke: #e6e6e6; stroke-width: 1.2; }
     .rule  { stroke: #e6e6e6; stroke-width: 1; }
-    .hdrbg { fill: #161616; stroke: none; }
+    .hdrbg { fill: #101010; stroke: none; }
   </style>
   <defs>
 
@@ -46,7 +46,7 @@
   </defs>
 
   <!-- panel background -->
-  <rect width="1560" height="416" fill="#161616"/>
+  <rect width="1560" height="416" fill="#101010"/>
 
   <!-- ============ sections ============ -->
     <rect class="box" rx="8" x="8" y="10" width="292" height="120"/><rect class="hdrbg" x="120.4" y="4" width="67.2" height="12"/><text class="hdr" x="154" y="13.6">POLY-MOD</text>
