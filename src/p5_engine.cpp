@@ -352,10 +352,12 @@ void Engine::block()
     if (!smooth_) {
         for (uint32_t k = 0; k < 55u; k++) value_[k] = (uint8_t)valueOf((int)k);
     } else {
-        // one-pole toward the target at 1/4 per block (~3 ms at 44.1k)
+        // one-pole toward the target, 10 ms time constant (block-rate and
+        // oversampling aware: dt = 32*os_/(srScale-adjusted host sr))
+        const float alpha = 1.0f - (float)std::exp(-32.0 * (double)os_ * srScale_ / 441.0);
         for (uint32_t k = 0; k < 55u; k++) {
             const float t = (float)valueOf((int)k);
-            float v = slew_[k] + (t - slew_[k]) * 0.25f;
+            float v = slew_[k] + (t - slew_[k]) * alpha;
             if (v > t ? (v - t < 0.5f) : (t - v < 0.5f)) v = t;
             slew_[k] = v;
             value_[k] = (uint8_t)(v < 0 ? 0 : v > 255 ? 255 : v + 0.5f);
