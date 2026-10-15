@@ -93,7 +93,11 @@ void fillState(Ctx &c, p5ui::State &st)
     {
         const auto &b = p5ui::kBtns[i];
         if (b.ledmode == 1) st.led[i] = c.plugin->guiValue(b.pid) != 0.0 ? 2 : 0;
-        else if (b.ledmode == 2) st.led[i] = (program >= 0 && program == bank * 8 + b.value) ? 2 : 0;
+        else if (b.ledmode == 2)
+        {   // light the quickload button whose SLOT this patch is bound to
+            int bs = -1;
+            st.led[i] = (p5store::findSlotFor(c.plugin->curSrc_, bs) && bs == bank * 8 + b.value) ? 2 : 0;
+        }
         else if (b.ledmode == 3) st.led[i] = c.plugin->panelDirty() ? 2 : 0;   // PRESET: floating
         else if (b.ledmode == 4) st.led[i] = (c.modal == 1 || c.modal == 3) ? 2 : 0;  // RECORD armed
         else if (b.ledmode == 5) st.led[i] = (c.modal == 2 || c.modal == 4) ? 2 : 0;  // PRESET picker
@@ -119,7 +123,7 @@ void fillState(Ctx &c, p5ui::State &st)
     if (c.modal == 4)
     {
         static char title[96];
-        std::snprintf(title, sizeof title, "click = load   ASSIGN = bind to next 1..8");
+        std::snprintf(title, sizeof title, "row = load   ASSIGN then 1-8");
         st.pickerTitle = title;
         st.pickerTab = c.pickerTab; st.pickerPage = c.pickerPage;
         const int total = c.pickerTab == 0 ? (int)PW_FACTORY_N + 2 : (int)c.userRows.size();
@@ -178,18 +182,26 @@ void fillState(Ctx &c, p5ui::State &st)
         st.modalText = c.modalBuf;
         st.modalLen = c.modalLen;
     }
+    // The digits mean "the quickload slot THIS patch is bound to" (reverse
+    // lookup in the retrieval map) — not an index into the factory list. So a
+    // remapped slot 2 shows 1-2, and a user patch shows its bound slot too.
     st.bank = program >= 0 ? program / 8 + 1 : 0;
     st.program = program >= 0 ? program % 8 + 1 : 0;
-    // A bank cursor that moved away from the loaded patch's bank shows in
-    // parentheses in a FIXED left column — the "b-p" digits never shift.
-    const int pb = c.plugin->bank + 1;
     st.bpSlot[0] = st.bpPend[0] = 0;
-    if (program >= 0)
+    int bound = -1;
+    bool bound_ok = p5store::findSlotFor(c.plugin->curSrc_, bound);
+    if (!bound_ok && c.plugin->curSrc_.kind == p5store::SourceKind::Factory &&
+        c.plugin->curSrc_.factory >= 0 && c.plugin->curSrc_.factory < (int)PW_FACTORY_N &&
+        !p5store::hasSlot(c.plugin->curSrc_.factory))
+    { bound = c.plugin->curSrc_.factory; bound_ok = true; }   // still on its implicit default slot
+    if (bound_ok)
     {
-        std::snprintf(st.bpSlot, sizeof st.bpSlot, "%d-%d", st.bank, st.program);
-        if (pb != st.bank) std::snprintf(st.bpPend, sizeof st.bpPend, "(%d)", pb);
+        std::snprintf(st.bpSlot, sizeof st.bpSlot, "%d-%d", bound / 8 + 1, bound % 8 + 1);
+        if (c.plugin->bank != bound / 8)                     // cursor wandered: pending in
+            std::snprintf(st.bpPend, sizeof st.bpPend, "(%d)", c.plugin->bank + 1);   // fixed LEFT column
     }
-    else if (c.plugin->bank != 0) std::snprintf(st.bpPend, sizeof st.bpPend, "(%d)", pb);
+    else if (c.plugin->bank != 0)                            // unbound patch, cursor offset
+        std::snprintf(st.bpPend, sizeof st.bpPend, "(%d)", c.plugin->bank + 1);
     if (c.bindPending) st.bindHint = "ASSIGN ARMED - PRESS PROGRAM 1..8";
 }
 
@@ -269,7 +281,9 @@ void actuate(Ctx &c, int btnIdx, unsigned mods = 0)
     if (b.pid == PID_BANK)
     {
         const int banks = (int)PW_FACTORY_N / 8;
-        c.plugin->guiSet(PID_BANK, (double)((c.plugin->bank + 1) % banks));
+        const bool down = (mods & (ShiftMask | (1u << 30))) != 0;   // shift-click / right-click
+        const int step = down ? banks - 1 : 1;
+        c.plugin->guiSet(PID_BANK, (double)((c.plugin->bank + step) % banks));
         return;
     }
     if (b.ledmode == 6)                               // KEYBD>FLT: OFF -> HALF -> FULL cycle
@@ -358,6 +372,17 @@ void pump(Ctx &c)
                         v += (ev.xbutton.button == Button4 ? step : -step);
                         c.plugin->guiSet((clap_id)pid, normToValue(pid, p5::knobNorm(pid, v)));
                         dirty = true;
+                    }
+                    break;
+                }
+                if (ev.xbutton.button == Button3)
+                {   // right-click on BANK = step down
+                    if (!c.modal)
+                    {
+                        const int bIdx = p5ui::btnAt(p5ui::State{}, (float)ev.xbutton.x, (float)ev.xbutton.y,
+                                                     (float)c.w, (float)c.h);
+                        if (bIdx >= 0 && p5ui::kBtns[bIdx].pid == PID_BANK)
+                        { actuate(c, bIdx, 1u << 30); dirty = true; }
                     }
                     break;
                 }

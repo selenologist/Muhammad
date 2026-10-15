@@ -78,7 +78,7 @@ const clap_plugin_descriptor_t kDescriptor = {
     "selenologist",
     "https://github.com/keremimo/melodee",
     nullptr, nullptr,
-    "1.5-pick2",   // bump per shipped build: the version Bitwig shows proves which binary is loaded
+    "1.6-heavy",   // bump per shipped build: the version Bitwig shows proves which binary is loaded
     "P5 clone (PROPHET engine ported from the Melodee firmware)",
     kFeatures
 };
@@ -707,6 +707,10 @@ static bool state_load(const clap_plugin_t *p, const clap_istream_t *in)
     patch.size = 133; patch.model = 0x32; patch.command = 3;
     s->engine.setPatch(patch);
     s->markSource(0, s->program, s->srcFile_);   // restored session floats as saved
+    if (s->program >= 0 && !std::memcmp(patch.raw, PW_FACTORY_RAW[s->program], 133))
+    { s->curSrc_.kind = p5store::SourceKind::Factory; s->curSrc_.factory = s->program; }
+    else if (!s->srcFile_.empty())
+    { s->curSrc_.kind = p5store::SourceKind::File; s->curSrc_.file = s->srcFile_; }
     for (int i = 0; i < 8; i++) s->engine.setOverlay(i, ov[i]);
     s->trim = trim;
     s->engine.setOverSample((int)os);

@@ -17,7 +17,7 @@ constexpr int kSlotsPerBank = 8;
 enum class SourceKind { Factory, File };
 struct Source {
     SourceKind kind = SourceKind::Factory;
-    int factory = 0;                    // 0..PW_FACTORY_N-1 when Factory
+    int factory = -9999;                // 0..PW_FACTORY_N-1 when bound; sentinel default never matches a slot
     std::string file;                   // patch name (no dir/extension) when File
 };
 
@@ -40,6 +40,7 @@ void setSlot(int slot, const Source &src);             // slot = bank*8 + progra
 bool hasSlot(int slot);
 Source slot(int slot);                                  // default: Factory{slot}
 void clearSlot(int slot);
+bool findSlotFor(const Source &s, int &slot);        // first bound slot, or false
 bool loadMap();
 bool saveMap();
 

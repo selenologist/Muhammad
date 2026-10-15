@@ -301,19 +301,19 @@ void draw(const Gui &g, const State &s, float w, float h)
         // tabs
         for (int t = 0; t < 2; t++)
         {
-            const float tx = pick::x + 12 + t * 136;
+            const float tx = pick::x + 12 + t * 150;
             nvgBeginPath(g.vg);
-            nvgRoundedRect(g.vg, tx, pick::y + 10, 130, 26, 3);
+            nvgRoundedRect(g.vg, tx, pick::y + 10, 144, 30, 3);
             nvgFillColor(g.vg, s.pickerTab == t ? col(kColDispBg) : nvgRGBA(52, 52, 58, 255));
             nvgFill(g.vg);
             nvgStrokeColor(g.vg, col(kColDispStroke));
             nvgStrokeWidth(g.vg, 1.f);
             nvgStroke(g.vg);
             nvgFontFaceId(g.vg, g.fontId);
-            nvgFontSize(g.vg, 12.5f);
+            nvgFontSize(g.vg, 16.f);
             nvgTextAlign(g.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
             nvgFillColor(g.vg, s.pickerTab == t ? col(kColDispText) : col(kColInk));
-            nvgText(g.vg, tx + 65, pick::y + 23, t ? "USER" : "FACTORY", nullptr);
+            nvgText(g.vg, tx + 72, pick::y + 25, t ? "USER" : "FACTORY", nullptr);
         }
         // page controls + close
         const char *pp[2] = { "<", ">" };
@@ -340,22 +340,23 @@ void draw(const Gui &g, const State &s, float w, float h)
         nvgFillColor(g.vg, col(kColInk));
         nvgText(g.vg, pick::x + pick::w - 29, pick::y + 23, "X", nullptr);
         // target line + rows
-        nvgFontSize(g.vg, 11.f);
+        nvgFontSize(g.vg, 14.f);
         nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_BASELINE);
-        nvgFillColor(g.vg, nvgRGBA(200, 200, 210, 255));
-        nvgText(g.vg, pick::x + 292, pick::y + 28, s.pickerTitle, nullptr);
+        nvgFillColor(g.vg, nvgRGBA(220, 220, 230, 255));
+        nvgText(g.vg, pick::x + 320, pick::y + 28, s.pickerTitle, nullptr);
         char pg[16];
         std::snprintf(pg, sizeof pg, "%d/%d", s.pickerPage + 1, s.pickerPages < 1 ? 1 : s.pickerPages);
         nvgTextAlign(g.vg, NVG_ALIGN_RIGHT | NVG_ALIGN_BASELINE);
+        nvgFontSize(g.vg, 14.f);
         nvgText(g.vg, pick::x + pick::w - 182, pick::y + 28, pg, nullptr);
         nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
         nvgFontFaceId(g.vg, g.screenId);
-        nvgFontSize(g.vg, 20.f);
+        nvgFontSize(g.vg, 30.f);
         for (int i = 0; i < s.pickerCount && i < pick::rows; i++)
         {
             const float ry = pick::rowTop(i);
             nvgBeginPath(g.vg);
-            nvgRoundedRect(g.vg, pick::x + 12, ry, pick::w - 24, pick::rowH, 3);
+            nvgRoundedRect(g.vg, pick::x + 12, ry, pick::w - 24, pick::rowH, 4);
             nvgFillColor(g.vg, i == s.pickerSel ? nvgRGBA(70, 40, 32, 255)
                               : (i & 1) ? nvgRGBA(40, 40, 46, 255) : nvgRGBA(32, 32, 37, 255));
             nvgFill(g.vg);
@@ -366,17 +367,19 @@ void draw(const Gui &g, const State &s, float w, float h)
                 nvgStroke(g.vg);
             }
             nvgFillColor(g.vg, col(kColDispText));
-            nvgText(g.vg, pick::x + 22, ry + pick::rowH / 2, s.pickerRows[i], nullptr);
+            const char *rt = s.pickerRows[i];
+            nvgText(g.vg, pick::x + 26, ry + pick::rowH / 2, rt, nullptr);
+            nvgText(g.vg, pick::x + 26.8f, ry + pick::rowH / 2, rt, nullptr);   // faux-bold
             // ASSIGN chip at the right end of the row
             const float ax = pick::x + pick::w - 12 - pick::assignW();
             nvgBeginPath(g.vg);
-            nvgRoundedRect(g.vg, ax, ry + 3, pick::assignW(), pick::rowH - 6, 3);
+            nvgRoundedRect(g.vg, ax, ry + 5, pick::assignW(), pick::rowH - 10, 4);
             nvgFillColor(g.vg, i == s.pickerBind ? nvgRGBA(150, 90, 30, 255) : nvgRGBA(58, 58, 66, 255));
             nvgFill(g.vg);
             nvgStrokeColor(g.vg, i == s.pickerBind ? nvgRGBA(255, 170, 80, 255) : col(kColDispStroke));
             nvgStroke(g.vg);
             nvgFontFaceId(g.vg, g.fontId);
-            nvgFontSize(g.vg, 9.5f);
+            nvgFontSize(g.vg, 13.f);
             nvgTextAlign(g.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
             nvgFillColor(g.vg, col(kColInk));
             nvgText(g.vg, ax + pick::assignW() / 2, ry + pick::rowH / 2, "ASSIGN", nullptr);
@@ -477,9 +480,9 @@ void pointToLayout(float px, float py, float w, float h, float &lx, float &ly)
 namespace pick {
 int hitTab(float lx, float ly)
 {
-    if (ly < y + 10 || ly > y + 36) return -1;
-    if (lx >= x + 12  && lx <= x + 142) return 0;
-    if (lx >= x + 148 && lx <= x + 278) return 1;
+    if (ly < y + 10 || ly > y + 40) return -1;
+    if (lx >= x + 12 && lx <= x + 156) return 0;
+    if (lx >= x + 162 && lx <= x + 306) return 1;
     return -1;
 }
 int hitRow(float lx, float ly)

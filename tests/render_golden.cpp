@@ -78,10 +78,10 @@ static p5ui::State stateFor(const char *name, p5::Engine &e, int &programOut)
     {
         static const char hint[] = "ASSIGN ARMED - PRESS PROGRAM 1..8";
         s.bindHint = hint;   // shown under the readout in the real flow
-        static const char title[] = "click row = load   ASSIGN then press 1-8";
+        static const char title[] = "row = load   ASSIGN then 1-8";
         s.pickerTitle = title;
-        s.pickerTab = 0; s.pickerPage = 0; s.pickerPages = 21; s.pickerCount = 10;
-        for (int i = 0; i < 10; i++)
+        s.pickerTab = 0; s.pickerPage = 0; s.pickerPages = 29; s.pickerCount = p5ui::pick::rows;
+        for (int i = 0; i < p5ui::pick::rows; i++)
         {
             if (i == 0) std::snprintf(s.pickerRows[i], 44, "  INIT - Peace Be Upon Him (default)");
             else if (i == 1) std::snprintf(s.pickerRows[i], 44, "  INIT (bare patch)");

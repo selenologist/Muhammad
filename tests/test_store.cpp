@@ -37,6 +37,12 @@ int main()
     p5store::setSlot(9, s);
     check("assigned slot resolves file", p5store::slot(9).kind == p5store::SourceKind::File && p5store::slot(9).file == "TEST PATCH");
     check("map saved+reloaded", p5store::saveMap() && p5store::loadMap() && p5store::slot(9).file == "TEST PATCH");
+    {   p5store::Source q; q.kind = p5store::SourceKind::File; q.file = "TEST PATCH";
+        int sl = -1;
+        check("findSlotFor reverse lookup", p5store::findSlotFor(q, sl) && sl == 9);
+        p5store::Source none; none.file = "GHOST";
+        check("findSlotFor misses unbound", !p5store::findSlotFor(none, sl));
+    }
     std::filesystem::remove_all(tmp);
     std::printf(fails ? "store: FAILED\n" : "store: all ok\n");
     return fails ? 1 : 0;

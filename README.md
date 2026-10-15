@@ -223,10 +223,17 @@ panel globals on the original, EDIT overlays ride params 64..71.
   PRESS PROGRAM 1..8" under the readout; the next quickload button binds that
   preset to the slot (and loads it). Pressing the same chip again cancels. The
   row matching the loaded patch is highlighted.
-- **Bank display** is two fixed columns: "(pending)" left, "bank-program"
-  right — appearance never shifts the digits.
-- Picker type is sized for the space (20px rows at layout scale, readable even
-  in a 1052px Bitwig strip).
+- **Bank display = binding truth.** The digits show the quickload slot the
+  current patch is *bound to* (reverse lookup through the retrieval map,
+  falling back to a factory patch's implicit default slot) — never an index
+  into the factory list. Remap a slot and the readout follows; a user patch
+  shows its bound slot too; an unbound patch shows none. The lit program
+  button comes from the same lookup. "(pending bank)" renders in a fixed LEFT
+  column so the digits never shift.
+- **BANK** steps forward on click; **SHIFT+click or right-click steps down**.
+- Picker is space-filling: 7 fat rows, 30px faux-bold VT323 names, 16px tabs,
+  14px header/page text, full-size ASSIGN chips — legible even in a 1052x280
+  Bitwig strip (the panel labels themselves stay panel-sized: no room there).
 - **PRESET (far left)** recalls the loaded patch; press it again — having
   touched nothing else — and your floating edits come back.
 

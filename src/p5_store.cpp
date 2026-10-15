@@ -136,6 +136,14 @@ Source slot(int s)
 }
 void clearSlot(int s) { g_map.erase(s); }
 
+bool findSlotFor(const Source &needle, int &slotOut)
+{
+    for (const auto &[sl, s] : g_map)
+        if (s.kind == needle.kind && s.factory == needle.factory && s.file == needle.file)
+        { slotOut = sl; return true; }
+    return false;
+}
+
 bool loadMap()
 {
     std::ifstream f(mapPath());
