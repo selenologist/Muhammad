@@ -37,6 +37,7 @@ static p5ui::State stateFor(const char *name, p5::Engine &e, int &programOut)
     else if (!std::strcmp(name, "arp"))  program = 42;
     else if (!std::strcmp(name, "bass")) program = 91;
     else if (!std::strcmp(name, "pick")) { /* INIT content, picker overlay */ }
+    else if (!std::strcmp(name, "bank")) program = 1;   // bp columns overlaid below
     else { std::fprintf(stderr, "unknown state '%s'\n", name); std::exit(2); }
 
     if (program >= 0) e.loadFactory((uint32_t)program);
@@ -67,10 +68,17 @@ static p5ui::State stateFor(const char *name, p5::Engine &e, int &programOut)
     for (char *q = s.name + 19; q >= s.name && *q == ' '; *q-- = 0) {}
     s.bank = program >= 0 ? program / 8 + 1 : 0;
     s.program = program >= 0 ? program % 8 + 1 : 0;
-    if (s.bank > 0) std::snprintf(s.bp, sizeof s.bp, "%d-%d", s.bank, s.program);
+    if (s.bank > 0) std::snprintf(s.bpSlot, sizeof s.bpSlot, "%d-%d", s.bank, s.program);
+    if (!std::strcmp(name, "bank"))
+    {   // pending bank moved: "(n)" in its fixed LEFT column, digits don't shift
+        std::snprintf(s.bpSlot, sizeof s.bpSlot, "%d-%d", 1, 2);
+        std::snprintf(s.bpPend, sizeof s.bpPend, "(%d)", 3);
+    }
     if (!std::strcmp(name, "pick"))
     {
-        static const char title[] = "slot 1-1  <-  click assigns + loads";
+        static const char hint[] = "ASSIGN ARMED - PRESS PROGRAM 1..8";
+        s.bindHint = hint;   // shown under the readout in the real flow
+        static const char title[] = "click row = load   ASSIGN then press 1-8";
         s.pickerTitle = title;
         s.pickerTab = 0; s.pickerPage = 0; s.pickerPages = 21; s.pickerCount = 10;
         for (int i = 0; i < 10; i++)

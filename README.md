@@ -216,9 +216,17 @@ panel globals on the original, EDIT overlays ride params 64..71.
 ## Preset picker & recall (v1.3-picker)
 
 - **PRESET (programmer)** opens a mouse picker — FACTORY | USER tabs, paged
-  rows (INIT default, bare INIT, then all 200 Sequential programs / your saved
-  files). Clicking a row assigns it to the highlighted bank-program slot and
-  loads it. No typing required.
+  rows (default INIT, bare INIT, then all 200 Sequential programs / your saved
+  files). **Clicking a row body = load only** — quickload slots untouched,
+  picker stays open for auditioning (X / click outside closes). **Clicking a
+  row's ASSIGN chip** arms a bind, closes the picker and shows "ASSIGN ARMED -
+  PRESS PROGRAM 1..8" under the readout; the next quickload button binds that
+  preset to the slot (and loads it). Pressing the same chip again cancels. The
+  row matching the loaded patch is highlighted.
+- **Bank display** is two fixed columns: "(pending)" left, "bank-program"
+  right — appearance never shifts the digits.
+- Picker type is sized for the space (20px rows at layout scale, readable even
+  in a 1052px Bitwig strip).
 - **PRESET (far left)** recalls the loaded patch; press it again — having
   touched nothing else — and your floating edits come back.
 

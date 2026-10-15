@@ -204,7 +204,6 @@ void draw(const Gui &g, const State &s, float w, float h)
         nvgStroke(g.vg);
         // Retro terminal readout (VT323): patch name + bank-program, amber on dark.
         nvgFontFaceId(g.vg, g.screenId);
-        const char *bp = s.bp;
         float fs = d.h * 0.46f;
         nvgFontSize(g.vg, fs);
         while (fs > 6.0f && nvgTextBounds(g.vg, 0, 0, s.name, s.name + std::strlen(s.name), nullptr) > d.w - 8)
@@ -212,14 +211,37 @@ void draw(const Gui &g, const State &s, float w, float h)
         {
             const float nw = nvgTextBounds(g.vg, 0, 0, s.name, s.name + std::strlen(s.name), nullptr);
             nvgFillColor(g.vg, col(kColDispText));
-            nvgText(g.vg, d.x + (float)((d.w - nw) / 2), d.y + d.h * (bp[0] ? 0.44f : 0.72f), s.name, nullptr);
+            nvgText(g.vg, d.x + (float)((d.w - nw) / 2), d.y + d.h * ((s.bpSlot[0] || s.bpPend[0]) ? 0.44f : 0.72f), s.name, nullptr);
         }
-        if (bp[0])
-        {
+        if (s.bpSlot[0] || s.bpPend[0])
+        {   // two reserved fixed columns: "(n)" then "b-p" — appearance never shifts digits
             nvgFontSize(g.vg, d.h * 0.42f);
-            const float bw = nvgTextBounds(g.vg, 0, 0, bp, bp + std::strlen(bp), nullptr);
-            nvgFillColor(g.vg, col(kColDispText));
-            nvgText(g.vg, d.x + (float)((d.w - bw) / 2), d.y + d.h * 0.92f, bp, nullptr);
+            const float pw = nvgTextBounds(g.vg, 0, 0, "(25)", nullptr, nullptr);
+            const float sw = nvgTextBounds(g.vg, 0, 0, "25-8", nullptr, nullptr);
+            const float gap = d.h * 0.16f;
+            const float x0 = d.x + (d.w - (pw + gap + sw)) / 2.f;
+            if (s.bpPend[0])
+            {
+                const float q = nvgTextBounds(g.vg, 0, 0, s.bpPend, s.bpPend + std::strlen(s.bpPend), nullptr);
+                nvgFillColor(g.vg, col(kColDispText));
+                nvgText(g.vg, x0 + pw - q, d.y + d.h * 0.92f, s.bpPend, nullptr);   // right-align in column
+            }
+            if (s.bpSlot[0])
+            {
+                const float q = nvgTextBounds(g.vg, 0, 0, s.bpSlot, s.bpSlot + std::strlen(s.bpSlot), nullptr);
+                nvgFillColor(g.vg, col(kColDispText));
+                nvgText(g.vg, x0 + pw + gap + (sw - q) / 2.f, d.y + d.h * 0.92f, s.bpSlot, nullptr);
+            }
+        }
+        if (s.bindHint)
+        {   // armed ASSIGN: flash a line under the readout — press 1..8 to bind
+            nvgFontFaceId(g.vg, g.screenId);
+            nvgFontSize(g.vg, 13.f);
+            nvgTextAlign(g.vg, NVG_ALIGN_CENTER | NVG_ALIGN_BASELINE);
+            nvgFillColor(g.vg, nvgRGBA(255, 120, 60, 255));
+            nvgText(g.vg, 876.f, 372.f, s.bindHint, nullptr);
+            nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_BASELINE);
+            nvgFontFaceId(g.vg, g.fontId);
         }
         nvgFontFaceId(g.vg, g.fontId);
     }
@@ -288,7 +310,7 @@ void draw(const Gui &g, const State &s, float w, float h)
             nvgStrokeWidth(g.vg, 1.f);
             nvgStroke(g.vg);
             nvgFontFaceId(g.vg, g.fontId);
-            nvgFontSize(g.vg, 9.5f);
+            nvgFontSize(g.vg, 12.5f);
             nvgTextAlign(g.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
             nvgFillColor(g.vg, s.pickerTab == t ? col(kColDispText) : col(kColInk));
             nvgText(g.vg, tx + 65, pick::y + 23, t ? "USER" : "FACTORY", nullptr);
@@ -318,9 +340,9 @@ void draw(const Gui &g, const State &s, float w, float h)
         nvgFillColor(g.vg, col(kColInk));
         nvgText(g.vg, pick::x + pick::w - 29, pick::y + 23, "X", nullptr);
         // target line + rows
-        nvgFontSize(g.vg, 8.5f);
+        nvgFontSize(g.vg, 11.f);
         nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_BASELINE);
-        nvgFillColor(g.vg, nvgRGBA(180, 180, 190, 255));
+        nvgFillColor(g.vg, nvgRGBA(200, 200, 210, 255));
         nvgText(g.vg, pick::x + 292, pick::y + 28, s.pickerTitle, nullptr);
         char pg[16];
         std::snprintf(pg, sizeof pg, "%d/%d", s.pickerPage + 1, s.pickerPages < 1 ? 1 : s.pickerPages);
@@ -328,16 +350,38 @@ void draw(const Gui &g, const State &s, float w, float h)
         nvgText(g.vg, pick::x + pick::w - 182, pick::y + 28, pg, nullptr);
         nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
         nvgFontFaceId(g.vg, g.screenId);
-        nvgFontSize(g.vg, 12.f);
+        nvgFontSize(g.vg, 20.f);
         for (int i = 0; i < s.pickerCount && i < pick::rows; i++)
         {
             const float ry = pick::rowTop(i);
             nvgBeginPath(g.vg);
             nvgRoundedRect(g.vg, pick::x + 12, ry, pick::w - 24, pick::rowH, 3);
-            nvgFillColor(g.vg, i & 1 ? nvgRGBA(40, 40, 46, 255) : nvgRGBA(32, 32, 37, 255));
+            nvgFillColor(g.vg, i == s.pickerSel ? nvgRGBA(70, 40, 32, 255)
+                              : (i & 1) ? nvgRGBA(40, 40, 46, 255) : nvgRGBA(32, 32, 37, 255));
             nvgFill(g.vg);
+            if (i == s.pickerSel)
+            {
+                nvgStrokeColor(g.vg, col(kColDispText));
+                nvgStrokeWidth(g.vg, 1.f);
+                nvgStroke(g.vg);
+            }
             nvgFillColor(g.vg, col(kColDispText));
             nvgText(g.vg, pick::x + 22, ry + pick::rowH / 2, s.pickerRows[i], nullptr);
+            // ASSIGN chip at the right end of the row
+            const float ax = pick::x + pick::w - 12 - pick::assignW();
+            nvgBeginPath(g.vg);
+            nvgRoundedRect(g.vg, ax, ry + 3, pick::assignW(), pick::rowH - 6, 3);
+            nvgFillColor(g.vg, i == s.pickerBind ? nvgRGBA(150, 90, 30, 255) : nvgRGBA(58, 58, 66, 255));
+            nvgFill(g.vg);
+            nvgStrokeColor(g.vg, i == s.pickerBind ? nvgRGBA(255, 170, 80, 255) : col(kColDispStroke));
+            nvgStroke(g.vg);
+            nvgFontFaceId(g.vg, g.fontId);
+            nvgFontSize(g.vg, 9.5f);
+            nvgTextAlign(g.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
+            nvgFillColor(g.vg, col(kColInk));
+            nvgText(g.vg, ax + pick::assignW() / 2, ry + pick::rowH / 2, "ASSIGN", nullptr);
+            nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
+            nvgFontFaceId(g.vg, g.screenId);
         }
         nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_BASELINE);
         nvgFontFaceId(g.vg, g.fontId);
@@ -440,7 +484,14 @@ int hitTab(float lx, float ly)
 }
 int hitRow(float lx, float ly)
 {
-    if (lx < x + 12 || lx > x + w - 12) return -1;
+    if (lx < x + 12 || lx > x + w - 12 - assignW()) return -1;    // body only, not the chip
+    for (int i = 0; i < rows; i++)
+        if (ly >= rowTop(i) && ly <= rowTop(i) + rowH) return i;
+    return -1;
+}
+int hitAssign(float lx, float ly)
+{
+    if (lx < x + w - 12 - assignW() || lx > x + w - 12) return -1;
     for (int i = 0; i < rows; i++)
         if (ly >= rowTop(i) && ly <= rowTop(i) + rowH) return i;
     return -1;

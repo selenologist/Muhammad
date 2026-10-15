@@ -41,6 +41,7 @@ struct Plugin {
     std::string srcFile_;
     int lastProgClick_ = 0;
     const char *loadTag_ = "seed";           // which path last replaced the patch (diag)
+    p5store::Source curSrc_;                   // identity of the loaded patch (picker highlight)
     int bank = 0;                       // panel bank cursor
     void *gui = nullptr;                // owned by gui_x11.cpp when the panel is open
     bool latencyDirty = false;          // OS changed latency while active: report on deactivate
@@ -50,7 +51,8 @@ struct Plugin {
     // programmer PRESET button recalls; the LED floats lit while the panel
     // disagrees with it, exactly like the original's parameter floating.
     void programSlot(int slot);                       // resolve retrieval map -> load
-    void assignAndLoad(int slot, const p5store::Source &s);  // picker click
+    void programSlotLoad(const p5store::Source &, int slot);
+    void loadSource(const p5store::Source &s);                  // picker row click: LOAD ONLY
     void recallBasicInit();                           // hold-RECORD+PRESET: bare INIT
     void syncAllParams();
     bool loadUserPatch(const std::string &name);      // false if missing

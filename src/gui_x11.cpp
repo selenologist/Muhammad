@@ -54,6 +54,8 @@ struct Ctx
     int modal = 0;                    // 1 save, 2 assign, 3 overwrite-confirm, 4 picker
     int pickerTab = 0, pickerPage = 0;
     std::vector<std::string> userRows;   // cached dir listing for the picker
+    bool bindPending = false;            // ASSIGN armed: next program 1-8 binds
+    p5store::Source bindSrc;
     char modalBuf[32] = {};
     char modalHit[36] = {};             // existing file that the typed name folds to
     int modalLen = 0;
@@ -117,8 +119,7 @@ void fillState(Ctx &c, p5ui::State &st)
     if (c.modal == 4)
     {
         static char title[96];
-        std::snprintf(title, sizeof title, "slot %d-%d  <-  click assigns + loads",
-                      c.modalSlot / 8 + 1, c.modalSlot % 8 + 1);
+        std::snprintf(title, sizeof title, "click = load   ASSIGN = bind to next 1..8");
         st.pickerTitle = title;
         st.pickerTab = c.pickerTab; st.pickerPage = c.pickerPage;
         const int total = c.pickerTab == 0 ? (int)PW_FACTORY_N + 2 : (int)c.userRows.size();
@@ -136,6 +137,14 @@ void fillState(Ctx &c, p5ui::State &st)
                        std::snprintf(st.pickerRows[i], 44, "%3d %s", g - 2, nm); }
             }
             else std::snprintf(st.pickerRows[i], 44, "%s", c.userRows[g].c_str());
+            p5store::Source row;
+            if (c.pickerTab == 0) { row.kind = p5store::SourceKind::Factory;
+                                    row.factory = g == 0 ? -2 : g == 1 ? -1 : g - 2; }
+            else { row.kind = p5store::SourceKind::File; row.file = c.userRows[g]; }
+            auto same = [](const p5store::Source &a, const p5store::Source &b) {
+                return a.kind == b.kind && a.factory == b.factory && a.file == b.file; };
+            if (same(c.plugin->curSrc_, row)) st.pickerSel = i;
+            if (c.bindPending && same(c.bindSrc, row)) st.pickerBind = i;
             st.pickerCount++;
         }
     }
@@ -171,16 +180,17 @@ void fillState(Ctx &c, p5ui::State &st)
     }
     st.bank = program >= 0 ? program / 8 + 1 : 0;
     st.program = program >= 0 ? program % 8 + 1 : 0;
-    // A bank cursor that has moved away from the loaded patch's bank shows in
-    // parentheses, so stepping banks never looks like the patch moved.
+    // A bank cursor that moved away from the loaded patch's bank shows in
+    // parentheses in a FIXED left column — the "b-p" digits never shift.
     const int pb = c.plugin->bank + 1;
+    st.bpSlot[0] = st.bpPend[0] = 0;
     if (program >= 0)
     {
-        if (pb != st.bank) std::snprintf(st.bp, sizeof st.bp, "%d-%d (%d)", st.bank, st.program, pb);
-        else std::snprintf(st.bp, sizeof st.bp, "%d-%d", st.bank, st.program);
+        std::snprintf(st.bpSlot, sizeof st.bpSlot, "%d-%d", st.bank, st.program);
+        if (pb != st.bank) std::snprintf(st.bpPend, sizeof st.bpPend, "(%d)", pb);
     }
-    else if (c.plugin->bank != 0) std::snprintf(st.bp, sizeof st.bp, "(%d)", pb);
-    else st.bp[0] = 0;
+    else if (c.plugin->bank != 0) std::snprintf(st.bpPend, sizeof st.bpPend, "(%d)", pb);
+    if (c.bindPending) st.bindHint = "ASSIGN ARMED - PRESS PROGRAM 1..8";
 }
 
 // param value from a normalized knob position, in the param's own units
@@ -243,10 +253,16 @@ void actuate(Ctx &c, int btnIdx, unsigned mods = 0)
         return;
     }
     if (b.pid < 0) return;                            // decorative
-    if (b.ledmode == 2)                               // program select: retrieval map first
+    if (b.ledmode == 2)                               // quickload buttons 1-8
     {
         const int k = c.plugin->bank * 8 + b.value;
         c.plugin->noteProgramClick(b.value);
+        if (c.bindPending)
+        {   // armed ASSIGN: bind this slot to the picked preset (and load it)
+            p5store::setSlot(k, c.bindSrc);
+            p5store::saveMap();
+            c.bindPending = false;
+        }
         c.plugin->programSlot(k);
         return;
     }
@@ -358,24 +374,36 @@ void pump(Ctx &c)
                     if (pg != 0) { c.pickerPage += (pg < 0 ? -1 : 1);
                         if (c.pickerPage < 0) c.pickerPage = 0; dirty = true; break; }
                     if (p5ui::pick::hitClose(lx, ly)) { c.modal = 0; dirty = true; break; }
-                    const int row = p5ui::pick::hitRow(lx, ly);
-                    if (row >= 0)
-                    {
+                    auto srcAt = [&](int row, p5store::Source &s) -> bool {
                         const int g = c.pickerPage * p5ui::pick::rows + row;
-                        p5store::Source s;
                         if (c.pickerTab == 0)
                         {
-                            if (g >= (int)PW_FACTORY_N + 2) break;
+                            if (g >= (int)PW_FACTORY_N + 2) return false;
                             s.kind = p5store::SourceKind::Factory;
                             s.factory = g == 0 ? -2 : g == 1 ? -1 : g - 2;
                         }
                         else
                         {
-                            if (g >= (int)c.userRows.size()) break;
+                            if (g >= (int)c.userRows.size()) return false;
                             s.kind = p5store::SourceKind::File; s.file = c.userRows[g];
                         }
-                        c.plugin->assignAndLoad(c.modalSlot, s);
-                        c.modal = 0; dirty = true;
+                        return true;
+                    };
+                    p5store::Source s;
+                    const int chip = p5ui::pick::hitAssign(lx, ly);
+                    if (chip >= 0 && srcAt(chip, s))
+                    {   // ASSIGN: arm the bind, close the picker so 1-8 are reachable
+                        c.bindPending = !(c.bindPending &&
+                            c.bindSrc.kind == s.kind && c.bindSrc.factory == s.factory &&
+                            c.bindSrc.file == s.file);
+                        c.bindSrc = s;
+                        c.modal = 0; dirty = true; break;
+                    }
+                    const int row = p5ui::pick::hitRow(lx, ly);
+                    if (row >= 0 && srcAt(row, s))
+                    {   // row body: LOAD ONLY — quickload slots untouched, picker stays open
+                        c.plugin->loadSource(s);
+                        dirty = true;
                     }
                     break;
                 }

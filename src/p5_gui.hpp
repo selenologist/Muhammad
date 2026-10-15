@@ -24,12 +24,16 @@ struct State
     // preset picker (programmer PRESET): tabs Factory|User, 10 rows, paged
     const char *pickerTitle = nullptr;   // non-null ONLY while picker is open
     int  pickerTab = 0, pickerPage = 0, pickerPages = 1, pickerCount = 0;
+    int  pickerSel = -1;             // row currently matching the loaded patch
+    int  pickerBind = -1;            // row whose ASSIGN is armed
     char pickerRows[10][44] = {};
     const char *modalTitle = nullptr;
     const char *modalPrompt = nullptr;
     const char *modalText = nullptr;
     int modalLen = 0;
-    char bp[24] = "";              // prebuilt bank-program line ("1-2", "1-2 (3)", "(3)")
+    char bpSlot[10] = "";          // "b-p" digits (reserved fixed column, centered)
+    char bpPend[8] = "";           // pending-bank "(n)" — left of slot, fixed column
+    const char *bindHint = nullptr;// "ASSIGN -> PRESS 1..8" while a bind is armed
 };
 
 struct Gui
@@ -58,11 +62,13 @@ void draw(const Gui &g, const State &s, float w, float h);
 // Hit-testing in the same pixel space. Returns layout index or -1.
 // picker geometry in LAYOUT coords (renderer draws, gui_x11 hit-tests):
 namespace pick {
-constexpr float x = 430, y = 8, w = 700, h = 400, rowH = 29, rowStep = 33;
+constexpr float x = 430, y = 8, w = 700, h = 400, rowH = 30, rowStep = 34;
 constexpr int rows = 10;
 inline float rowTop(int i) { return y + 48 + i * rowStep; }
 int hitTab(float lx, float ly);      // 0 factory 1 user -1
-int hitRow(float lx, float ly);      // 0..9 or -1
+int hitRow(float lx, float ly);      // 0..9 or -1 (row body, left of the ASSIGN chip)
+int hitAssign(float lx, float ly);   // 0..9 ASSIGN chip or -1
+inline float assignW() { return 60.f; }
 int hitPage(float lx, float ly);     // -1 prev, +1 next, 0 none
 bool hitClose(float lx, float ly);
 bool inside(float lx, float ly);

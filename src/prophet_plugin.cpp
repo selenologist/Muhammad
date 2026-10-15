@@ -78,7 +78,7 @@ const clap_plugin_descriptor_t kDescriptor = {
     "selenologist",
     "https://github.com/keremimo/melodee",
     nullptr, nullptr,
-    "1.4-echo",   // bump per shipped build: the version Bitwig shows proves which binary is loaded
+    "1.5-pick2",   // bump per shipped build: the version Bitwig shows proves which binary is loaded
     "P5 clone (PROPHET engine ported from the Melodee firmware)",
     kFeatures
 };
@@ -203,6 +203,7 @@ void Plugin::loadProgram(int k)
     if (k < 0 || k >= (int)PW_FACTORY_N) return;
     engine.loadFactory((uint32_t)k);
     markSource(0, k, std::string());
+    curSrc_.kind = p5store::SourceKind::Factory; curSrc_.factory = k; curSrc_.file.clear();
     program = k;
     bank = k / 8;
     // the whole patch changed under the host's feet: sync every knob
@@ -233,6 +234,7 @@ bool Plugin::loadUserPatch(const std::string &name)
     engine.setPatch(p);
     program = -1;
     markSource(1, -1, p5store::sanitize(name));
+    curSrc_.kind = p5store::SourceKind::File; curSrc_.factory = 0; curSrc_.file = p5store::sanitize(name);
     for (clap_id id = 0; id < 57; id++)
         markPending(id, paramValue(this, id));
     requestHostParamFlush(this);
@@ -245,33 +247,40 @@ void Plugin::syncAllParams()
     requestHostParamFlush(this);
 }
 
+// load WITHOUT touching the retrieval map (picker row click)
+void Plugin::loadSource(const p5store::Source &s)
+{
+    curSrc_ = s;
+    if (s.kind == p5store::SourceKind::File)
+    {
+        if (loadUserPatch(s.file)) return;
+        loadTag_ = "def";
+        p5::Patch i; p5::patchInit(i); p5::patchDefaultName(i);
+        engine.setPatch(i); program = -1; markSource(0, -2, {}); syncAllParams();
+        return;
+    }
+    const int idx = s.factory;
+    if (idx >= 0 && idx < (int)PW_FACTORY_N) { loadProgram(idx); return; }
+    if (idx == -2 && loadUserPatch("Peace Be Upon Him")) return;   // recorded default wins
+    p5::Patch i; p5::patchInit(i);
+    if (idx != -1) p5::patchDefaultName(i);
+    engine.setPatch(i); program = -1; markSource(0, idx, {}); syncAllParams();
+}
+
 void Plugin::programSlot(int slot)
 {
     loadTag_ = "slot";
-    const p5store::Source s = p5store::slot(slot);
-    if (s.kind == p5store::SourceKind::File)
-    {
-        if (loadUserPatch(s.file)) { bank = slot / 8; lastProgClick_ = slot % 8; return; }
-        // missing file: fall through to factory default for that slot
-    }
-    const int idx = s.kind == p5store::SourceKind::Factory ? s.factory : slot;
-    if (idx >= 0 && idx < (int)PW_FACTORY_N) loadProgram(idx);
-    else
-    {   // negative source codes: -1 bare INIT, -2 default patch; anything else -> default
-        if (idx == -2 && loadUserPatch("Peace Be Upon Him"))
-            { lastProgClick_ = slot % 8; return; }     // recorded default wins over the seed
-        p5::Patch i; p5::patchInit(i);
-        if (idx != -1) p5::patchDefaultName(i);
-        engine.setPatch(i); program = -1; markSource(0, idx, {}); syncAllParams();
-    }
-    lastProgClick_ = slot % 8;
+    programSlotLoad(p5store::slot(slot), slot);
 }
 
-void Plugin::assignAndLoad(int slot, const p5store::Source &s)
+void Plugin::programSlotLoad(const p5store::Source &s, int slot)
 {
-    p5store::setSlot(slot, s);
-    p5store::saveMap();
-    programSlot(slot);
+    if (s.kind == p5store::SourceKind::File && loadUserPatch(s.file))
+    { bank = slot / 8; lastProgClick_ = slot % 8; return; }
+    // missing file: fall through to the slot's factory default
+    p5store::Source f; f.kind = p5store::SourceKind::Factory; f.factory = slot;
+    loadSource(s.kind == p5store::SourceKind::Factory ? s : f);
+    lastProgClick_ = slot % 8;
 }
 
 void Plugin::recallBasicInit()
@@ -296,6 +305,7 @@ void Plugin::savePatchNamed(const std::string &name)
     program = -1;
     p5store::savePatch(n, engine.patch().raw);
     markSource(1, -1, n);
+    curSrc_.kind = p5store::SourceKind::File; curSrc_.factory = 0; curSrc_.file = n;
     for (clap_id id = 0; id < 57; id++)
         markPending(id, paramValue(this, id));
     requestHostParamFlush(this);
@@ -741,11 +751,13 @@ static void seedDefaultPatch(Plugin *s)
         p.size = 133; p.model = 0x32; p.command = 3;
         s->engine.setPatch(p);
         s->markSource(1, -1, "Peace Be Upon Him");
+        s->curSrc_.kind = p5store::SourceKind::File; s->curSrc_.file = "Peace Be Upon Him";
         return;
     }
     p5::Patch i; p5::patchInit(i); p5::patchDefaultName(i);
     s->engine.setPatch(i);
     s->markSource(0, 0, std::string());
+    s->curSrc_.kind = p5store::SourceKind::Factory; s->curSrc_.factory = -2;
 }
 
 // ---- instance creation ----------------------------------------------------------
