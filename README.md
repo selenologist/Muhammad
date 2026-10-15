@@ -81,8 +81,8 @@ its A/B build standalone.
 * Mono/UNISON/MONO/LEGATO modes come from the patch's UNISON byte, and the
   unison phase-seed LCG is the plugin's own counter (the firmware's is a
   process-static; a fresh engine restarts the sequence, the firmware's does not).
-* Output: mono, copied to both ports; default trim 0.7 (a stacked full-velocity
-  chord peaks near 1.8 raw), param 80.
+* Output: mono, copied to both ports; default trim 0.5 (a stacked full-velocity
+  chord peaks near 1.7 raw, so the port stays inside 0 dBFS), param 80.
 
 ## License
 

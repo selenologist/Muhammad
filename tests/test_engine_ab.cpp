@@ -64,7 +64,7 @@ static void writeWav(const char *path, const std::vector<int32_t> &pcm)
     fwrite(&rate, 4, 1, f); fwrite(&byteRate, 4, 1, f); fwrite(&block, 2, 1, f); fwrite(&bits, 2, 1, f);
     fwrite("data", 1, 4, f); fwrite(&dataBytes, 4, 1, f);
     for (size_t i = 0; i < pcm.size(); i++) {
-        float v = (float)pcm[i] * (1.0f / 32768.0f) * 0.8f;
+        float v = (float)pcm[i] * (1.0f / 32768.0f) * 0.5f;  // the plugin's default trim
         fwrite(&v, 4, 1, f);
         fwrite(&v, 4, 1, f);
     }
