@@ -94,7 +94,7 @@ void fillState(Ctx &c, p5ui::State &st)
 double normToValue(int pid, double norm)
 {
     const p5::KnobRange *r = p5::knobRange(pid);
-    double lo = r ? r->lo : 0.0, hi = r ? r->hi : 255.0;
+    double lo = r ? r->lo : 0.0, hi = r ? r->hi : (pid < 55 ? 127.0 : 255.0);
     return lo + norm * (hi - lo);
 }
 

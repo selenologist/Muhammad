@@ -59,6 +59,12 @@ void Engine::buildTpt()
     tpt_ = tptGen_;
 }
 
+void Engine::setSmoothing(bool on)
+{
+    smooth_ = on;
+    for (uint32_t k = 0; k < 55u; k++) slew_[k] = (float)valueOf((int)k);
+}
+
 void Engine::setTuneCents(int cents)
 {
     if (cents < -100) cents = -100;
@@ -341,7 +347,18 @@ void Engine::allNotesOff()
 void Engine::block()
 {
     const uint8_t *p = patch_.raw;
-    for (uint32_t k = 0; k < 55u; k++) value_[k] = (uint8_t)valueOf((int)k);
+    if (!smooth_) {
+        for (uint32_t k = 0; k < 55u; k++) value_[k] = (uint8_t)valueOf((int)k);
+    } else {
+        // one-pole toward the target at 1/4 per block (~3 ms at 44.1k)
+        for (uint32_t k = 0; k < 55u; k++) {
+            const float t = (float)valueOf((int)k);
+            float v = slew_[k] + (t - slew_[k]) * 0.25f;
+            if (v > t ? (v - t < 0.5f) : (t - v < 0.5f)) v = t;
+            slew_[k] = v;
+            value_[k] = (uint8_t)(v < 0 ? 0 : v > 255 ? 255 : v + 0.5f);
+        }
+    }
     p5_update_bend();
     uint32_t inc = PW_P5_LFO_INC[value_[P5_LFO_RATE]] / (uint32_t)os_;  // per sub-sample
     if (srScale_ != 1.0) inc = (uint32_t)((double)inc * srScale_);

@@ -4,8 +4,7 @@
 #include <clap/clap.h>
 #include <clap/ext/latency.h>
 #include <clap/ext/timer-support.h>
-#include <utility>
-#include <vector>
+#include <cstring>
 
 #include "p5_engine.hpp"
 
@@ -35,7 +34,12 @@ struct Plugin {
     int program = -1;                   // factory program loaded (-1: edited/INIT)
     int bank = 0;                       // panel bank cursor
     void *gui = nullptr;                // owned by gui_x11.cpp when the panel is open
-    std::vector<std::pair<clap_id, double>> pendingGuiEvents;  // drained into host out queue
+    // GUI-initiated param changes, latest-value-per-id (coalesced): a fast
+    // drag must never queue a catch-up replay behind the host.
+    static constexpr int PEND_IDS = 96;
+    double pendVal[PEND_IDS] = {};
+    bool pendSet[PEND_IDS] = {};
+    void markPending(clap_id id, double v) { if (id < PEND_IDS) { pendVal[id] = v; pendSet[id] = true; } }
 
     void applyRaw(int idx, int v);
     int rawOf(int idx) const;

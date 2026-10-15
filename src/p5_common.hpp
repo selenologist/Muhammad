@@ -85,7 +85,9 @@ inline const KnobRange *knobRange(int id)
 inline double knobNorm(int id, double value)
 {
     const KnobRange *r = knobRange(id);
-    double lo = r ? r->lo : 0.0, hi = r ? r->hi : 255.0;
+    // The device law is 7-bit: valueOf() clamps every continuous knob at 127,
+    // so the surface ends there too — the whole sweep is audible, P5-style.
+    double lo = r ? r->lo : 0.0, hi = r ? r->hi : (id < 55 ? 127.0 : 255.0);
     if (r && r->defWhenZero && value == 0) value = r->def;
     if (value < lo) value = lo;
     if (value > hi) value = hi;

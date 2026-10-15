@@ -92,6 +92,10 @@ public:
 
     // GUI-side global tune in cents (-100..100): applied as fixed-point units on
     // the note's pitch16 (16 = one semitone). 0 == the firmware's exact behaviour.
+    // Param slew for PC playability: block()-rate stepping of raw knobs is what
+    // the device never had to worry about (its encoders move continuously).
+    // Off keeps the bit-exact path; the plugin turns it on.
+    void setSmoothing(bool on);
     void setTuneCents(int cents);
     int tuneCents() const { return tuneCents_; }
     int oversample() const { return os_; }
@@ -145,6 +149,8 @@ private:
     uint32_t dcK_ = DC_K_DEFAULT;
     int poly_ = MAXV;
     int tuneCents_ = 0;
+    bool smooth_ = false;
+    float slew_[55] = {};
     int tuneUnits_ = 0;
     int voiceMode_ = 0, voiceModeOverride_ = -1;
     int prio_ = 1, detune_ = 0;               // p5_track_accept

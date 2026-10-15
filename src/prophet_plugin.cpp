@@ -90,7 +90,7 @@ static void applyParam(Plugin *s, clap_id id, double value)
         if (const KnobClamp *k = knobClamp(id)) {
             if (v < (int)k->lo) v = (int)k->lo;
             if (v > (int)k->hi) v = (int)k->hi;
-        }
+        } else if (v > 127) v = 127;   // 7-bit law: valueOf clamps at 127 anyway
         s->applyRaw(kRawIndex[id], v);
     }
     else if (isOverlayParam(id))
@@ -129,7 +129,7 @@ static double paramValue(Plugin *s, clap_id id)
         if (const KnobClamp *k = knobClamp(id)) {
             if (k->defWhenZero && v == 0) v = k->def;   // raw 0 COUNT = "default 5"
             if (v > (int)k->hi) v = (int)k->hi;         // saturating knobs
-        }
+        } else if (v > 127) v = 127;                    // engine reads clamped too
         return (double)v;
     }
     if (isOverlayParam(id)) return (double)s->engine.overlay((int)(id - 64));
@@ -146,7 +146,7 @@ double Plugin::guiValue(clap_id id) { return paramValue(this, id); }
 void Plugin::guiSet(clap_id id, double v)
 {
     applyParam(this, id, v);
-    pendingGuiEvents.push_back({id, paramValue(this, id)});
+    markPending(id, paramValue(this, id));   // latest value wins; no backlog
     requestHostParamFlush(this);
 }
 
@@ -158,7 +158,7 @@ void Plugin::loadProgram(int k)
     bank = k / 8;
     // the whole patch changed under the host's feet: sync every knob
     for (clap_id id = 0; id < 57; id++)
-        pendingGuiEvents.push_back({id, paramValue(this, id)});
+        markPending(id, paramValue(this, id));
     requestHostParamFlush(this);
 }
 
@@ -227,6 +227,7 @@ static bool plugin_activate(const clap_plugin_t *p, double sample_rate, uint32_t
     auto *s = fromPlugin(p);
     s->sr = sample_rate;
     s->engine.activate(sample_rate);
+    s->engine.setSmoothing(true);   // PC playability; the A/B harness keeps it off
     s->active = true;
     return true;
 }
@@ -351,7 +352,7 @@ static bool par_get_info(const clap_plugin_t *, uint32_t index, clap_param_info_
     std::memset(info, 0, sizeof *info);
     clap_id id;
     if (index < 57) {
-        id = index; info->min_value = 0; info->max_value = 255;
+        id = index; info->min_value = 0; info->max_value = 127;
         if (const KnobClamp *k = knobClamp(id)) { info->min_value = k->lo; info->max_value = k->hi; }
     }
     else if (index < 57 + NUM_OVERLAYS) {
@@ -396,7 +397,7 @@ static bool par_text_to_value(const clap_plugin_t *, clap_id id, const char *tex
     if (std::sscanf(text, "%lf", &v) != 1) return false;
     if (isRawParam(id)) {
         if (const KnobClamp *k = knobClamp(id)) v = v < k->lo ? k->lo : v > k->hi ? k->hi : v;
-        else v = v < 0 ? 0 : v > 255 ? 255 : v;
+        else v = v < 0 ? 0 : v > 127 ? 127 : v;
     } else if (id == PID_TRIM) v = v < 0 ? 0 : v > 2 ? 2 : v;
     else if (id == PID_OS) v = v < 0 ? 0 : v > 1 ? 1 : v;
     else if (id == PID_TUNE) v = v < -100 ? -100 : v > 100 ? 100 : v;
@@ -415,17 +416,20 @@ static void par_flush(const clap_plugin_t *p, const clap_input_events_t *in, con
         if (ev) dispatchEvent(s, ev);
     }
     // drain GUI-initiated changes so the host's UI/automation sees them
-    if (!out || s->pendingGuiEvents.empty()) return;
-    for (auto &pe : s->pendingGuiEvents) {
+    // (coalesced: at most one value per param, so a fast drag cannot leave a
+    // catch-up trail behind the pointer)
+    if (!out) return;
+    for (clap_id id = 0; id < Plugin::PEND_IDS; id++) {
+        if (!s->pendSet[id]) continue;
+        s->pendSet[id] = false;
         clap_event_param_value e{};
         e.header.type = CLAP_EVENT_PARAM_VALUE;
         e.header.time = 0;
-        e.param_id = pe.first;
+        e.param_id = id;
         e.cookie = nullptr;
-        e.value = pe.second;
+        e.value = s->pendVal[id];
         out->try_push(out, &e.header);
     }
-    s->pendingGuiEvents.clear();
 }
 const clap_plugin_params_t kParams = { par_count, par_get_info, par_get_value,
                                        par_value_to_text, par_text_to_value, par_flush };
