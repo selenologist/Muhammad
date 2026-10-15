@@ -83,7 +83,7 @@ if(GUI_DEFINES)
 endif()
 set_target_properties(prophet_clap PROPERTIES
     PREFIX ""
-    OUTPUT_NAME "muhammed"
+    OUTPUT_NAME "muhammad"
     SUFFIX ".clap"
 )
 if(MATH_LIBRARY)

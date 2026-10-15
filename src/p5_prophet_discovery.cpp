@@ -86,7 +86,7 @@ const void *provider_get_extension(const clap_preset_discovery_provider *, const
 }
 
 const clap_preset_discovery_provider_descriptor_t kProviderDesc = {
-    CLAP_VERSION_INIT, kProviderId, "Muhammad presets (factory + user patches)", "Melodee community"
+    CLAP_VERSION_INIT, kProviderId, "Muhammad presets (factory + user patches)", "selenologist"
 };
 
 uint32_t factory_count(const clap_preset_discovery_factory *) { return 1; }

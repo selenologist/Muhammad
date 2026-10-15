@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// Patch files are where patches really live: Documents/Muhammad Synth/*.muhammed
+// Patch files are where patches really live: Documents/Muhammad Synth/*.muhammad
 // (133 raw wire bytes + name inside). The bank/program grid is only a retrieval
 // map — assignable to a factory patch or a user file, and it is what MIDI
 // program change (and CC0 bank select) resolves through.
@@ -25,7 +25,7 @@ std::string baseDir();                  // .../Documents/Muhammad Synth (created
 bool ensureDir();
 
 std::string sanitize(const std::string &name);
-std::string patchPath(const std::string &name);         // baseDir/<NAME>.muhammed
+std::string patchPath(const std::string &name);         // baseDir/<NAME>.muhammad
 std::vector<std::string> listPatches();                 // sorted, name without extension
 
 bool savePatch(const std::string &name, const uint8_t raw[133]);

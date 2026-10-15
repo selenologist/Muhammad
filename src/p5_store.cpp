@@ -61,7 +61,7 @@ std::string sanitize(const std::string &name)
 
 std::string patchPath(const std::string &name)
 {
-    return baseDir() + "/" + sanitize(name) + ".muhammed";
+    return baseDir() + "/" + sanitize(name) + ".muhammad";
 }
 
 bool savePatch(const std::string &name, const uint8_t raw[133])
@@ -96,7 +96,7 @@ std::vector<std::string> listPatches()
     {
         if (!e.is_regular_file()) continue;
         const std::string fn = e.path().filename().string();
-        if (fn.size() > 9 && fn.compare(fn.size() - 9, 9, ".muhammed") == 0)
+        if (fn.size() > 9 && fn.compare(fn.size() - 9, 9, ".muhammad") == 0)
             out.push_back(fn.substr(0, fn.size() - 9));
     }
     std::sort(out.begin(), out.end());

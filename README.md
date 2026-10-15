@@ -58,9 +58,9 @@ and SSE2 as the fallback.
 
     cmake -B build -DMELODEE_DIR=/path/to/melodee
     cmake --build build -j
-    build/muhammed.clap                    # the plugin (a single shared object)
+    build/muhammad.clap                    # the plugin (a single shared object)
     build/test_engine_ab build/ref.bin    # the A/B, after ./build/ref_dump > build/ref.bin
-    build/clap_smoke build/muhammed.clap
+    build/clap_smoke build/muhammad.clap
     build/bench_engine
 
 `MELODEE_DIR` only gates `ref_dump` (the firmware cross-check); the plugin and
@@ -172,11 +172,11 @@ Disable with `-DPROPHET_GUI=OFF` for headless engine-only builds.
 
 ## Patch store & retrieval (v1.0-muh)
 
-Patches really live as files: `~/Documents/Muhammad Synth/<NAME>.muhammed`
+Patches really live as files: `~/Documents/Muhammad Synth/<NAME>.muhammad`
 (133 raw wire bytes; name inside). The PROGRAMMER grid is only a retrieval map:
 
 - **RECORD** (orange) → in-window text-entry modal → saves the current panel as
-  `<NAME>.muhammed`.
+  `<NAME>.muhammad`.
 - **PRESET** (programmer) → modal assigns the current bank/program slot to a
   user patch by name, or `FAC:<n>` / `<n>` for a factory program. Persisted in
   `bank-program.map`. Program buttons 1–8 and MIDI resolve through this map:

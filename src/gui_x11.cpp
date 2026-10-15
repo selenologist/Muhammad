@@ -112,7 +112,7 @@ void fillState(Ctx &c, p5ui::State &st)
         if (c.modal == 1)
         {
             static char prompt[96];
-            std::snprintf(prompt, sizeof prompt, "write to  %s/<name>.muhammed",
+            std::snprintf(prompt, sizeof prompt, "write to  %s/<name>.muhammad",
                           p5store::baseDir().c_str());
             st.modalPrompt = prompt;
         }
@@ -440,7 +440,7 @@ bool setupEmbedded(Ctx &c, Window parent)
     XChangeProperty(c.dpy, c.win, c.xembedInfo, XA_CARDINAL, 32, PropModeReplace,
                     (const unsigned char *)xembedInfoVal, 2);
     XClassHint classHint{};
-    classHint.res_name = const_cast<char *>("muhammed");
+    classHint.res_name = const_cast<char *>("muhammad");
     classHint.res_class = const_cast<char *>("Muhammad");
     XSetClassHint(c.dpy, c.win, &classHint);
     XSizeHints *sh = XAllocSizeHints();

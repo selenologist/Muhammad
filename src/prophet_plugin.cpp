@@ -75,7 +75,7 @@ const clap_plugin_descriptor_t kDescriptor = {
     CLAP_VERSION_INIT,
     "muhammad.unresolvable",
     "Muhammad",
-    "Melodee community / Melodee port",
+    "selenologist",
     "https://github.com/keremimo/melodee",
     nullptr, nullptr,
     "1.0-muh",   // bump per shipped build: the version Bitwig shows proves which binary is loaded
