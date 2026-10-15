@@ -153,6 +153,18 @@ int main(int argc, char **argv)
         bool ok53 = params->get_info(plugin, 53, &info) && info.id == 53 &&
                     info.min_value == 1 && info.max_value == 8;
         check("UNISON CNT range is 1..8 (not 0..255)", ok53);
+    {   // KEYBD>FLT: three honest detents with names, over-range clamps to FULL
+        const clap_plugin_params_t *pp = (const clap_plugin_params_t *)plugin->get_extension(plugin, CLAP_EXT_PARAMS);
+        clap_param_info_t i19{};
+        bool ok19 = pp && pp->get_info(plugin, 19, &i19) &&
+                    i19.min_value == 0.0 && i19.max_value == 2.0;
+        check("KEYBD>FLT range is 0..2", ok19);
+        char tx[32];
+        bool texts = pp->value_to_text(plugin, 19, 1.0, tx, sizeof tx) && !strcmp(tx, "HALF") &&
+                     pp->value_to_text(plugin, 19, 2.0, tx, sizeof tx) && !strcmp(tx, "FULL") &&
+                     pp->value_to_text(plugin, 19, 0.0, tx, sizeof tx) && !strcmp(tx, "OFF");
+        check("KEYBD>FLT detent text OFF/HALF/FULL", texts);
+    }
         clap_event_param_value pc{};
         pc.header.type = CLAP_EVENT_PARAM_VALUE; pc.header.time = 0;
         pc.param_id = 53; pc.value = 2;

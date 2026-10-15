@@ -68,6 +68,7 @@ inline const KnobRange *knobRange(int id)
         { 1, 0, 96, false, 0 },   // OSC B FREQUENCY
         { 2, 0, 127, false, 0 },  // OSC B FINE
         { 20, 0, 1, false, 0 },   // FILTER MODEL SSI/CURTIS (raw byte 20!)
+        { 19, 0, 2, false, 0 },   // KEYBD>FLT: engine fastClamps to 0/1/2 detents
         { 51, 0, 1, false, 0 },   // RELEASE ON
         { 52, 0, 1, false, 0 },   // UNISON
         { 53, 1, 8, true, 5 },    // UNISON CNT: raw 0 means "default 5"

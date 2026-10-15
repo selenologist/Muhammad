@@ -44,7 +44,7 @@ struct Box   { float x, y, w, h; const char *header; };
 struct Rule  { float x1, y1, x2, y2; };
 struct Disp  { float x, y, w, h; };
 
-inline constexpr int kNumKnobs = 31, kNumBtns = 37, kNumTexts = 73, kNumBoxes = 9, kNumRules = 14, kNumDisplays = 1;
+inline constexpr int kNumKnobs = 32, kNumBtns = 36, kNumTexts = 73, kNumBoxes = 9, kNumRules = 14, kNumDisplays = 1;
 inline constexpr Knob kKnobs[] = {
         {32, 60.0f, 60.0f, false, 0, 10},
         {33, 124.0f, 60.0f, false, 0, 10},
@@ -69,6 +69,7 @@ inline constexpr Knob kKnobs[] = {
         {45, 1020.0f, 196.0f, false, 0, 10},
         {47, 1084.0f, 196.0f, false, 0, 10},
         {49, 1148.0f, 196.0f, false, 0, 10},
+        {19, 1212.0f, 196.0f, false, 0, 2},
         {82, 1330.0f, 66.0f, true, 0, 10},
         {42, 1396.0f, 66.0f, false, 0, 10},
         {80, 1462.0f, 66.0f, true, 0, 10},
@@ -103,7 +104,6 @@ inline constexpr Btn kBtns[] = {
         {52, 442.0f, 332.0f, BC_DARK, G_NONE, true, 1, 0},
         {81, 850.0f, 196.0f, BC_DARK, G_NONE, true, 1, 0},
         {20, 928.0f, 62.0f, BC_GRAY, G_NONE, true, 1, 0},
-        {19, 1212.0f, 196.0f, BC_DARK, G_NONE, true, 1, 0},
         {-3, 598.0f, 330.0f, BC_GRAY, G_NONE, true, 5, 0},
         {-2, 640.0f, 330.0f, BC_ORANGE, G_NONE, true, 4, 0},
         {84, 682.0f, 330.0f, BC_GRAY, G_NONE, false, 0, 0},
@@ -167,7 +167,7 @@ inline constexpr Text kTexts[] = {
         {1020.0f, 238.0f, T_LBL, "DECAY"},
         {1084.0f, 238.0f, T_LBL, "SUSTAIN"},
         {1148.0f, 238.0f, T_LBL, "RELEASE"},
-        {1212.0f, 238.0f, T_LBL, "KEYBOARD"},
+        {1212.0f, 238.0f, T_LBL, "KEYBD"},
         {1330.0f, 106.0f, T_LBL, "MASTER TUNE"},
         {1396.0f, 106.0f, T_LBL, "VEL>AMP"},
         {1462.0f, 106.0f, T_LBL, "VOLUME"},
@@ -197,7 +197,7 @@ inline constexpr Text kTexts[] = {
 
 inline constexpr Box kBoxes[] = {
         {8.0f, 10.0f, 292.0f, 120.0f, "POLY-MOD"},
-        {52.0f, 138.0f, 248.0f, 120.0f, "LFO"},
+        {52.0f, 138.0f, 248.0f, 120.0f, "VIBRATO"},
         {8.0f, 266.0f, 292.0f, 138.0f, "WHEEL-MOD"},
         {306.0f, 10.0f, 400.0f, 120.0f, "OSCILLATOR 1"},
         {306.0f, 138.0f, 400.0f, 120.0f, "OSCILLATOR 2"},

@@ -206,7 +206,10 @@ Patches really live as files: `~/Documents/Muhammad Synth/<NAME>.muhammad`
   Bitwig's browser sees both. `P5_STORE_DIR` env overrides the directory
   (tests/CI).
 
-New panel knobs: VEL>AMP (left of VOLUME), VEL>FLT (filter top row; KEYBOARD
-moved after filter RELEASE). Still host-only by design: PRESS>× (2), LFO INIT
-(wheel state), BEND RANGE, PRIORITY, EDIT overlays — no hardware silkscreen
-equivalents.
+New panel knobs: VEL>AMP (left of VOLUME), VEL>FLT (filter top row). The filter
+KEYBOARD switch is now a 3-detent KEYBD knob (0..2 = OFF/HALF/FULL — the engine
+quantises there), the LFO box is VIBRATO with its SAW/TRI/PULSE SHAPE buttons
+(the engine's waveform law is exactly these three flags averaged), and every
+one of raw params 0..56 now has a panel control. Host-only by necessity:
+PRESS>× need aftertouch, LFO INIT is wheel-state, BEND RANGE/PRIORITY were
+panel globals on the original, EDIT overlays ride params 64..71.

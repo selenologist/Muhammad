@@ -78,7 +78,7 @@ const clap_plugin_descriptor_t kDescriptor = {
     "selenologist",
     "https://github.com/keremimo/melodee",
     nullptr, nullptr,
-    "1.1-case",  // bump per shipped build: the version Bitwig shows proves which binary is loaded
+    "1.2-visible",   // bump per shipped build: the version Bitwig shows proves which binary is loaded
     "P5 clone (PROPHET engine ported from the Melodee firmware)",
     kFeatures
 };
@@ -535,6 +535,8 @@ static bool par_value_to_text(const clap_plugin_t *, clap_id id, double v, char 
 {
     if (id == 20) { std::snprintf(buf, cap, "%s", v < 1.0 ? "SSI" : "CURTIS"); return true; }
     if (id == 52 || id == 51) { std::snprintf(buf, cap, "%s", v < 1.0 ? "OFF" : "ON"); return true; }
+    if (id == 19) { static const char *const kKt[3] = {"OFF","HALF","FULL"};
+                    std::snprintf(buf, cap, "%s", kKt[(int)v < 0 ? 0 : (int)v > 2 ? 2 : (int)v]); return true; }
     if (id == 56) { static const char *const kPr[4] = {"LOW","LOW RET","LAST","LAST RET"};
                     std::snprintf(buf, cap, "%s", kPr[(int)v & 3]); return true; }
     if (id == PID_TUNE) { std::snprintf(buf, cap, "%+d cents", (int)(v < 0 ? v - 0.5 : v + 0.5)); return true; }

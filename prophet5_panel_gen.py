@@ -43,7 +43,7 @@ SWITCHES = {"osc1_saw", "osc1_sq", "osc2_saw", "osc2_tri", "osc2_sq", "osc1_sync
             "osc2_lofreq", "osc2_keyboard", "lfo_saw", "lfo_tri", "lfo_sq",
             "wm_freq1", "wm_freq2", "wm_pw1", "wm_pw2", "wm_filter",
             "pm_freq1", "pm_pw1", "pm_filter", "unison", "release_btn", "os",
-            "flt_keyboard", "flt_model"}
+            "flt_model"}
 
 def f(x):
     s = f"{x:.1f}"
@@ -202,7 +202,7 @@ subhead(229, 106, "DESTINATION", 8)
 
 # --- LFO (A, r2) ---
 btn(30, 198, "lfo_preset", color="btnGray", label="PRESET", label_dy=34)
-box(52, 138, 248, 120, "LFO")
+box(52, 138, 248, 120, "VIBRATO")
 knob(110, 196, "lfo_freq", label="FREQUENCY", label_dy=48)
 for x, g, p in ((180, "gSaw", "lfo_saw"), (214, "gTri", "lfo_tri"), (248, "gSq", "lfo_sq")):
     btn(x, 196, p, glyph=g)
@@ -271,7 +271,7 @@ knob(956, 196, "flt_a", label="ATTACK", label_dy=42)
 knob(1020, 196, "flt_d", label="DECAY", label_dy=42)
 knob(1084, 196, "flt_s", label="SUSTAIN", label_dy=42)
 knob(1148, 196, "flt_r", label="RELEASE", label_dy=42)
-btn(1212, 196, "flt_keyboard", label="KEYBOARD", label_dy=42)
+knob(1212, 196, "flt_keyboard", label="KEYBD", label_dy=42, ticks=(0, 2))
 
 # --- MASTER TUNE / VOLUME (white knobs, unbordered, right) ---
 knob(1330, 66, "master_tune", label="MASTER TUNE", white=True, label_dy=40)
