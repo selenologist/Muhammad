@@ -134,6 +134,29 @@ int main(int argc, char **argv)
     double got = -1;
     check("param CUTOFF readback after flush", params->get_value(plugin, 17, &got) && got == 42);
 
+    // unison knobs: effective ranges and read-back must match the behaviour
+    {
+        clap_param_info_t info{};
+        bool ok53 = params->get_info(plugin, 53, &info) && info.id == 53 &&
+                    info.min_value == 1 && info.max_value == 8;
+        check("UNISON CNT range is 1..8 (not 0..255)", ok53);
+        clap_event_param_value pc{};
+        pc.header.type = CLAP_EVENT_PARAM_VALUE; pc.header.time = 0;
+        pc.param_id = 53; pc.value = 2;
+        EventList pcl{ { &pc.header } };
+        clap_input_events_t pl{ &pcl, EL_size, EL_get };
+        params->flush(plugin, &pl, &out);
+        double v53 = -1; params->get_value(plugin, 53, &v53);
+        check("UNISON CNT=2 readback", v53 == 2);
+        pc.value = 250;                       // over-range write must saturate to 8
+        params->flush(plugin, &pl, &out);
+        params->get_value(plugin, 53, &v53);
+        check("UNISON CNT over-range clamps to 8", v53 == 8);
+        char txt[64] = {0};
+        check("PRIORITY value text", params->value_to_text(plugin, 56, 1, txt, sizeof txt) && !std::strcmp(txt, "LOW RET"));
+        check("FILTER MODEL value text", params->value_to_text(plugin, 4, 0, txt, sizeof txt) && !std::strcmp(txt, "SSI"));
+    }
+
     if (st) {
         auto *state = (const clap_plugin_state_t *)st;
         std::vector<char> blob;

@@ -39,6 +39,25 @@ static const double kOverlayMax[8] = {  63,  63,  24,  24,  63,  63,  63,  63 };
 constexpr uint32_t PARAM_COUNT = 57 + NUM_OVERLAYS + 2;   // + trim, oversample
 
 static bool isRawParam(clap_id id) { return id < 57; }
+
+// Display ranges that match what the engine actually does with the byte
+// (the firmware clamps these on read), so the host's number is the truth:
+//   4 FILTER REV: 0..1 (0=SSI, nonzero=CURTIS)   51 RELEASE ON: 0..1 (!!)
+//   52 UNISON: 0..1 (0=poly, nonzero=unison)     53 UNISON CNT: 1..8
+//      (raw 0 means "default 5"; the engine clamps to the polyphony)
+//   54 UNISON DET: 0..7 (higher raws saturate)   55 BEND: 0..11
+//   56 RETRIGGER/PRIORITY: 0..3 (LOW, LOW RET, LAST, LAST RET)
+struct KnobClamp { clap_id id; double lo, hi; bool defWhenZero; int def; };
+static const KnobClamp kKnobClamp[] = {
+    { 4, 0, 1, false, 0 }, { 51, 0, 1, false, 0 }, { 52, 0, 1, false, 0 },
+    { 53, 1, 8, true, 5 }, { 54, 0, 7, false, 0 }, { 55, 0, 11, false, 0 },
+    { 56, 0, 3, false, 0 },
+};
+static const KnobClamp *knobClamp(clap_id id)
+{
+    for (const auto &k : kKnobClamp) if (k.id == (int)id) return &k;
+    return nullptr;
+}
 static bool isOverlayParam(clap_id id) { return id >= 64 && id < 64 + NUM_OVERLAYS; }
 
 const char *Plugin::nameOf(clap_id id)
@@ -76,7 +95,14 @@ const clap_plugin_descriptor_t kDescriptor = {
 // ---- params <-> engine -------------------------------------------------------
 static void applyParam(Plugin *s, clap_id id, double value)
 {
-    if (isRawParam(id)) s->applyRaw(kRawIndex[id], (int)(value < 0 ? 0 : value + 0.5));
+    if (isRawParam(id)) {
+        int v = (int)(value < 0 ? 0 : value + 0.5);
+        if (const KnobClamp *k = knobClamp(id)) {
+            if (v < (int)k->lo) v = (int)k->lo;
+            if (v > (int)k->hi) v = (int)k->hi;
+        }
+        s->applyRaw(kRawIndex[id], v);
+    }
     else if (isOverlayParam(id))
         s->engine.setOverlay((int)(id - 64), (int)(value < 0 ? value - 0.5 : value + 0.5));
     else if (id == PID_TRIM) s->trim = (float)value;
@@ -91,7 +117,14 @@ static void applyParam(Plugin *s, clap_id id, double value)
 
 static double paramValue(Plugin *s, clap_id id)
 {
-    if (isRawParam(id)) return (double)s->rawOf(kRawIndex[id]);
+    if (isRawParam(id)) {
+        int v = s->rawOf(kRawIndex[id]);
+        if (const KnobClamp *k = knobClamp(id)) {
+            if (k->defWhenZero && v == 0) v = k->def;   // raw 0 COUNT = "default 5"
+            if (v > (int)k->hi) v = (int)k->hi;         // saturating knobs
+        }
+        return (double)v;
+    }
     if (isOverlayParam(id)) return (double)s->engine.overlay((int)(id - 64));
     if (id == PID_TRIM) return s->trim;
     if (id == PID_OS) return (double)(s->engine.oversample() - 1);
@@ -282,7 +315,10 @@ static bool par_get_info(const clap_plugin_t *, uint32_t index, clap_param_info_
     if (index >= PARAM_COUNT) return false;
     std::memset(info, 0, sizeof *info);
     clap_id id;
-    if (index < 57) { id = index; info->min_value = 0; info->max_value = 255; }
+    if (index < 57) {
+        id = index; info->min_value = 0; info->max_value = 255;
+        if (const KnobClamp *k = knobClamp(id)) { info->min_value = k->lo; info->max_value = k->hi; }
+    }
     else if (index < 57 + NUM_OVERLAYS) {
         int o = (int)(index - 57); id = (clap_id)(64 + o);
         info->min_value = kOverlayMin[o]; info->max_value = kOverlayMax[o];
@@ -306,6 +342,9 @@ static bool par_get_value(const clap_plugin_t *p, clap_id id, double *out)
 static bool par_value_to_text(const clap_plugin_t *, clap_id id, double v, char *buf, uint32_t cap)
 {
     if (id == 4) { std::snprintf(buf, cap, "%s", v < 1.0 ? "SSI" : "CURTIS"); return true; }
+    if (id == 52 || id == 51) { std::snprintf(buf, cap, "%s", v < 1.0 ? "OFF" : "ON"); return true; }
+    if (id == 56) { static const char *const kPr[4] = {"LOW","LOW RET","LAST","LAST RET"};
+                    std::snprintf(buf, cap, "%s", kPr[(int)v & 3]); return true; }
     if (isOverlayParam(id)) std::snprintf(buf, cap, "%+g", v);
     else std::snprintf(buf, cap, "%g", v);
     return true;
@@ -314,8 +353,10 @@ static bool par_text_to_value(const clap_plugin_t *, clap_id id, const char *tex
 {
     double v = 0;
     if (std::sscanf(text, "%lf", &v) != 1) return false;
-    if (isRawParam(id)) v = v < 0 ? 0 : v > 255 ? 255 : v;
-    else if (id == PID_TRIM) v = v < 0 ? 0 : v > 2 ? 2 : v;
+    if (isRawParam(id)) {
+        if (const KnobClamp *k = knobClamp(id)) v = v < k->lo ? k->lo : v > k->hi ? k->hi : v;
+        else v = v < 0 ? 0 : v > 255 ? 255 : v;
+    } else if (id == PID_TRIM) v = v < 0 ? 0 : v > 2 ? 2 : v;
     else if (id == PID_OS) v = v < 0 ? 0 : v > 1 ? 1 : v;
     *out = v;
     return true;
