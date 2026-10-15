@@ -77,7 +77,7 @@ const clap_plugin_descriptor_t kDescriptor = {
     "Melodee port",
     "https://github.com/keremimo/melodee",
     nullptr, nullptr,
-    "0.1",
+    "0.6-gui3",   // bump per shipped build: the version Bitwig shows proves which binary is loaded
     "Prophet-5 (Rev-4 wire) engine ported from the Melodee firmware",
     kFeatures
 };
@@ -227,7 +227,12 @@ static void dispatchEvent(Plugin *s, const clap_event_header_t *ev)
 static Plugin *fromPlugin(const clap_plugin_t *p)
 { return p ? static_cast<Plugin *>(p->plugin_data) : nullptr; }
 
-static bool plugin_init(const clap_plugin_t *p) { return fromPlugin(p) != nullptr; }
+static bool plugin_init(const clap_plugin_t *p)
+{
+    std::fprintf(stderr, "[p5] plugin init: Prophet build %s (gui-x11, 7-bit law, coalesced gestures, xembed)\n",
+                 kDescriptor.version);
+    return fromPlugin(p) != nullptr;
+}
 
 static void plugin_destroy(const clap_plugin_t *p)
 {

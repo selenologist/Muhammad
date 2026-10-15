@@ -4,6 +4,7 @@
 // params (via Plugin::guiSet, drained to the host on the next params.flush).
 // Linux is the primary target; win32/cocoa tables can follow the same shape.
 #include <X11/Xlib.h>
+#include <X11/Xatom.h>
 #include <GL/glx.h>
 #include <GL/gl.h>
 
@@ -145,6 +146,9 @@ void pump(Ctx &c)
         if (XGetWindowAttributes(c.dpy, c.parent, &pa) && pa.width > 1 && pa.height > 1 &&
             ((uint32_t)pa.width != c.w || (uint32_t)pa.height != c.h))
         {
+            static int mirrorLogged = 0;
+            if (!mirrorLogged++)
+                std::fprintf(stderr, "[p5gui] mirroring parent geometry -> %dx%d\n", pa.width, pa.height);
             XResizeWindow(c.dpy, c.win, pa.width, pa.height);
             c.w = (uint32_t)pa.width; c.h = (uint32_t)pa.height;
             dirty = true;
@@ -284,6 +288,8 @@ bool setupEmbedded(Ctx &c, Window parent)
     XFree(vi);
     if (!c.win) { teardown(c); return false; }
     XStoreName(c.dpy, c.win, "Prophet-5");
+    std::fprintf(stderr, "[p5gui] child window created: 0x%lx parent 0x%lx size %ux%u\n",
+                 (unsigned long)c.win, (unsigned long)c.parent, c.w, c.h);
     c.wmDelete = XInternAtom(c.dpy, "WM_DELETE_WINDOW", False);
 
     // Announce XEmbed (the clap spec's x11 embedding protocol) so the host
@@ -291,7 +297,7 @@ bool setupEmbedded(Ctx &c, Window parent)
     c.xembed = XInternAtom(c.dpy, "_XEMBED", False);
     c.xembedInfo = XInternAtom(c.dpy, "_XEMBED_INFO", False);
     const long xembedInfoVal[2] = { 0 /*version*/, 1 /*XEMBED_MAPPED*/ };
-    XChangeProperty(c.dpy, c.win, c.xembedInfo, c.xembedInfo, 32, PropModeReplace,
+    XChangeProperty(c.dpy, c.win, c.xembedInfo, XA_CARDINAL, 32, PropModeReplace,
                     (const unsigned char *)xembedInfoVal, 2);
     XClassHint classHint{};
     classHint.res_name = const_cast<char *>("prophet");
@@ -319,6 +325,7 @@ bool setupEmbedded(Ctx &c, Window parent)
     }
 
     if (!glXMakeCurrent(c.dpy, c.win, c.gl)) { teardown(c); return false; }
+    std::fprintf(stderr, "[p5gui] GL: %s\n", (const char *)glGetString(GL_VERSION));
     c.vg = nvgCreateGL3(NVG_ANTIALIAS | NVG_STENCIL_STROKES);
     if (!c.vg) { teardown(c); return false; }
     c.gui = p5ui::create(c.vg);
@@ -333,6 +340,7 @@ void registerTimer(Ctx &c)
     auto *ts = (const clap_host_timer_support_t *)host->get_extension(host, CLAP_EXT_TIMER_SUPPORT);
     if (ts && ts->register_timer && ts->register_timer(host, 16, &c.timerId))
         c.timerRegistered = true;
+    std::fprintf(stderr, "[p5gui] timer-support %s\n", c.timerRegistered ? "registered" : "absent");
 }
 
 void unregisterTimer(Ctx &c)
@@ -356,6 +364,7 @@ bool gui_get_preferred_api(const clap_plugin_t *, const char **api, bool *is_flo
 }
 bool gui_create(const clap_plugin_t *p, const char *api, bool is_floating)
 {
+    std::fprintf(stderr, "[p5gui] create api=%s floating=%d\n", api ? api : "(null)", (int)is_floating);
     if (!gui_is_api_supported(p, api, is_floating)) return false;
     auto *s = static_cast<Plugin *>(p->plugin_data);
     if (!s->gui) s->gui = new Ctx(s);
@@ -373,6 +382,7 @@ void gui_destroy(const clap_plugin_t *p)
 }
 bool gui_set_scale(const clap_plugin_t *p, double scale)
 {
+    std::fprintf(stderr, "[p5gui] set_scale %g\n", scale);
     if (auto *c = ctxFrom(p)) { c->scale = scale; return true; }
     return false;
 }
@@ -402,6 +412,7 @@ bool gui_adjust_size(const clap_plugin_t *, uint32_t *w, uint32_t *h)
 }
 bool gui_set_size(const clap_plugin_t *p, uint32_t w, uint32_t h)
 {
+    std::fprintf(stderr, "[p5gui] set_size %ux%u\n", w, h);
     auto *c = ctxFrom(p);
     if (!c) return false;
     // The host's size is authoritative: resize EXACTLY to it. (Forcing our own
@@ -419,6 +430,7 @@ bool gui_set_size(const clap_plugin_t *p, uint32_t w, uint32_t h)
 }
 bool gui_set_parent(const clap_plugin_t *p, const clap_window_t *window)
 {
+    std::fprintf(stderr, "[p5gui] set_parent api=%s\n", window ? window->api : "(null)");
     auto *c = ctxFrom(p);
     if (!c || !window || std::strcmp(window->api, CLAP_WINDOW_API_X11) != 0) return false;
     return setupEmbedded(*c, (Window)window->x11);
@@ -427,6 +439,7 @@ bool gui_set_transient(const clap_plugin_t *, const clap_window_t *) { return fa
 void gui_suggest_title(const clap_plugin_t *, const char *) {}
 bool gui_show(const clap_plugin_t *p)
 {
+    std::fprintf(stderr, "[p5gui] show\n");
     auto *c = ctxFrom(p);
     if (!c || !c->win) return false;
     XMapWindow(c->dpy, c->win);
