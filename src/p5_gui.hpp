@@ -23,7 +23,8 @@ struct State
 struct Gui
 {
     NVGcontext *vg = nullptr;
-    int fontId = 0;
+    int fontId = 0;    // silkscreen (Liberation Sans Narrow Bold)
+    int screenId = 0;  // programmer display (VT323 retro terminal font)
 };
 
 // Load the embedded font into the context (call once per NVGcontext).

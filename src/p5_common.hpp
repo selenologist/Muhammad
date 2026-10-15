@@ -59,6 +59,14 @@ struct KnobRange { int id; double lo, hi; bool defWhenZero; double def; };
 inline const KnobRange *knobRange(int id)
 {
     static constexpr KnobRange kRanges[] = {
+        // Pitch law: coarse semis = clamp(raw,0,96)/2 - 12 (keyboard pitch at
+        // raw 24); raws above 96 are dead on the engine, so the dial ends there.
+        // OSC B FINE spans 0..127 cents (raw * 100 / 128). KEYBOARD-off B uses
+        // the raw byte past 96 as a continuous freq; the dial stays honest for
+        // the keyboard-tracking mode, which is what the scale numbers describe.
+        { 0, 0, 96, false, 0 },   // OSC A FREQUENCY
+        { 1, 0, 96, false, 0 },   // OSC B FREQUENCY
+        { 2, 0, 127, false, 0 },  // OSC B FINE
         { 4, 0, 1, false, 0 },    // FILTER MODEL SSI/CURTIS
         { 51, 0, 1, false, 0 },   // RELEASE ON
         { 52, 0, 1, false, 0 },   // UNISON

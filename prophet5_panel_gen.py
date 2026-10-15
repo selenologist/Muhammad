@@ -27,7 +27,7 @@ PID = {
     "flt_a": 43, "amp_a": 44, "flt_d": 45, "amp_d": 46,
     "flt_s": 47, "amp_s": 48, "flt_r": 49, "amp_r": 50,
     "release_btn": 51, "unison": 52,
-    "volume": 80, "master_tune": 82, "prog_bankselect": 84, "os": 81,
+    "volume": 80, "master_tune": 82, "prog_bankselect": 84, "os": 81, "unison_cnt": 53,
     "lfo_preset": -1, "flt_preset": -1, "prog_preset": -1, "prog_record": -1,
     "edit_btn": -1, "tune_btn": -1,
 }
@@ -234,9 +234,9 @@ btn(614, 196, "osc2_lofreq", label="LO FREQ", label_dy=48)
 btn(666, 196, "osc2_keyboard", label="KEYBOARD", label_dy=48)
 
 # --- GLIDE / UNISON (B, r3, unbordered) ---
-line(330, 272, 330, 398)
 knob(372, 332, "glide", label="GLIDE", label_dy=38)
 btn(444, 332, "unison", label="UNISON", label_dy=38)
+knob(512, 332, "unison_cnt", label="COUNT", label_dy=38)
 
 # --- MIXER (r1) ---
 box(712, 10, 184, 120, "MIXER")
@@ -271,16 +271,16 @@ knob(1360, 196, "amp_d", label="DECAY", label_dy=44)
 knob(1428, 196, "amp_s", label="SUSTAIN", label_dy=44)
 knob(1494, 196, "amp_r", label="RELEASE", label_dy=44)
 
-# --- PROGRAMMER (r3, spans B..FILTER columns) ---
-box(476, 266, 760, 138, "PROGRAMMER")
-btn(500, 330, "prog_preset", color="btnGray", label="PRESET", label_dy=36)
-btn(542, 330, "prog_record", color="btnOrange", label="RECORD", label_dy=36)
-btn(584, 330, "prog_bankselect", color="btnGray", led=False)
-notes((584, 356, "BANK"), (584, 368, "SELECT"))
-display(614, 314, 80, 32, inner_texts=((632, 364, "BANK"), (676, 364, "PROGRAM")))
+# --- PROGRAMMER (r3, shifted right; larger display; spread program row) ---
+box(560, 266, 676, 138, "PROGRAMMER")
+btn(598, 330, "prog_preset", color="btnGray", label="PRESET", label_dy=36)
+btn(640, 330, "prog_record", color="btnOrange", label="RECORD", label_dy=36)
+btn(682, 330, "prog_bankselect", color="btnGray", led=False)
+notes((682, 356, "BANK"), (682, 368, "SELECT"))
+display(714, 306, 150, 48, inner_texts=((762, 368, "BANK"), (836, 368, "PROGRAM")))
 for i in range(8):
-    btn(742 + i * 42, 330, f"program_{i+1}", color="btnGray", num_above=str(i + 1))
-subhead(889, 376, "PROGRAM SELECT", 14)
+    btn(886 + i * 46, 330, f"program_{i+1}", color="btnGray", num_above=str(i + 1))
+subhead(1047, 376, "PROGRAM SELECT", 14)
 
 # --- RELEASE / EDIT / TUNE (r3 right, unbordered) ---
 btn(1288, 330, "release_btn", color="btnDark", label="RELEASE", label_dy=36)

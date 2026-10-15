@@ -90,9 +90,9 @@
   <g class="knob" data-param="osc2_pw" transform="translate(562,196)"><use xlink:href="#knobScale" href="#knobScale"/><g class="dial" transform="rotate(-60)"><use xlink:href="#knobDial" href="#knobDial"/></g><text class="lbl" y="48">PULSE WIDTH</text></g>
   <g class="button" data-param="osc2_lofreq" transform="translate(614,196)"><use xlink:href="#btnDark" href="#btnDark"/><text class="lbl" y="48">LO FREQ</text></g>
   <g class="button" data-param="osc2_keyboard" transform="translate(666,196)"><use xlink:href="#btnDark" href="#btnDark"/><text class="lbl" y="48">KEYBOARD</text></g>
-  <line class="rule" x1="330" y1="272" x2="330" y2="398"/>
   <g class="knob" data-param="glide" transform="translate(372,332)"><use xlink:href="#knobScale" href="#knobScale"/><g class="dial" transform="rotate(-60)"><use xlink:href="#knobDial" href="#knobDial"/></g><text class="lbl" y="38">GLIDE</text></g>
   <g class="button" data-param="unison" transform="translate(444,332)"><use xlink:href="#btnDark" href="#btnDark"/><text class="lbl" y="38">UNISON</text></g>
+  <g class="knob" data-param="unison_cnt" transform="translate(512,332)"><use xlink:href="#knobScale" href="#knobScale"/><g class="dial" transform="rotate(-60)"><use xlink:href="#knobDial" href="#knobDial"/></g><text class="lbl" y="38">COUNT</text></g>
   <rect class="box" rx="8" x="712" y="10" width="184" height="120"/><rect class="hdrbg" x="783" y="4" width="42" height="12"/><text class="hdr" x="804" y="13.6">MIXER</text>
   <g class="knob" data-param="mix_osc1" transform="translate(756,64)"><use xlink:href="#knobScale" href="#knobScale"/><g class="dial" transform="rotate(-60)"><use xlink:href="#knobDial" href="#knobDial"/></g><text class="lbl" y="34">OSC 1</text></g>
   <g class="knob" data-param="mix_osc2" transform="translate(804,64)"><use xlink:href="#knobScale" href="#knobScale"/><g class="dial" transform="rotate(-60)"><use xlink:href="#knobDial" href="#knobDial"/></g><text class="lbl" y="34">OSC 2</text></g>
@@ -116,21 +116,21 @@
   <g class="knob" data-param="amp_d" transform="translate(1360,196)"><use xlink:href="#knobScale" href="#knobScale"/><g class="dial" transform="rotate(-60)"><use xlink:href="#knobDial" href="#knobDial"/></g><text class="lbl" y="44">DECAY</text></g>
   <g class="knob" data-param="amp_s" transform="translate(1428,196)"><use xlink:href="#knobScale" href="#knobScale"/><g class="dial" transform="rotate(-60)"><use xlink:href="#knobDial" href="#knobDial"/></g><text class="lbl" y="44">SUSTAIN</text></g>
   <g class="knob" data-param="amp_r" transform="translate(1494,196)"><use xlink:href="#knobScale" href="#knobScale"/><g class="dial" transform="rotate(-60)"><use xlink:href="#knobDial" href="#knobDial"/></g><text class="lbl" y="44">RELEASE</text></g>
-  <rect class="box" rx="8" x="476" y="266" width="760" height="138"/><rect class="hdrbg" x="818" y="260" width="76" height="12"/><text class="hdr" x="856" y="269.6">PROGRAMMER</text>
-  <g class="button" data-param="prog_preset" transform="translate(500,330)"><use xlink:href="#btnGray" href="#btnGray"/><text class="lbl" y="36">PRESET</text></g>
-  <g class="button" data-param="prog_record" transform="translate(542,330)"><use xlink:href="#btnOrange" href="#btnOrange"/><text class="lbl" y="36">RECORD</text></g>
-  <g class="button" data-param="prog_bankselect" transform="translate(584,330)"><use xlink:href="#btnGray" href="#btnGray"/><use xlink:href="#ledOff" href="#ledOff"/></g>
-  <text class="lbl" x="584" y="356">BANK</text><text class="lbl" x="584" y="368">SELECT</text>
-  <g class="display" data-param="display"><rect x="614" y="314" width="80" height="32" rx="2" fill="#2b0d0d" stroke="#7a7a7a" stroke-width="1"/><text class="lbl" x="632" y="364">BANK</text><text class="lbl" x="676" y="364">PROGRAM</text></g>
-  <g class="button" data-param="program_1" transform="translate(742,330)"><use xlink:href="#btnGray" href="#btnGray"/><text class="num" y="-23">1</text></g>
-  <g class="button" data-param="program_2" transform="translate(784,330)"><use xlink:href="#btnGray" href="#btnGray"/><text class="num" y="-23">2</text></g>
-  <g class="button" data-param="program_3" transform="translate(826,330)"><use xlink:href="#btnGray" href="#btnGray"/><text class="num" y="-23">3</text></g>
-  <g class="button" data-param="program_4" transform="translate(868,330)"><use xlink:href="#btnGray" href="#btnGray"/><text class="num" y="-23">4</text></g>
-  <g class="button" data-param="program_5" transform="translate(910,330)"><use xlink:href="#btnGray" href="#btnGray"/><text class="num" y="-23">5</text></g>
-  <g class="button" data-param="program_6" transform="translate(952,330)"><use xlink:href="#btnGray" href="#btnGray"/><text class="num" y="-23">6</text></g>
-  <g class="button" data-param="program_7" transform="translate(994,330)"><use xlink:href="#btnGray" href="#btnGray"/><text class="num" y="-23">7</text></g>
-  <g class="button" data-param="program_8" transform="translate(1036,330)"><use xlink:href="#btnGray" href="#btnGray"/><text class="num" y="-23">8</text></g>
-  <g class="subhead"><line class="rule" x1="832.8" y1="373.4" x2="846.8" y2="373.4"/><line class="rule" x1="931.2" y1="373.4" x2="945.2" y2="373.4"/><text class="sub" x="889" y="376">PROGRAM SELECT</text></g>
+  <rect class="box" rx="8" x="560" y="266" width="676" height="138"/><rect class="hdrbg" x="860" y="260" width="76" height="12"/><text class="hdr" x="898" y="269.6">PROGRAMMER</text>
+  <g class="button" data-param="prog_preset" transform="translate(598,330)"><use xlink:href="#btnGray" href="#btnGray"/><text class="lbl" y="36">PRESET</text></g>
+  <g class="button" data-param="prog_record" transform="translate(640,330)"><use xlink:href="#btnOrange" href="#btnOrange"/><text class="lbl" y="36">RECORD</text></g>
+  <g class="button" data-param="prog_bankselect" transform="translate(682,330)"><use xlink:href="#btnGray" href="#btnGray"/><use xlink:href="#ledOff" href="#ledOff"/></g>
+  <text class="lbl" x="682" y="356">BANK</text><text class="lbl" x="682" y="368">SELECT</text>
+  <g class="display" data-param="display"><rect x="714" y="306" width="150" height="48" rx="2" fill="#2b0d0d" stroke="#7a7a7a" stroke-width="1"/><text class="lbl" x="762" y="368">BANK</text><text class="lbl" x="836" y="368">PROGRAM</text></g>
+  <g class="button" data-param="program_1" transform="translate(886,330)"><use xlink:href="#btnGray" href="#btnGray"/><text class="num" y="-23">1</text></g>
+  <g class="button" data-param="program_2" transform="translate(932,330)"><use xlink:href="#btnGray" href="#btnGray"/><text class="num" y="-23">2</text></g>
+  <g class="button" data-param="program_3" transform="translate(978,330)"><use xlink:href="#btnGray" href="#btnGray"/><text class="num" y="-23">3</text></g>
+  <g class="button" data-param="program_4" transform="translate(1024,330)"><use xlink:href="#btnGray" href="#btnGray"/><text class="num" y="-23">4</text></g>
+  <g class="button" data-param="program_5" transform="translate(1070,330)"><use xlink:href="#btnGray" href="#btnGray"/><text class="num" y="-23">5</text></g>
+  <g class="button" data-param="program_6" transform="translate(1116,330)"><use xlink:href="#btnGray" href="#btnGray"/><text class="num" y="-23">6</text></g>
+  <g class="button" data-param="program_7" transform="translate(1162,330)"><use xlink:href="#btnGray" href="#btnGray"/><text class="num" y="-23">7</text></g>
+  <g class="button" data-param="program_8" transform="translate(1208,330)"><use xlink:href="#btnGray" href="#btnGray"/><text class="num" y="-23">8</text></g>
+  <g class="subhead"><line class="rule" x1="990.8" y1="373.4" x2="1004.8" y2="373.4"/><line class="rule" x1="1089.2" y1="373.4" x2="1103.2" y2="373.4"/><text class="sub" x="1047" y="376">PROGRAM SELECT</text></g>
   <g class="button" data-param="release_btn" transform="translate(1288,330)"><use xlink:href="#btnDark" href="#btnDark"/><text class="lbl" y="36">RELEASE</text></g>
   <g class="button" data-param="edit_btn" transform="translate(1372,330)"><use xlink:href="#btnGray" href="#btnGray"/><use xlink:href="#ledOff" href="#ledOff"/><text class="lbl" y="36">EDIT</text></g>
   <g class="button" data-param="tune_btn" transform="translate(1444,330)"><use xlink:href="#btnGray" href="#btnGray"/><use xlink:href="#ledOff" href="#ledOff"/><text class="lbl" y="36">TUNE</text></g>

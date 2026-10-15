@@ -132,6 +132,7 @@ Gui create(NVGcontext *vg)
     Gui g;
     g.vg = vg;
     g.fontId = nvgCreateFontMem(vg, "panel", (unsigned char *)kFontNarrowBold, (int)kFontNarrowBoldLen, 0);
+    g.screenId = nvgCreateFontMem(vg, "screen", (unsigned char *)kFontScreen, (int)kFontScreenLen, 0);
     return g;
 }
 
@@ -144,6 +145,14 @@ void draw(const Gui &g, const State &s, float w, float h)
 
     nvgFontFaceId(g.vg, g.fontId);
     nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_BASELINE);  // y values are baselines, as in the SVG
+
+    // The whole window gets the panel colour first: a host that ignores the
+    // resize hints and hands us a tall container gets matching surface, not
+    // black letterbox bars.
+    nvgBeginPath(g.vg);
+    nvgRect(g.vg, 0, 0, w, h);
+    nvgFillColor(g.vg, col(kColPanel));
+    nvgFill(g.vg);
 
     nvgSave(g.vg);
     nvgTranslate(g.vg, xoff, yoff);
@@ -194,25 +203,27 @@ void draw(const Gui &g, const State &s, float w, float h)
         nvgStrokeColor(g.vg, col(kColDispStroke));
         nvgStrokeWidth(g.vg, 1.0f);
         nvgStroke(g.vg);
-        // patch name auto-shrinks to fit, then "bank-program" below
+        // Retro terminal readout (VT323): patch name + bank-program, amber on dark.
+        nvgFontFaceId(g.vg, g.screenId);
         char bp[16] = "";
         if (s.bank > 0) std::snprintf(bp, sizeof bp, "%d-%d", s.bank, s.program);
-        float fs = 9.0f;
-        while (fs > 4.0f && nvgTextBounds(g.vg, 0, 0, s.name, s.name + 20, nullptr) * (fs / 9.0f) > d.w - 8)
-            fs -= 0.5f;
+        float fs = d.h * 0.46f;
         nvgFontSize(g.vg, fs);
+        while (fs > 6.0f && nvgTextBounds(g.vg, 0, 0, s.name, s.name + std::strlen(s.name), nullptr) > d.w - 8)
+        { fs -= 0.5f; nvgFontSize(g.vg, fs); }
         {
             const float nw = nvgTextBounds(g.vg, 0, 0, s.name, s.name + std::strlen(s.name), nullptr);
             nvgFillColor(g.vg, col(kColDispText));
-            nvgText(g.vg, d.x + (float)((d.w - nw) / 2), d.y + 13, s.name, nullptr);
+            nvgText(g.vg, d.x + (float)((d.w - nw) / 2), d.y + d.h * (bp[0] ? 0.44f : 0.72f), s.name, nullptr);
         }
-        nvgFontSize(g.vg, 7.0f);
         if (bp[0])
         {
+            nvgFontSize(g.vg, d.h * 0.42f);
             const float bw = nvgTextBounds(g.vg, 0, 0, bp, bp + std::strlen(bp), nullptr);
             nvgFillColor(g.vg, col(kColDispText));
-            nvgText(g.vg, d.x + (float)((d.w - bw) / 2), d.y + 27, bp, nullptr);
+            nvgText(g.vg, d.x + (float)((d.w - bw) / 2), d.y + d.h * 0.92f, bp, nullptr);
         }
+        nvgFontFaceId(g.vg, g.fontId);
     }
 
     // knobs

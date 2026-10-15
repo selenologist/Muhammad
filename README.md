@@ -142,6 +142,17 @@ same `p5ui::draw()`.
   host, and pumps via `clap.timer-support` (16 ms) + X events. Mouse
   gestures go through `Plugin::guiSet` → drained into the host's output
   event queue at the next `params.flush`, so automation stays authoritative.
+- **Pitch knob ranges match the engine's law**, not the raw byte: OSC A/B
+  FREQUENCY dials span the live 0..96 (keyboard pitch at raw 24 = pointer at
+  ~25% — matching the firmware's `semis = raw/2 − 12`; raws above 96 are dead
+  on the engine, so they read back clamped), OSC B FINE spans 0..127 (0..+100
+  cents). No more right-half-dead knobs.
+- Programmer display: **VT323** (SIL OFL retro-terminal font, embedded) —
+  patch name + bank-program, auto-shrinking to fit the (now larger) screen.
+- Programmer row shifted right; the box starts after the new UNISON COUNT
+  knob; program buttons spread into the freed space. The whole window is
+  painted with the panel colour, so a host-forced tall container shows no
+  black letterbox bars.
 - Programmer knobs: `MASTER TUNE` (id 82, cents; applied on the control path,
   0 keeps bit-exact firmware behaviour), `PROGRAM` (83, writes load factory
   patches and sync all params to the host), `BANK` (84, BANK SELECT cycles).
