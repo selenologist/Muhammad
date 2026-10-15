@@ -89,6 +89,11 @@ public:
     // design; the filter cutoff table and every rate table rebuild for the
     // internal rate, so pitch, cutoff Hz and envelope times stay exact.
     void setOverSample(int os);               // 1 or 2
+
+    // GUI-side global tune in cents (-100..100): applied as fixed-point units on
+    // the note's pitch16 (16 = one semitone). 0 == the firmware's exact behaviour.
+    void setTuneCents(int cents);
+    int tuneCents() const { return tuneCents_; }
     int oversample() const { return os_; }
     uint32_t latencySamples() const { return os_ == 2 ? 3u : 0u; }  // halfband group delay
     int polyphony() const { return poly_; }
@@ -139,6 +144,8 @@ private:
     int32_t dcX1_ = 0, dcY1_ = 0;
     uint32_t dcK_ = DC_K_DEFAULT;
     int poly_ = MAXV;
+    int tuneCents_ = 0;
+    int tuneUnits_ = 0;
     int voiceMode_ = 0, voiceModeOverride_ = -1;
     int prio_ = 1, detune_ = 0;               // p5_track_accept
     int monoNote_ = 0; uint8_t monoStack_[MAXV]; uint32_t nmono_ = 0;

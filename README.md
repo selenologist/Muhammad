@@ -125,3 +125,36 @@ external/), the CLAP headers are their own BSD-style license.
   (`/home/user/code/c/vasynth-workspace-34307107-.../vasynth/`): single shared
   object as `.clap`, entry → plugin factory + preset-discovery factory,
   the same event-dispatch shape.
+
+## GUI (Linux-first NanoVG panel)
+
+`prophet5_panel_gen.py` emits **both** `prophet5_panel.svg` (the design doc) and
+`src/panel_layout.h` (the machine layout) from one set of emitter calls — they
+cannot drift. The renderer (`src/p5_gui.cpp`) is a pure function of
+(layout, state): the embedded plugin and the headless golden test call the
+same `p5ui::draw()`.
+
+- Backend: vendored [NanoVG](https://github.com/memononen/nanovg) at
+  `external/nanovg` (pinned `ce3bf745`), GL3 via Mesa's `glext` prototypes —
+  no loader library. Unmaintained upstream is fine: pinned + self-maintained.
+- Embedding: `src/gui_x11.cpp` implements `clap-gui` for X11 (physical px,
+  aspect-preserved resize 1560:416), reparents a GLX child window into the
+  host, and pumps via `clap.timer-support` (16 ms) + X events. Mouse
+  gestures go through `Plugin::guiSet` → drained into the host's output
+  event queue at the next `params.flush`, so automation stays authoritative.
+- Programmer knobs: `MASTER TUNE` (id 82, cents; applied on the control path,
+  0 keeps bit-exact firmware behaviour), `PROGRAM` (83, writes load factory
+  patches and sync all params to the host), `BANK` (84, BANK SELECT cycles).
+  The patch-name display reads the live patch bytes.
+- Panel font (Liberation Sans Narrow Bold, OFL) is **embedded** at build-time
+  via `tools/embed_font.py` — no runtime font lookup, deterministic goldens.
+
+**Golden test:** `tools/check_goldens.sh` renders `init/pad/bass` through
+EGL (surfaceless → device → display fallback) and pixel-compares against
+`tests/golden/*.png` (≤0.5 % of pixels beyond 2 % fuzz). It runs headless.
+
+Other platforms: Windows (`win32` HWND reparenting) is next when a display is
+available; macOS would add an NSView+GL3 shim (~150 lines, CI-built). The
+draw code is platform-neutral; only the embedding file changes.
+
+Disable with `-DPROPHET_GUI=OFF` for headless engine-only builds.

@@ -23,14 +23,50 @@ set(ENGINE_SOURCES
     src/p5_kernel_simd.cpp
 )
 
+# ---- GUI (NanoVG panel; Linux/X11 is the primary target) ---------------------
+# draw_panel + layout are platform-neutral; the embedding shim is per-OS.
+option(PROPHET_GUI "Build the NanoVG panel (needs OpenGL; X11 embedding on Linux)" ON)
+set(NANOVG_DIR external/nanovg)
+if(PROPHET_GUI)
+    find_library(EGL_LIBRARY EGL)
+    find_library(GL_LIBRARY GL)
+    find_package(X11 MODULE)
+    add_library(nanovg STATIC ${NANOVG_DIR}/gl3_impl.cpp ${NANOVG_DIR}/src/nanovg.c)
+    target_include_directories(nanovg PUBLIC ${NANOVG_DIR}/src)
+    target_compile_options(nanovg PRIVATE -w)
+    target_compile_definitions(nanovg PUBLIC GL_GLEXT_PROTOTYPES=1)
+    set(PROPHET_GL_LIBS ${GL_LIBRARY} ${EGL_LIBRARY} ${CMAKE_DL_LIBS})
+
+    add_library(p5_gui STATIC src/p5_gui.cpp)
+    target_include_directories(p5_gui PUBLIC src ${NANOVG_DIR}/src)
+    target_link_libraries(p5_gui PUBLIC nanovg)
+
+    if(X11_FOUND)
+        set(GUI_PLUGIN_SOURCES src/gui_x11.cpp)
+        set(GUI_DEFINES P5_GUI=1)
+    endif()
+
+    # headless golden-image test (see tools/check_goldens.sh)
+    add_executable(render_golden tests/render_golden.cpp ${ENGINE_SOURCES})
+    target_include_directories(render_golden PRIVATE src vendor/clap external ${NANOVG_DIR}/src
+                                     external/stb ${X11_INCLUDE_DIR})
+    target_compile_definitions(render_golden PRIVATE GL_GLEXT_PROTOTYPES=1)
+    target_link_libraries(render_golden PRIVATE p5_gui ${PROPHET_GL_LIBS} ${MATH_LIBRARY})
+endif()
+
 # ---- the CLAP plugin ----------------------------------------------------------
 add_library(prophet_clap MODULE
     src/clap_entry.cpp
     src/prophet_plugin.cpp
     src/p5_prophet_discovery.cpp
+    ${GUI_PLUGIN_SOURCES}
     ${ENGINE_SOURCES}
 )
-target_include_directories(prophet_clap PRIVATE src vendor/clap external)
+target_include_directories(prophet_clap PRIVATE src vendor/clap external ${X11_INCLUDE_DIR})
+if(GUI_DEFINES)
+    target_compile_definitions(prophet_clap PRIVATE ${GUI_DEFINES})
+    target_link_libraries(prophet_clap PRIVATE p5_gui ${X11_LIBRARIES} ${PROPHET_GL_LIBS})
+endif()
 set_target_properties(prophet_clap PROPERTIES
     PREFIX ""
     OUTPUT_NAME "prophet"

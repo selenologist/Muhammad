@@ -1,0 +1,1 @@
+pinned nothings/stb stb_image_write.h v1.16 (public domain)

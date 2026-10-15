@@ -155,6 +155,48 @@ int main(int argc, char **argv)
         char txt[64] = {0};
         check("PRIORITY value text", params->value_to_text(plugin, 56, 1, txt, sizeof txt) && !std::strcmp(txt, "LOW RET"));
         check("FILTER MODEL value text", params->value_to_text(plugin, 4, 0, txt, sizeof txt) && !std::strcmp(txt, "SSI"));
+
+        // programmer params + gui surface
+        uint32_t cnt = params->count(plugin);
+        check("param count 70 (57 raw + 8 ov + trim + os + tune + program + bank)", cnt == 70);
+        bool tuneInfo = false;
+        for (uint32_t i = 0; i < cnt; i++) {
+            clap_param_info_t inf{};
+            if (params->get_info(plugin, i, &inf) && inf.id == 82)
+                tuneInfo = inf.min_value == -100 && inf.max_value == 100;
+        }
+        check("MASTER TUNE range -100..100", tuneInfo);
+        double cutBefore = -1; params->get_value(plugin, 17, &cutBefore);
+        pc.param_id = 83; pc.value = 5;
+        params->flush(plugin, &pl, &out);
+        double v83 = -1; params->get_value(plugin, 83, &v83);
+        double cutAfter = -1; params->get_value(plugin, 17, &cutAfter);
+        check("PROGRAM readback 5", v83 == 5);
+        check("PROGRAM load changed the patch", cutAfter != cutBefore);
+
+        const void *gp = plugin->get_extension(plugin, CLAP_EXT_GUI);
+        check("clap-gui extension present", gp != nullptr);
+        if (gp) {
+            auto *gui = (const clap_plugin_gui_t *)gp;
+            check("gui: x11 embedded supported", gui->is_api_supported(plugin, CLAP_WINDOW_API_X11, false));
+            check("gui: cocoa not claimed", !gui->is_api_supported(plugin, CLAP_WINDOW_API_COCOA, false));
+            const char *api = nullptr; bool floating = true;
+            check("gui: preferred is x11 non-floating", gui->get_preferred_api(plugin, &api, &floating) &&
+                  !std::strcmp(api, CLAP_WINDOW_API_X11) && !floating);
+            check("gui: create", gui->create(plugin, CLAP_WINDOW_API_X11, false));
+            uint32_t gw = 0, gh = 0;
+            check("gui: get_size sane", gui->get_size(plugin, &gw, &gh) && gw > 400 && gh > 100);
+            clap_gui_resize_hints_t hints{};
+            check("gui: resize hints preserve 1560x416 aspect", gui->get_resize_hints(plugin, &hints) &&
+                  hints.preserve_aspect_ratio && hints.aspect_ratio_width == 1560 && hints.aspect_ratio_height == 416);
+            uint32_t aw = 900, ah = 900;
+            check("gui: adjust_size fixes aspect", gui->adjust_size(plugin, &aw, &ah) && aw == 900 && ah == 240);
+            gui->destroy(plugin);
+        }
+
+        // restore the CUTOFF==42 assumption for the state round-trip below
+        pc.param_id = 17; pc.value = 42;
+        params->flush(plugin, &pl, &out);
     }
 
     if (st) {

@@ -52,6 +52,38 @@ inline void patchInit(Patch &p)
     std::memcpy(p.raw + P5_NAME, "INIT PROPHET", 12);
 }
 
+// Effective host-facing ranges for knobs whose raw semantics are clamped or
+// defaulted by the engine (shared by the CLAP param surface and the GUI/golden
+// normalizer, so the display, the behaviour and the render cannot drift).
+struct KnobRange { int id; double lo, hi; bool defWhenZero; double def; };
+inline const KnobRange *knobRange(int id)
+{
+    static constexpr KnobRange kRanges[] = {
+        { 4, 0, 1, false, 0 },    // FILTER MODEL SSI/CURTIS
+        { 51, 0, 1, false, 0 },   // RELEASE ON
+        { 52, 0, 1, false, 0 },   // UNISON
+        { 53, 1, 8, true, 5 },    // UNISON CNT: raw 0 means "default 5"
+        { 54, 0, 7, false, 0 },   // UNISON DET (raws above 7 saturate)
+        { 55, 0, 11, false, 0 },  // BEND RANGE (engine clamps to 11)
+        { 56, 0, 3, false, 0 },   // PRIORITY: LOW / LOW RET / LAST / LAST RET
+        { 80, 0, 1, false, 0 },   // TRIM (master volume)
+        { 82, -100, 100, false, 0 }, // MASTER TUNE, cents
+    };
+    for (const auto &r : kRanges) if (r.id == id) return &r;
+    return nullptr;
+}
+
+// 0..1 panel position for a param value (raw byte, or the param's own unit)
+inline double knobNorm(int id, double value)
+{
+    const KnobRange *r = knobRange(id);
+    double lo = r ? r->lo : 0.0, hi = r ? r->hi : 255.0;
+    if (r && r->defWhenZero && value == 0) value = r->def;
+    if (value < lo) value = lo;
+    if (value > hi) value = hi;
+    return (value - lo) / (hi - lo);
+}
+
 // Single exact SyX frame codec (identical to the firmware; the plugin uses it
 // to read Sequential's native program dumps).
 inline int patchDecode(Patch &out, const uint8_t *f, uint32_t n)

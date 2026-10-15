@@ -1,0 +1,1 @@
+pinned memononen/nanovg @ ce3bf745eb2d2dbc14a50bf2446783f691ac4353 (2026-02-19), vendored zlib-license

@@ -59,6 +59,14 @@ void Engine::buildTpt()
     tpt_ = tptGen_;
 }
 
+void Engine::setTuneCents(int cents)
+{
+    if (cents < -100) cents = -100;
+    if (cents > 100) cents = 100;
+    tuneCents_ = cents;
+    tuneUnits_ = (int)std::lround(cents * 16.0 / 100.0);   // 16 pitch units = 1 semitone
+}
+
 void Engine::setOverSample(int os)
 {
     const int os2 = (os == 2) ? 2 : 1;
@@ -177,7 +185,7 @@ void Engine::voiceStart(int lane, int note, int vel, uint8_t mvel, int *voiceWas
     l.v.active = 1;
     l.v.stage = 1;
     l.v.age = ++vage_;
-    l.v.pitch16 = note * 16;
+    l.v.pitch16 = note * 16 + tuneUnits_;
     l.v.pitchCur = l.v.pitch16;                   // glide_set: the track's glide is off
     l.v.mvel = mvel;                              // t->m_vel (mod.c: the note's VEL)
     if (!*sounding) { l.v.env = 0; l.v.envOut = 0; }
@@ -268,7 +276,7 @@ void Engine::monoNoteOn(int note, int vel)
             }
         } else {
             l.v.note = (uint8_t)want;                   // legato: new pitch, same envelope
-            l.v.pitch16 = want * 16;
+            l.v.pitch16 = want * 16 + tuneUnits_;
             l.v.pitchCur = l.v.pitch16;
             l.v.mvel = (uint8_t)vel;
             if (vel > l.v.vel && nv == 1) l.v.vel = (uint8_t)vel;

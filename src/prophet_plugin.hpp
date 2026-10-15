@@ -3,6 +3,10 @@
 #pragma once
 #include <clap/clap.h>
 #include <clap/ext/latency.h>
+#include <clap/ext/timer-support.h>
+#include <utility>
+#include <vector>
+
 #include "p5_engine.hpp"
 
 namespace pw {
@@ -13,6 +17,9 @@ namespace pw {
 constexpr int NUM_OVERLAYS = 8;
 constexpr clap_id PID_TRIM = 80;
 constexpr clap_id PID_OS = 81;      // 0 = base rate (bit-exact), 1 = 2x oversample + Surge halfband
+constexpr clap_id PID_TUNE = 82;    // master tune, -100..100 cents (control-path pitch offset)
+constexpr clap_id PID_PROGRAM = 83; // factory program 0..N-1; writing loads it (panel buttons)
+constexpr clap_id PID_BANK = 84;    // factory bank 0..N/8-1 (BANK SELECT cycles it)
 
 struct Plugin {
     explicit Plugin(const clap_host_t *host) : host(host) {}
@@ -25,9 +32,16 @@ struct Plugin {
     float trim = 0.5f;   // headroom for stacked full-velocity voices (parameter 0..2)
     int32_t scratch[32] = {0};
     int bendRaw = 0;
+    int program = -1;                   // factory program loaded (-1: edited/INIT)
+    int bank = 0;                       // panel bank cursor
+    void *gui = nullptr;                // owned by gui_x11.cpp when the panel is open
+    std::vector<std::pair<clap_id, double>> pendingGuiEvents;  // drained into host out queue
 
     void applyRaw(int idx, int v);
     int rawOf(int idx) const;
+    double guiValue(clap_id id);                    // same units as par_get_value
+    void guiSet(clap_id id, double v);              // apply + queue host sync event
+    void loadProgram(int k);
     static const char *nameOf(clap_id id);
 };
 
@@ -38,6 +52,10 @@ extern const clap_plugin_state_t kState;
 extern const clap_plugin_preset_load_t kPresetLoad;
 extern const clap_plugin_latency_t kLatency;
 extern const clap_plugin_descriptor_t kDescriptor;
+
+// GUI tables, defined in src/gui_x11.cpp (compiled when P5_GUI is set).
+extern const clap_plugin_gui_t kGuiX11;
+extern const clap_plugin_timer_support_t kTimerSupport;
 
 const clap_plugin_t *prophet_create(const clap_host_t *host);
 

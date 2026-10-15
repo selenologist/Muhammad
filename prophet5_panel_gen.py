@@ -1,17 +1,55 @@
 #!/usr/bin/env python3
-"""Generate Prophet-5 Rev3-style front panel SVG (flat, reusable parts)."""
-import math, os
+"""Generate Prophet-5 Rev3-style front panel in lockstep:
+  - prophet5_panel.svg  (flat, reusable parts; human design doc)
+  - src/panel_layout.h  (machine layout; single source of truth for the NanoVG GUI)
+Both outputs come from the identical emitter calls, so they cannot drift."""
+import math
 import pathlib
 
-OUT = str(pathlib.Path(__file__).resolve().parent / "prophet5_panel.svg")
+HERE = pathlib.Path(__file__).resolve().parent
+OUT_SVG = str(HERE / "prophet5_panel.svg")
+OUT_HDR = str(HERE / "src" / "panel_layout.h")
 PW, PH = 1560, 416
 PANEL_BG = "#161616"
+
+# Panel data-param -> CLAP param id (raw bytes are ids 0..56; GUI-side:
+# 80 TRIM(volume) 82 MASTER TUNE 83 PROGRAM 84 BANK; -1 = decorative)
+PID = {
+    "osc1_freq": 0, "osc2_freq": 1, "osc2_fine": 2, "osc1_saw": 3, "osc1_sq": 4,
+    "osc2_saw": 5, "osc2_tri": 6, "osc2_sq": 7, "osc1_pw": 8, "osc2_pw": 9,
+    "osc1_sync": 10, "osc2_lofreq": 11, "osc2_keyboard": 12, "glide": 13,
+    "mix_osc1": 14, "mix_osc2": 15, "mix_noise": 16,
+    "flt_cutoff": 17, "flt_reso": 18, "flt_keyboard": 19,
+    "lfo_freq": 21, "lfo_saw": 23, "lfo_tri": 24, "lfo_sq": 25,
+    "wm_mix": 26, "wm_freq1": 27, "wm_freq2": 28, "wm_pw1": 29, "wm_pw2": 30, "wm_filter": 31,
+    "fil_env": 32, "osc2": 33, "pm_freq1": 34, "pm_pw1": 35, "pm_filter": 36,
+    "flt_envamt": 40,
+    "flt_a": 43, "amp_a": 44, "flt_d": 45, "amp_d": 46,
+    "flt_s": 47, "amp_s": 48, "flt_r": 49, "amp_r": 50,
+    "release_btn": 51, "unison": 52,
+    "volume": 80, "master_tune": 82, "prog_bankselect": 84,
+    "lfo_preset": -1, "flt_preset": -1, "prog_preset": -1, "prog_record": -1,
+    "edit_btn": -1, "tune_btn": -1,
+}
+for _i in range(1, 9):
+    PID[f"program_{_i}"] = 83   # value written = bank * 8 + (i - 1)
+
+# Buttons whose LED follows "param nonzero" (latching switches)
+SWITCHES = {"osc1_saw", "osc1_sq", "osc2_saw", "osc2_tri", "osc2_sq", "osc1_sync",
+            "osc2_lofreq", "osc2_keyboard", "lfo_saw", "lfo_tri", "lfo_sq",
+            "wm_freq1", "wm_freq2", "wm_pw1", "wm_pw2", "wm_filter",
+            "pm_freq1", "pm_pw1", "pm_filter", "unison", "release_btn"}
 
 def f(x):
     s = f"{x:.1f}"
     return s[:-2] if s.endswith(".0") else s
 
-# ---------------- defs ----------------
+def c16(hexcol):
+    return "0x" + hexcol[1:] + "u"
+
+KNOB_R = 15.0
+BTN_W, BTN_H = 24.0, 34.0
+
 def knob_scale_parts():
     parts = []
     for v in range(11):
@@ -52,8 +90,9 @@ DEFS = f'''
     </g>
 '''
 
-# ---------------- emitters ----------------
+# ---------------- emitters (SVG + layout records) ----------------
 body = []
+knobs, btns, texts, boxes, rules, displays = [], [], [], [], [], []
 
 def knob(x, y, param, label=None, angle=-60, white=False, label_dy=34, extra=None):
     dial = "knobDialWhite" if white else "knobDial"
@@ -66,6 +105,9 @@ def knob(x, y, param, label=None, angle=-60, white=False, label_dy=34, extra=Non
         s.append(extra)
     s.append('</g>')
     body.append("".join(s))
+    knobs.append(dict(pid=PID[param], x=x, y=y, white=white))
+    if label:
+        texts.append(dict(x=x, y=y + label_dy, style="lbl", text=label))
 
 def btn(x, y, param, color="btnDark", label=None, glyph=None, led=True,
         num_above=None, label_dy=29, label_above=None):
@@ -83,6 +125,22 @@ def btn(x, y, param, color="btnDark", label=None, glyph=None, led=True,
         s.append(f'<text class="lbl" y="{label_dy}">{label}</text>')
     s.append('</g>')
     body.append("".join(s))
+    ledmode = 1 if param in SWITCHES else (2 if param.startswith("program_") else 0)
+    value = int(param.split("_")[1]) - 1 if param.startswith("program_") else 0
+    btns.append(dict(pid=PID[param], x=x, y=y, color=color, glyph=glyph or "",
+                     led=led, ledmode=ledmode, value=value))
+    if label:
+        texts.append(dict(x=x, y=y + (label_above if label_above is not None else label_dy),
+                          style="lbl", text=label))
+    if num_above:
+        texts.append(dict(x=x, y=y - 23, style="num", text=num_above))
+
+def notes(*pairs, style="lbl"):
+    """standalone labels, one body line like the hand-written original"""
+    body.append("".join(f'<text class="{style}" x="{f(x)}" y="{f(y)}">{t}</text>'
+                        for x, y, t in pairs))
+    for x, y, t in pairs:
+        texts.append(dict(x=x, y=y, style=style, text=t))
 
 def subhead(x, y, text, tail=26):
     tw = len(text) * 4.6
@@ -91,6 +149,9 @@ def subhead(x, y, text, tail=26):
         f'<g class="subhead"><line class="rule" x1="{f(l1-tail)}" y1="{f(y-2.6)}" x2="{f(l1)}" y2="{f(y-2.6)}"/>'
         f'<line class="rule" x1="{f(l2)}" y1="{f(y-2.6)}" x2="{f(l2+tail)}" y2="{f(y-2.6)}"/>'
         f'<text class="sub" x="{f(x)}" y="{f(y)}">{text}</text></g>')
+    rules.append(dict(x1=l1 - tail, y1=y - 2.6, x2=l1, y2=y - 2.6))
+    rules.append(dict(x1=l2, y1=y - 2.6, x2=l2 + tail, y2=y - 2.6))
+    texts.append(dict(x=x, y=y, style="sub", text=text))
 
 def box(x, y, w, h, header=None):
     s = [f'<rect class="box" rx="8" x="{f(x)}" y="{f(y)}" width="{f(w)}" height="{f(h)}"/>']
@@ -99,6 +160,20 @@ def box(x, y, w, h, header=None):
         s.append(f'<rect class="hdrbg" x="{f(x+w/2-tw/2-4)}" y="{f(y-6)}" width="{f(tw+8)}" height="12"/>')
         s.append(f'<text class="hdr" x="{f(x+w/2)}" y="{f(y+3.6)}">{header}</text>')
     body.append("".join(s))
+    boxes.append(dict(x=x, y=y, w=w, h=h, header=header or ""))
+
+def display(x, y, w, h, inner_texts=()):
+    tstr = "".join(f'<text class="lbl" x="{f(tx)}" y="{f(ty)}">{t}</text>' for tx, ty, t in inner_texts)
+    body.append(f'<g class="display" data-param="display">'
+                f'<rect x="{f(x)}" y="{f(y)}" width="{f(w)}" height="{f(h)}" rx="2" fill="#2b0d0d" '
+                f'stroke="#7a7a7a" stroke-width="1"/>{tstr}</g>')
+    displays.append(dict(x=x, y=y, w=w, h=h))
+    for tx, ty, t in inner_texts:
+        texts.append(dict(x=tx, y=ty, style="lbl", text=t))
+
+def line(x1, y1, x2, y2):
+    body.append(f'<line class="rule" x1="{f(x1)}" y1="{f(y1)}" x2="{f(x2)}" y2="{f(y2)}"/>')
+    rules.append(dict(x1=x1, y1=y1, x2=x2, y2=y2))
 
 # ================= layout =================
 # Columns: A 8..300 | B 306..706 | MIXER 712..896 | FILTER 902..1236 | RIGHT 1242..1552
@@ -108,7 +183,7 @@ def box(x, y, w, h, header=None):
 box(8, 10, 292, 120, "POLY-MOD")
 knob(60, 60, "fil_env")
 knob(124, 60, "osc2")
-body.append('<text class="lbl" x="60" y="94">FIL. ENV.</text><text class="lbl" x="124" y="94">OSC 2</text>')
+notes((60, 94, "FIL. ENV."), (124, 94, "OSC 2"))
 subhead(92, 116, "SOURCE AMOUNT", 10)
 for x, p, lab in ((182, "pm_freq1", "FREQ 1"), (228, "pm_pw1", "PW 1"), (276, "pm_filter", "FILTER")):
     btn(x, 60, p, label=lab, label_above=-24)
@@ -125,10 +200,18 @@ subhead(214, 240, "SHAPE", 10)
 # --- WHEEL-MOD (A, r3) ---
 box(8, 266, 292, 138, "WHEEL-MOD")
 knob(62, 330, "wm_mix", angle=0,
-     extra='<text class="lbl" x="-24" y="40">LFO</text><text class="lbl" x="26" y="40">NOISE</text><text class="lbl" y="56">SOURCE MIX</text>')
-for x, lab in ((128, "FREQ 1"), (166, "FREQ 2"), (204, "PW 1"), (242, "PW 2"), (280, "FILTER")):
-    btn(x, 330, f"wm_{lab.lower().replace(' ', '')}", label=lab, label_above=-24)
+     extra=('<text class="lbl" x="-24" y="40">LFO</text>'
+            '<text class="lbl" x="26" y="40">NOISE</text>'
+            '<text class="lbl" y="56">SOURCE MIX</text>'))
+for x, lab, p in ((128, "FREQ 1", "wm_freq1"), (166, "FREQ 2", "wm_freq2"),
+                  (204, "PW 1", "wm_pw1"), (242, "PW 2", "wm_pw2"), (280, "FILTER", "wm_filter")):
+    btn(x, 330, p, label=lab, label_above=-24)
 subhead(204, 380, "DESTINATION", 10)
+
+# absolute positions of the wm_mix in-group labels (mirror the SVG offsets)
+texts.append(dict(x=62 - 24, y=330 + 40, style="lbl", text="LFO"))
+texts.append(dict(x=62 + 26, y=330 + 40, style="lbl", text="NOISE"))
+texts.append(dict(x=62, y=330 + 56, style="lbl", text="SOURCE MIX"))
 
 # --- OSCILLATOR 1 (B, r1) ---
 box(306, 10, 400, 120, "OSCILLATOR 1")
@@ -151,7 +234,7 @@ btn(614, 196, "osc2_lofreq", label="LO FREQ", label_dy=48)
 btn(666, 196, "osc2_keyboard", label="KEYBOARD", label_dy=48)
 
 # --- GLIDE / UNISON (B, r3, unbordered) ---
-body.append('<line class="rule" x1="330" y1="272" x2="330" y2="398"/>')
+line(330, 272, 330, 398)
 knob(372, 332, "glide", label="GLIDE", label_dy=38)
 btn(444, 332, "unison", label="UNISON", label_dy=38)
 
@@ -167,7 +250,7 @@ btn(928, 62, "flt_preset", color="btnGray", label="PRESET")
 knob(988, 58, "flt_cutoff", label="CUTOFF")
 knob(1060, 58, "flt_reso", label="RESONANCE")
 knob(1140, 58, "flt_envamt", label="ENVELOPE")
-body.append('<text class="lbl" x="1140" y="100">AMOUNT</text>')
+notes((1140, 100, "AMOUNT"))
 btn(1204, 62, "flt_keyboard", label="KEYBOARD")
 knob(952, 196, "flt_a", label="ATTACK", label_dy=42)
 knob(1018, 196, "flt_d", label="DECAY", label_dy=42)
@@ -190,9 +273,8 @@ box(476, 266, 760, 138, "PROGRAMMER")
 btn(500, 330, "prog_preset", color="btnGray", label="PRESET", label_dy=36)
 btn(542, 330, "prog_record", color="btnOrange", label="RECORD", label_dy=36)
 btn(584, 330, "prog_bankselect", color="btnGray", led=False)
-body.append('<text class="lbl" x="584" y="356">BANK</text><text class="lbl" x="584" y="368">SELECT</text>')
-body.append('<g class="display" data-param="display"><rect x="614" y="314" width="80" height="32" rx="2" fill="#2b0d0d" stroke="#7a7a7a" stroke-width="1"/>'
-            '<text class="lbl" x="632" y="364">BANK</text><text class="lbl" x="676" y="364">PROGRAM</text></g>')
+notes((584, 356, "BANK"), (584, 368, "SELECT"))
+display(614, 314, 80, 32, inner_texts=((632, 364, "BANK"), (676, 364, "PROGRAM")))
 for i in range(8):
     btn(742 + i * 42, 330, f"program_{i+1}", color="btnGray", num_above=str(i + 1))
 subhead(889, 376, "PROGRAM SELECT", 14)
@@ -202,7 +284,7 @@ btn(1288, 330, "release_btn", color="btnDark", label="RELEASE", label_dy=36)
 btn(1372, 330, "edit_btn", color="btnGray", led=False, label="EDIT", label_dy=36)
 btn(1444, 330, "tune_btn", color="btnGray", led=False, label="TUNE", label_dy=36)
 
-# ================= assemble =================
+# ================= assemble SVG =================
 svg = f'''<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
      viewBox="0 0 {PW} {PH}" width="{PW}" height="{PH}">
@@ -228,6 +310,74 @@ svg = f'''<?xml version="1.0" encoding="UTF-8"?>
   {chr(10).join("  " + b for b in body)}
 </svg>
 '''
-with open(OUT, "w") as fh:
+with open(OUT_SVG, "w") as fh:
     fh.write(svg)
-print("wrote", OUT, len(svg), "bytes")
+print("wrote", OUT_SVG, len(svg), "bytes")
+
+# ================= emit panel_layout.h =================
+def fx(v):
+    return f"{float(v)}f"
+
+def q(s):
+    return '"' + s.replace('\\', '\\\\').replace('"', '\\"') + '"'
+
+hdr = []
+hdr.append("// GENERATED by prophet5_panel_gen.py — DO NOT EDIT.\n"
+           "// The same emitter calls write prophet5_panel.svg and this file.\n"
+           "#pragma once\n#include <cstdint>\n\nnamespace p5ui {\n\n")
+hdr.append(f"inline constexpr float kPanelW = {PW}.0f, kPanelH = {PH}.0f;\n")
+hdr.append(f"inline constexpr float kKnobR = {KNOB_R}f, kKnobLoDeg = -140.0f, kKnobHiDeg = 140.0f;\n")
+hdr.append(f"inline constexpr float kBtnW = {BTN_W}f, kBtnH = {BTN_H}f;\n")
+hdr.append("inline constexpr uint32_t kColPanel = " + c16(PANEL_BG) + ";\n")
+for name, col in [("kColInk", "#f0f0f0"), ("kColScale", "#e8e8e8"), ("kColBox", "#e6e6e6"),
+                  ("kColLedOn", "#ff2d1a"), ("kColLedOff", "#5a1512"),
+                  ("kColDial", "#222222"), ("kColDialRing", "#8a8a8a"), ("kColPointer", "#f5f5f5"),
+                  ("kColDialWhite", "#e9e6df"), ("kColDialWhiteRing", "#9a9a9a"), ("kColPointerDark", "#222222"),
+                  ("kColBtnDark", "#262626"), ("kColBtnDarkStroke", "#7a7a7a"),
+                  ("kColBtnGray", "#c9c9c9"), ("kColBtnGrayStroke", "#8f8f8f"),
+                  ("kColBtnOrange", "#e0781e"), ("kColBtnOrangeStroke", "#a05215"),
+                  ("kColDispBg", "#2b0d0d"), ("kColDispStroke", "#7a7a7a"),
+                  ("kColDispText", "#ff5a3c")]:
+    hdr.append(f"inline constexpr uint32_t {name} = {c16(col)};\n")
+hdr.append("""
+// text styles: size px and letter-spacing at layout scale 1
+enum TxtStyle { T_HDR = 0, T_LBL, T_SUB, T_NUM, T_SCALE };
+inline constexpr float kTxtSize[5] = {11.0f, 7.6f, 7.2f, 8.5f, 5.1f};
+inline constexpr float kTxtTrack[5] = {1.6f, 0.8f, 1.4f, 0.5f, 0.0f};
+enum BtnColor { BC_DARK = 0, BC_GRAY, BC_ORANGE };
+enum Glyph { G_NONE = 0, G_SAW, G_TRI, G_SQ };
+// LED modes: 0 static, 1 lit when param nonzero, 2 lit when PROGRAM == bank*8+value
+struct Knob  { int pid; float x, y; bool white; };
+struct Btn   { int pid; float x, y; int color; int glyph; bool led; int ledmode; int value; };
+struct Text  { float x, y; int style; const char *txt; };
+struct Box   { float x, y, w, h; const char *header; };
+struct Rule  { float x1, y1, x2, y2; };
+struct Disp  { float x, y, w, h; };
+
+""")
+
+hdr.append(f"inline constexpr int kNumKnobs = {len(knobs)}, kNumBtns = {len(btns)}, "
+           f"kNumTexts = {len(texts)}, kNumBoxes = {len(boxes)}, kNumRules = {len(rules)}, "
+           f"kNumDisplays = {len(displays)};\n")
+
+def arr(name, plural, items, fmt):
+    hdr.append(f"inline constexpr {name} {plural}[] = {{\n")
+    for it in items:
+        hdr.append("    " + fmt(it) + "\n")
+    hdr.append("};\n\n")
+
+arr("Knob", "kKnobs", knobs, lambda k: f"    {{{k['pid']}, {fx(k['x'])}, {fx(k['y'])}, {'true' if k['white'] else 'false'}}},".strip() + "")
+colorid = {"btnDark": "BC_DARK", "btnGray": "BC_GRAY", "btnOrange": "BC_ORANGE"}
+glyphid = {"": "G_NONE", "gSaw": "G_SAW", "gTri": "G_TRI", "gSq": "G_SQ"}
+arr("Btn", "kBtns", btns, lambda b: f"    {{{b['pid']}, {fx(b['x'])}, {fx(b['y'])}, {colorid[b['color']]}, "
+                            f"{glyphid[b['glyph']]}, {'true' if b['led'] else 'false'}, {b['ledmode']}, {b['value']}}},")
+styleid = {"hdr": "T_HDR", "lbl": "T_LBL", "sub": "T_SUB", "num": "T_NUM", "scale": "T_SCALE"}
+arr("Text", "kTexts", texts, lambda t: f"    {{{fx(t['x'])}, {fx(t['y'])}, {styleid[t['style']]}, {q(t['text'])}}},")
+arr("Box", "kBoxes", boxes, lambda b: f"    {{{fx(b['x'])}, {fx(b['y'])}, {fx(b['w'])}, {fx(b['h'])}, {q(b['header'])}}},")
+arr("Rule", "kRules", rules, lambda r: f"    {{{fx(r['x1'])}, {fx(r['y1'])}, {fx(r['x2'])}, {fx(r['y2'])}}},")
+arr("Disp", "kDisplays", displays, lambda d: f"    {{{fx(d['x'])}, {fx(d['y'])}, {fx(d['w'])}, {fx(d['h'])}}},")
+hdr.append("} // namespace p5ui\n")
+
+with open(OUT_HDR, "w") as fh:
+    fh.write("".join(hdr))
+print("wrote", OUT_HDR, f"({len(knobs)} knobs, {len(btns)} buttons)")

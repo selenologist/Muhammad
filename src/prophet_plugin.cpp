@@ -36,28 +36,15 @@ static const char *kOverlayNames[8] = {
 static const double kOverlayMin[8] = { -63, -63, -24, -24, -63, -63, -63, -63 };
 static const double kOverlayMax[8] = {  63,  63,  24,  24,  63,  63,  63,  63 };
 
-constexpr uint32_t PARAM_COUNT = 57 + NUM_OVERLAYS + 2;   // + trim, oversample
+constexpr uint32_t PARAM_COUNT = 57 + NUM_OVERLAYS + 5;   // + trim, oversample, tune, program, bank
 
 static bool isRawParam(clap_id id) { return id < 57; }
 
-// Display ranges that match what the engine actually does with the byte
-// (the firmware clamps these on read), so the host's number is the truth:
-//   4 FILTER REV: 0..1 (0=SSI, nonzero=CURTIS)   51 RELEASE ON: 0..1 (!!)
-//   52 UNISON: 0..1 (0=poly, nonzero=unison)     53 UNISON CNT: 1..8
-//      (raw 0 means "default 5"; the engine clamps to the polyphony)
-//   54 UNISON DET: 0..7 (higher raws saturate)   55 BEND: 0..11
-//   56 RETRIGGER/PRIORITY: 0..3 (LOW, LOW RET, LAST, LAST RET)
-struct KnobClamp { clap_id id; double lo, hi; bool defWhenZero; int def; };
-static const KnobClamp kKnobClamp[] = {
-    { 4, 0, 1, false, 0 }, { 51, 0, 1, false, 0 }, { 52, 0, 1, false, 0 },
-    { 53, 1, 8, true, 5 }, { 54, 0, 7, false, 0 }, { 55, 0, 11, false, 0 },
-    { 56, 0, 3, false, 0 },
-};
-static const KnobClamp *knobClamp(clap_id id)
-{
-    for (const auto &k : kKnobClamp) if (k.id == (int)id) return &k;
-    return nullptr;
-}
+// Effective ranges (shared with the GUI/golden normalizer in p5_common.hpp),
+// so host display, engine behaviour and the panel render cannot drift.
+using KnobClamp = p5::KnobRange;
+static const KnobClamp *knobClamp(clap_id id) { return p5::knobRange((int)id); }
+
 static bool isOverlayParam(clap_id id) { return id >= 64 && id < 64 + NUM_OVERLAYS; }
 
 const char *Plugin::nameOf(clap_id id)
@@ -66,6 +53,9 @@ const char *Plugin::nameOf(clap_id id)
     if (isOverlayParam(id)) return kOverlayNames[id - 64];
     if (id == PID_TRIM) return "OUTPUT";
     if (id == PID_OS) return "OVERSAMPLE 2X";
+    if (id == PID_TUNE) return "MASTER TUNE";
+    if (id == PID_PROGRAM) return "PROGRAM";
+    if (id == PID_BANK) return "BANK";
     return "?";
 }
 
@@ -113,6 +103,23 @@ static void applyParam(Plugin *s, clap_id id, double value)
             if (l && l->changed) l->changed(s->host);
         }
     }
+    else if (id == PID_TUNE)
+        s->engine.setTuneCents((int)(value < 0 ? value - 0.5 : value + 0.5));
+    else if (id == PID_PROGRAM)
+        s->loadProgram((int)(value + 0.5));
+    else if (id == PID_BANK) {
+        int v = (int)(value + 0.5);
+        if (v < 0) v = 0;
+        if (v > (int)PW_FACTORY_N / 8 - 1) v = (int)PW_FACTORY_N / 8 - 1;
+        s->bank = v;
+    }
+}
+
+static void requestHostParamFlush(Plugin *s)
+{
+    if (!s->host || !s->host->get_extension) return;
+    auto *hp = (const clap_host_params_t *)s->host->get_extension(s->host, CLAP_EXT_PARAMS);
+    if (hp && hp->request_flush) hp->request_flush(s->host);
 }
 
 static double paramValue(Plugin *s, clap_id id)
@@ -128,7 +135,31 @@ static double paramValue(Plugin *s, clap_id id)
     if (isOverlayParam(id)) return (double)s->engine.overlay((int)(id - 64));
     if (id == PID_TRIM) return s->trim;
     if (id == PID_OS) return (double)(s->engine.oversample() - 1);
+    if (id == PID_TUNE) return s->engine.tuneCents();
+    if (id == PID_PROGRAM) return s->program < 0 ? 0 : s->program;
+    if (id == PID_BANK) return s->bank;
     return 0;
+}
+
+double Plugin::guiValue(clap_id id) { return paramValue(this, id); }
+
+void Plugin::guiSet(clap_id id, double v)
+{
+    applyParam(this, id, v);
+    pendingGuiEvents.push_back({id, paramValue(this, id)});
+    requestHostParamFlush(this);
+}
+
+void Plugin::loadProgram(int k)
+{
+    if (k < 0 || k >= (int)PW_FACTORY_N) return;
+    engine.loadFactory((uint32_t)k);
+    program = k;
+    bank = k / 8;
+    // the whole patch changed under the host's feet: sync every knob
+    for (clap_id id = 0; id < 57; id++)
+        pendingGuiEvents.push_back({id, paramValue(this, id)});
+    requestHostParamFlush(this);
 }
 
 // ---- events ------------------------------------------------------------------
@@ -271,6 +302,10 @@ static const void *plugin_get_extension(const clap_plugin_t *, const char *id)
     if (!std::strcmp(id, CLAP_EXT_STATE)) return &kState;
     if (!std::strcmp(id, CLAP_EXT_PRESET_LOAD)) return &kPresetLoad;
     if (!std::strcmp(id, CLAP_EXT_LATENCY)) return &kLatency;
+#ifdef P5_GUI
+    if (!std::strcmp(id, CLAP_EXT_GUI)) return &kGuiX11;
+    if (!std::strcmp(id, CLAP_EXT_TIMER_SUPPORT)) return &kTimerSupport;
+#endif
     return nullptr;
 }
 
@@ -323,10 +358,14 @@ static bool par_get_info(const clap_plugin_t *, uint32_t index, clap_param_info_
         int o = (int)(index - 57); id = (clap_id)(64 + o);
         info->min_value = kOverlayMin[o]; info->max_value = kOverlayMax[o];
     } else if (index < 57 + NUM_OVERLAYS + 1) { id = PID_TRIM; info->min_value = 0; info->max_value = 2; }
-    else { id = PID_OS; info->min_value = 0; info->max_value = 1; }
+    else if (index < 57 + NUM_OVERLAYS + 2) { id = PID_OS; info->min_value = 0; info->max_value = 1; }
+    else if (index < 57 + NUM_OVERLAYS + 3) { id = PID_TUNE; info->min_value = -100; info->max_value = 100; }
+    else if (index < 57 + NUM_OVERLAYS + 4) { id = PID_PROGRAM; info->min_value = 0; info->max_value = PW_FACTORY_N - 1; }
+    else { id = PID_BANK; info->min_value = 0; info->max_value = PW_FACTORY_N / 8 - 1; }
     info->id = id;
+    const bool stepped = isRawParam(id) || id == PID_TUNE || id == PID_PROGRAM || id == PID_BANK;
     info->flags = CLAP_PARAM_IS_AUTOMATABLE | CLAP_PARAM_IS_MODULATABLE |
-                  (isRawParam(id) ? CLAP_PARAM_IS_STEPPED : 0);
+                  (stepped ? CLAP_PARAM_IS_STEPPED : 0);
     std::snprintf(info->name, sizeof info->name, "%s", Plugin::nameOf(id));
     std::snprintf(info->module, sizeof info->module,
                   isRawParam(id) ? "PROPHET" : isOverlayParam(id) ? "EDIT" : "PERFORM");
@@ -345,6 +384,8 @@ static bool par_value_to_text(const clap_plugin_t *, clap_id id, double v, char 
     if (id == 52 || id == 51) { std::snprintf(buf, cap, "%s", v < 1.0 ? "OFF" : "ON"); return true; }
     if (id == 56) { static const char *const kPr[4] = {"LOW","LOW RET","LAST","LAST RET"};
                     std::snprintf(buf, cap, "%s", kPr[(int)v & 3]); return true; }
+    if (id == PID_TUNE) { std::snprintf(buf, cap, "%+d cents", (int)(v < 0 ? v - 0.5 : v + 0.5)); return true; }
+    if (id == PID_PROGRAM || id == PID_BANK) { std::snprintf(buf, cap, "%d", (int)(v + 0.5)); return true; }
     if (isOverlayParam(id)) std::snprintf(buf, cap, "%+g", v);
     else std::snprintf(buf, cap, "%g", v);
     return true;
@@ -358,10 +399,13 @@ static bool par_text_to_value(const clap_plugin_t *, clap_id id, const char *tex
         else v = v < 0 ? 0 : v > 255 ? 255 : v;
     } else if (id == PID_TRIM) v = v < 0 ? 0 : v > 2 ? 2 : v;
     else if (id == PID_OS) v = v < 0 ? 0 : v > 1 ? 1 : v;
+    else if (id == PID_TUNE) v = v < -100 ? -100 : v > 100 ? 100 : v;
+    else if (id == PID_PROGRAM) v = v < 0 ? 0 : v > PW_FACTORY_N - 1 ? PW_FACTORY_N - 1 : v;
+    else if (id == PID_BANK) v = v < 0 ? 0 : v > PW_FACTORY_N / 8 - 1 ? PW_FACTORY_N / 8 - 1 : v;
     *out = v;
     return true;
 }
-static void par_flush(const clap_plugin_t *p, const clap_input_events_t *in, const clap_output_events_t *)
+static void par_flush(const clap_plugin_t *p, const clap_input_events_t *in, const clap_output_events_t *out)
 {
     auto *s = fromPlugin(p);
     if (!s || !in) return;
@@ -370,13 +414,25 @@ static void par_flush(const clap_plugin_t *p, const clap_input_events_t *in, con
         const clap_event_header_t *ev = in->get(in, i);
         if (ev) dispatchEvent(s, ev);
     }
+    // drain GUI-initiated changes so the host's UI/automation sees them
+    if (!out || s->pendingGuiEvents.empty()) return;
+    for (auto &pe : s->pendingGuiEvents) {
+        clap_event_param_value e{};
+        e.header.type = CLAP_EVENT_PARAM_VALUE;
+        e.header.time = 0;
+        e.param_id = pe.first;
+        e.cookie = nullptr;
+        e.value = pe.second;
+        out->try_push(out, &e.header);
+    }
+    s->pendingGuiEvents.clear();
 }
 const clap_plugin_params_t kParams = { par_count, par_get_info, par_get_value,
                                        par_value_to_text, par_text_to_value, par_flush };
 
 // ---- state (versioned binary blob) --------------------------------------------
 #define PW_STATE_MAGIC 0x5035434Cu            // "P5CL"
-#define PW_STATE_VERSION 2u
+#define PW_STATE_VERSION 3u
 static bool wr(const clap_ostream_t *o, const void *b, size_t n)
 { return o->write(o, b, (uint64_t)n) == (int64_t)n; }
 static bool state_save(const clap_plugin_t *p, const clap_ostream_t *out)
@@ -387,8 +443,10 @@ static bool state_save(const clap_plugin_t *p, const clap_ostream_t *out)
     for (int i = 0; i < 8; i++) ov[i] = (int16_t)s->engine.overlay(i);
     float trim = s->trim;
     int32_t os = s->engine.oversample();
+    int16_t gui[3] = { (int16_t)s->engine.tuneCents(), (int16_t)s->program, (int16_t)s->bank };
     return wr(out, head, sizeof head) && wr(out, s->engine.patch().raw, 133) &&
-           wr(out, ov, sizeof ov) && wr(out, &trim, sizeof trim) && wr(out, &os, sizeof os);
+           wr(out, ov, sizeof ov) && wr(out, &trim, sizeof trim) && wr(out, &os, sizeof os) &&
+           wr(out, gui, sizeof gui);
 }
 static bool rd(const clap_istream_t *i, void *b, size_t n)
 { return i->read(i, b, (uint64_t)n) == (int64_t)n; }
@@ -409,6 +467,13 @@ static bool state_load(const clap_plugin_t *p, const clap_istream_t *in)
     } else {
         if (!rd(in, raw, sizeof raw) || !rd(in, ov, sizeof ov) ||
             !rd(in, &trim, sizeof trim) || !rd(in, &os, sizeof os)) return false;
+        if (head[1] >= 3u) {
+            int16_t gui[3] = {0, -1, 0};
+            if (!rd(in, gui, sizeof gui)) return false;
+            s->engine.setTuneCents(gui[0]);
+            s->program = gui[1];
+            s->bank = gui[2];
+        }
     }
     p5::Patch patch;
     std::memset(&patch, 0, sizeof patch);
