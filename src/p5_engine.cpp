@@ -23,10 +23,14 @@ Engine::Engine(bool simd) : simd_(simd)
 void Engine::activate(double sampleRate)
 {
     srScale_ = sampleRate > 0.0 ? 44100.0 / sampleRate : 1.0;
-    // the output coupling capacitor, about 5 Hz: k = (1 - 2 pi 5 / sr) << 30
-    const double PI = 3.14159265358979323846;
-    double k = (1.0 - 2.0 * PI * 5.0 / sampleRate) * 1073741824.0;
-    dcK_ = (uint32_t)(k > 0.0 ? k : 0.0);
+    if (sampleRate == 44100.0) {
+        dcK_ = DC_K_DEFAULT;            // the firmware's P5_DC_K literal, bit for bit
+    } else {
+        // the output coupling capacitor, about 5 Hz: k = (1 - 2 pi 5 / sr) << 30
+        const double PI = 3.14159265358979323846;
+        double k = (1.0 - 2.0 * PI * 5.0 / sampleRate) * 1073741824.0;
+        dcK_ = (uint32_t)(k > 0.0 ? k : 0.0);
+    }
     dcX1_ = dcY1_ = 0;
     bendQ8_ = bendTarget_ = 0;
 }
@@ -85,6 +89,7 @@ void Engine::silenceReset()
     }
     lfoPhase_ = 0; lastPitch_ = 0; modNoise_ = 0; dcX1_ = dcY1_ = 0;
     live_ = 0; monoNote_ = 0; nmono_ = 0;
+    vage_ = 0;   // (the firmware's vage clock is process-global; the A/B harness resets it per scenario)
 }
 
 // --------------------------------------------------------------- note-on ----
@@ -377,12 +382,32 @@ int32_t Engine::adsrTick(Lane &l)
 
 // p5_render: one block's parameter math for one voice, or the final fade.
 // Returns 1 when the lane must run through the sample kernel.
+// the block's engine envelopes, ticked once; the caller reads ampPrev afterwards
+// as p5_env_source and passes the four ramp values to renderLane (as the
+// firmware's p5_render does in one call, but the vmod sources in track_render
+// see the value this tick produced)
+void Engine::tickEnvelopes(Lane &l, int gate)
+{
+    const uint8_t *p = patch_.raw;
+    const int curtis = !!p[P5_FILTER_REV];
+    const float f1 = envTickEngine(l.fenv, gate, P5_ATTACK_FILTER, P5_DECAY_FILTER,
+                                   P5_SUSTAIN_FILTER, P5_RELEASE_FILTER, l.envDrift, !curtis);
+    const float a1 = envTickEngine(l.aenv, gate, P5_ATTACK_AMP, P5_DECAY_AMP,
+                                   P5_SUSTAIN_AMP, P5_RELEASE_AMP, l.envDrift, 0);
+    l.filterPrev = f1;
+    l.ampPrev = a1;
+}
+
 bool Engine::renderLane(Lane &l, int32_t mPitch16, int32_t mFine, int32_t mCutoff,
                         int32_t mShape, int32_t mAmp0, int32_t mAmp1, int32_t *out, uint32_t n)
 {
     VoiceState &v = l.v;
     const uint8_t *p = patch_.raw;
     const uint8_t *q = value_;
+    const int curtis = !!p[P5_FILTER_REV];
+    const float f0 = l.filterPrev, a0 = l.ampPrev;
+    tickEnvelopes(l, v.gate);
+    const float f1 = l.filterPrev, a1 = l.ampPrev;
     // A budget victim is already inactive when the final fade block arrives: fade its
     // last PCM to zero instead of running a whole voice; ends exactly at zero.
     if (!v.active && !mAmp1) {
@@ -393,14 +418,6 @@ bool Engine::renderLane(Lane &l, int32_t mPitch16, int32_t mFine, int32_t mCutof
         l.lastPcm = 0;
         return false;
     }
-    const float f0 = l.filterPrev, a0 = l.ampPrev;
-    const int curtis = !!p[P5_FILTER_REV];
-    const float f1 = envTickEngine(l.fenv, v.gate, P5_ATTACK_FILTER, P5_DECAY_FILTER,
-                                   P5_SUSTAIN_FILTER, P5_RELEASE_FILTER, l.envDrift, !curtis);
-    const float a1 = envTickEngine(l.aenv, v.gate, P5_ATTACK_AMP, P5_DECAY_AMP,
-                                   P5_SUSTAIN_AMP, P5_RELEASE_AMP, l.envDrift, 0);
-    l.filterPrev = f1;
-    l.ampPrev = a1;
     int32_t glide = 0;
     if (p[P5_GLIDE]) {
         const int32_t target = v.pitch16, d = target - l.glidePitch;
@@ -517,7 +534,7 @@ void Engine::process(int32_t *out, uint32_t n)
                     env = 32767;
                 }
             }
-            const int32_t envq15 = (int32_t)(l.ampPrev * 32768.0f);   // p5_env_source
+            const int32_t envq15 = (int32_t)(l.ampPrev * 32768.0f);   // p5_env_source (pre-tick)
             const int32_t amp1 = env;                   // ownenv: no common velocity gain here
             const int32_t amp0 = v.envOut;
             v.envOut = amp1;
@@ -530,7 +547,10 @@ void Engine::process(int32_t *out, uint32_t n)
             if (!env && !amp0 && v.stage == 2) continue;    // held at a silent sustain
             const int32_t mPitch16 = i_clamp(v.pitchCur + bend16, 0, 2047);
             const int32_t mFine = v.fine + bendFine;
-            const int32_t mCutoff = v.vel > 110 ? (envq15 * 24) >> 7 : 0;    // accent opens the filter
+            // The firmware applies the >110 accent to m.cutoff from m.envq15 BEFORE
+            // p5 overrides envq15 with the engine envelope - so for this ownenv engine
+            // the accent term is always the forced-zero matrix value (0). Exact port.
+            const int32_t mCutoff = 0;
             if (renderLane(l, mPitch16, mFine, mCutoff, 64 << 8, amp0, amp1, out, n)) {
                 mask |= 1u << i;
                 nr++;
@@ -542,6 +562,7 @@ void Engine::process(int32_t *out, uint32_t n)
         else p5KernelScalar(*this, mask, out, n);
     }
 
+    for (uint32_t i = 0; i < n; i++) mixTap_[i] = out[i];
     if (!nr) { dcX1_ = dcY1_ = 0; live_ = 0; return; }
     // p5_post: the part's output coupling capacitor, about 5 Hz. Without a voice it starts afresh.
     int32_t x1 = dcX1_, y = dcY1_;

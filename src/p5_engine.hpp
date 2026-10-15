@@ -83,6 +83,7 @@ public:
     int voiceMode() const { return voiceMode_; }             // 0 poly, 1 mono, 2 legato, 3 unison
     void setVoiceModeOverride(int m) { voiceModeOverride_ = m; }
     uint32_t liveVoices() const { return live_; }
+    const int32_t *lastMix() const { return mixTap_; }   // pre-post block (debug)
     void setUseSimd(bool s) { simd_ = s; }
 
     // ---- audio ----------------------------------------------------------------
@@ -112,6 +113,7 @@ private:
     void polyNoteOn(int note, int vel);
     void monoNoteOn(int note, int vel);
     int monoPick() const;
+    void tickEnvelopes(Lane &l, int gate);
     bool renderLane(Lane &l, int32_t mPitch16, int32_t mFine, int32_t mCutoff,
                     int32_t mShape, int32_t mAmp0, int32_t mAmp1, int32_t *out, uint32_t n);
 
@@ -139,6 +141,7 @@ private:
     uint32_t vage_ = 0;                       // voice ages: one clock for every part
     uint32_t unisonSeed_ = 0x1234567u;        // mono_play's phase-seeding LCG
 
+    int32_t mixTap_[CTL_];
     Lane lanes_[MAXV];
     // hot state, struct-of-arrays: the SIMD kernel loads these eight lanes at a time
     uint32_t phaseA_[MAXV], phaseB_[MAXV], noise_[MAXV];

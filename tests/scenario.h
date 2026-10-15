@@ -46,6 +46,14 @@ static const struct Event scenC[] = {
     { 95, 1, 72, 0 },
 };
 
+static const struct Event scenD[] = {
+    {  0, 0, 67, 120 },
+};
+
+static const struct Event scenE[] = {
+    {  0, 0, 60, 100 },
+};
+
 struct Scenario { const struct Event *ev; unsigned n; int preset; int patchRes; int patchCut; };
 
 /* preset: 0 = INIT (via host_preset k=0), k = factory program k-1. patchRes/patchCut
@@ -55,6 +63,8 @@ static const struct Scenario scenarios[] = {
     { scenA, sizeof scenA / sizeof scenA[0], 0, 0, -1 },
     { scenB, sizeof scenB / sizeof scenB[0], 0, 127, 30 },
     { scenC, sizeof scenC / sizeof scenC[0], 1, 0, -1 },
+    { scenD, sizeof scenD / sizeof scenD[0], 0, 0, -1 },
+    { scenE, sizeof scenE / sizeof scenE[0], 0, 0, -1 },
 };
 #define NSCEN (int)(sizeof scenarios / sizeof scenarios[0])
 #define BLOCKS 160

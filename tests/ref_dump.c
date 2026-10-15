@@ -17,6 +17,7 @@ int main(void)
     for (int s = 0; s < NSCEN; s++) {
         const struct Scenario sc = scenarios[s];
         memset(trk, 0, sizeof trk);
+        vage = 0;                            /* the A/B resets the shared voice-age clock */
         eng_state_reset();
         memset(p5_ready, 0, sizeof p5_ready);
         host_tracks_init();

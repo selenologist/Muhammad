@@ -55,9 +55,9 @@ inline V negf(V a) { return xorf(a, spl(-0.0f)); }
 // uint32 -> float like the C cast (split at 2^31)
 inline V u2f(VI u)
 {
-    V lo = simde_mm256_cvtepi32_ps(iand(u, spli(0x7FFFFFFF)));
+    VI lo = iand(u, spli(0x7FFFFFFF));                    // low 31 bits, as a positive signed value
     V hi = simde_mm256_cvtepi32_ps(isrli(u, 31));
-    return add(lo, mul(hi, spl(2147483648.0f)));
+    return add(simde_mm256_cvtepi32_ps(lo), mul(hi, spl(2147483648.0f)));
 }
 // float -> uint32 like the C cast (values below 2^32)
 inline VI cvtf2u(V f)
@@ -67,9 +67,9 @@ inline VI cvtf2u(V f)
     return seli(m, lo, ixor(lo, spli((int32_t)0x80000000)));
 }
 inline V cvti2f(VI i) { return simde_mm256_cvtepi32_ps(i); }    // values in int32 range
-// unsigned a < b, by biasing both into the signed domain
+// unsigned a < b: bias both into the signed domain, then signed b' > a'
 inline V iltu(VI a, VI b) { return castsi(cmt(ixor(b, spli((int32_t)0x80000000)),
-                                       ixor(a, spli((int32_t)0x80000000)))); }
+                                               ixor(a, spli((int32_t)0x80000000)))); }
 
 // per-lane table lookup: 8 lanes spill their indices once; the tables stay hot in L1
 inline V gather(const float *tbl, VI idx)
@@ -96,10 +96,10 @@ inline V blep(VI ph, VI inc)
     V x = div(fPh, fInc);
     V r1 = add(sub(add(x, x), mul(x, x)), spl(-1.0f));         // x + x - x*x - 1
     V m1 = iltu(ph, inc);                                      // ph < inc
-    V m2 = iltu(isub(spli(-1), inc), ph);                      // ph > 0xFFFFFFFF - inc
+    V m2 = iltu(isub(spli(-1), inc), ph);                      // 0xFFFFFFFF - inc < ph
     V xn = negf(div(u2f(ixor(ph, spli(-1))), fInc));           // -(float)(0xFFFFFFFF - ph) / inc
     V r2 = add(add(add(mul(xn, xn), xn), xn), spl(1.0f));
-    return sel(mInc, sel(m2, sel(m1, r1, spl(0.0f)), r2), spl(0.0f));
+    return sel(mInc, sel(m2, sel(m1, spl(0.0f), r1), r2), spl(0.0f));
 }
 
 inline V oscSaw(VI ph, VI inc)
@@ -112,8 +112,8 @@ inline V softclipV(V x)
 {
     V a = mul(fabsfV(x), spl(128.0f));
     VI i = cvtf2u(a);
-    VI i0 = iand(i, spli(1023));                               // index for both the live and the clamped case
-    VI i1 = iand(iadd(i, spli(1)), spli(1024));
+    VI i0 = simde_mm256_min_epi32(i, spli(1023));               // clamp so the +1 lane stays in the table
+    VI i1 = simde_mm256_min_epi32(iadd(i, spli(1)), spli(1024));
     V t0 = gather(PW_P5_TANH, i0), t1 = gather(PW_P5_TANH, i1);
     V y = add(t0, mul(sub(t1, t0), sub(a, cvti2f(i0))));
     V neg = cmplt(x, spl(0.0f));
@@ -161,7 +161,7 @@ inline V filterCoreV(HotV &h, V input, V cutoff, V k, V gain, int curtis)
     VI i = cvtf2u(cc);
     V g0 = gather(PW_P5_TPT_G, i);
     V g1 = gather(PW_P5_TPT_G, iand(iadd(i, spli(1)), spli(127)));
-    V g = sel(castsi(cmt(spli(127), i)), add(g0, mul(sub(g1, g0), sub(cc, cvti2f(i)))), g0);  // i < 127
+    V g = sel(castsi(cmt(spli(127), i)), g0, add(g0, mul(sub(g1, g0), sub(cc, cvti2f(i)))));  // interp when i < 127
     V g2 = mul(g, g), g3 = mul(g2, g), g4 = mul(g3, g);
     V recip = div(spl(1.0f), add(spl(1.0f), mul(k, g4)));
     V sigma = mul(sub(spl(1.0f), g), add(add(add(mul(g3, h.z0), mul(g2, h.z1)), mul(g, h.z2)), h.z3));
@@ -303,11 +303,13 @@ void p5KernelSimd(Engine &e, uint32_t mask, int32_t *out, uint32_t n)
         h.phB = nb;
 
         const V x = add(add(mul(a, parF[F_LA]), mul(b, parF[F_LB])), mul(noise, parF[F_LN]));
+
         V fc = add(parF[F_CUT], mul(mul(fe, parF[F_FVEL]), parF[F_ENVAMT]));
         if (p[P5_POLY_FILTER]) fc = add(fc, add(mul(fe, parF[F_PFENV]), mul(bn, parF[F_PFB])));
         if (p[P5_WHEEL_FILTER]) fc = add(fc, mul(lfo, spl(112.0f)));
 
         const V y = filterCoreV(h, softclipV(x), fc, parF[F_K], parF[F_FG], curtis);
+
 
         // the VCA ramp and the int32 quantisation, identical to p5_samples
         const V gain = mul(mul(ae, parF[F_AVEL]), add(spl(1.0f), mul(ampDriftN, spl(1.0f / 32768.0f))));
