@@ -44,7 +44,7 @@ struct Box   { float x, y, w, h; const char *header; };
 struct Rule  { float x1, y1, x2, y2; };
 struct Disp  { float x, y, w, h; };
 
-inline constexpr int kNumKnobs = 32, kNumBtns = 36, kNumTexts = 73, kNumBoxes = 9, kNumRules = 14, kNumDisplays = 1;
+inline constexpr int kNumKnobs = 31, kNumBtns = 37, kNumTexts = 73, kNumBoxes = 9, kNumRules = 14, kNumDisplays = 1;
 inline constexpr Knob kKnobs[] = {
         {32, 60.0f, 60.0f, false, 0, 10},
         {33, 124.0f, 60.0f, false, 0, 10},
@@ -69,7 +69,6 @@ inline constexpr Knob kKnobs[] = {
         {45, 1020.0f, 196.0f, false, 0, 10},
         {47, 1084.0f, 196.0f, false, 0, 10},
         {49, 1148.0f, 196.0f, false, 0, 10},
-        {19, 1212.0f, 196.0f, false, 0, 2},
         {82, 1330.0f, 66.0f, true, 0, 10},
         {42, 1396.0f, 66.0f, false, 0, 10},
         {80, 1462.0f, 66.0f, true, 0, 10},
@@ -104,6 +103,7 @@ inline constexpr Btn kBtns[] = {
         {52, 442.0f, 332.0f, BC_DARK, G_NONE, true, 1, 0},
         {81, 850.0f, 196.0f, BC_DARK, G_NONE, true, 1, 0},
         {20, 928.0f, 62.0f, BC_GRAY, G_NONE, true, 1, 0},
+        {19, 1212.0f, 196.0f, BC_DARK, G_NONE, true, 6, 0},
         {-3, 598.0f, 330.0f, BC_GRAY, G_NONE, true, 5, 0},
         {-2, 640.0f, 330.0f, BC_ORANGE, G_NONE, true, 4, 0},
         {84, 682.0f, 330.0f, BC_GRAY, G_NONE, false, 0, 0},

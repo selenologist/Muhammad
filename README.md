@@ -188,7 +188,7 @@ draw code is platform-neutral; only the embedding file changes.
 
 Disable with `-DPROPHET_GUI=OFF` for headless engine-only builds.
 
-## Patch store & retrieval (v1.0-muh)
+## Patch store & retrieval
 
 Patches really live as files: `~/Documents/Muhammad Synth/<NAME>.muhammad`
 (133 raw wire bytes; name inside). The PROGRAMMER grid is only a retrieval map:
@@ -213,3 +213,18 @@ quantises there), the LFO box is VIBRATO with its SAW/TRI/PULSE SHAPE buttons
 one of raw params 0..56 now has a panel control. Host-only by necessity:
 PRESS>× need aftertouch, LFO INIT is wheel-state, BEND RANGE/PRIORITY were
 panel globals on the original, EDIT overlays ride params 64..71.
+
+## Preset picker & recall (v1.3-picker)
+
+- **PRESET (programmer)** opens a mouse picker — FACTORY | USER tabs, paged
+  rows (INIT default, bare INIT, then all 200 Sequential programs / your saved
+  files). Clicking a row assigns it to the highlighted bank-program slot and
+  loads it. No typing required.
+- **PRESET (far left)** recalls the loaded patch; press it again — having
+  touched nothing else — and your floating edits come back.
+- **Hold RECORD + press PRESET** recalls the bare INIT patch (the original
+  P5's "basic preset" gesture). INIT is also a discovery entry (`load_key
+  "init"`) and assignable by name via the picker or `INIT` text.
+- **KEYBD** (filter key tracking) is a 3-state button: LED off = OFF,
+  amber = HALF (x sqrt2/oct), red = FULL (x2/oct) — matching the engine's
+  quantisation exactly.

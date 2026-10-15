@@ -51,7 +51,10 @@ struct Ctx
     int dragKnob = -1, pressBtn = -1;
 
     // text-entry modal: 0 none, 1 save patch (RECORD), 2 assign slot (PRESET)
-    int modal = 0;                    // 1 save, 2 assign, 3 overwrite-confirm
+    int modal = 0;                    // 1 save, 2 assign, 3 overwrite-confirm, 4 picker
+    int pickerTab = 0, pickerPage = 0;
+    std::vector<std::string> userRows;   // cached dir listing for the picker
+    int heldRecord = -1;                 // RECORD held while another button actuates
     char modalBuf[32] = {};
     char modalHit[36] = {};             // existing file that the typed name folds to
     int modalLen = 0;
@@ -92,7 +95,7 @@ void fillState(Ctx &c, p5ui::State &st)
         else if (b.ledmode == 2) st.led[i] = program >= 0 && program == bank * 8 + b.value;
         else if (b.ledmode == 3) st.led[i] = c.plugin->panelDirty();     // PRESET: floating edits
         else if (b.ledmode == 4) st.led[i] = c.modal == 1 || c.modal == 3;  // RECORD: armed
-        else if (b.ledmode == 5) st.led[i] = c.modal == 2;               // PRESET: assigning
+        else if (b.ledmode == 5) st.led[i] = c.modal == 2 || c.modal == 4;  // PRESET: picker/assigning
     }
 #ifdef P5_BUILD_INFO
     st.build = P5_BUILD_INFO;
@@ -107,7 +110,32 @@ void fillState(Ctx &c, p5ui::State &st)
     std::memcpy(st.name, c.plugin->engine.patch().raw + p5::P5_NAME, 20);
     st.name[20] = 0;
     for (char *q = st.name + 19; q >= st.name && *q == ' '; *q-- = 0) {}
-    if (c.modal)
+    if (c.modal == 4)
+    {
+        static char title[96];
+        std::snprintf(title, sizeof title, "slot %d-%d  <-  click assigns + loads",
+                      c.modalSlot / 8 + 1, c.modalSlot % 8 + 1);
+        st.pickerTitle = title;
+        st.pickerTab = c.pickerTab; st.pickerPage = c.pickerPage;
+        const int total = c.pickerTab == 0 ? (int)PW_FACTORY_N + 2 : (int)c.userRows.size();
+        st.pickerPages = total ? (total + p5ui::pick::rows - 1) / p5ui::pick::rows : 1;
+        st.pickerCount = 0;
+        for (int i = 0; i < p5ui::pick::rows; i++)
+        {
+            const int g = c.pickerPage * p5ui::pick::rows + i;
+            if (g >= total) break;
+            if (c.pickerTab == 0)
+            {
+                if (g == 0) std::snprintf(st.pickerRows[i], 44, "  INIT - Peace Be Upon Him (default)");
+                else if (g == 1) std::snprintf(st.pickerRows[i], 44, "  INIT (bare patch)");
+                else { char nm[24]; p5::Engine::patchNameAt((uint32_t)(g - 1), nm);
+                       std::snprintf(st.pickerRows[i], 44, "%3d %s", g - 2, nm); }
+            }
+            else std::snprintf(st.pickerRows[i], 44, "%s", c.userRows[g].c_str());
+            st.pickerCount++;
+        }
+    }
+    else if (c.modal)
     {
         st.modalTitle = c.modal == 2 ? "ASSIGN BANK/PROGRAM"
                           : c.modal == 3 ? "OVERWRITE ?" : "SAVE PATCH";
@@ -196,17 +224,18 @@ void actuate(Ctx &c, int btnIdx)
         XSetInputFocus(c.dpy, c.win, RevertToParent, CurrentTime);
         return;
     }
-    if (b.pid == -3)                                  // PRESET: assign prompt
+    if (b.pid == -3)                                  // PRESET: preset picker (no typing)
     {
-        c.modal = c.modal == 2 ? 0 : 2;
-        c.modalLen = 0; c.modalBuf[0] = 0;
+        c.modal = c.modal == 4 ? 0 : 4;
+        c.pickerTab = 0; c.pickerPage = 0;
         c.modalSlot = c.plugin->assignTarget();
-        XSetInputFocus(c.dpy, c.win, RevertToParent, CurrentTime);
+        c.userRows = p5store::listPatches();
         return;
     }
-    if (b.pid == -4)                                  // LFO PRESET = recall preset state
+    if (b.pid == -4)                                  // PRESET: recall / toggle-back / basic
     {
-        c.plugin->presetRecall();
+        if (c.heldRecord >= 0) c.plugin->recallBasicInit();   // hold RECORD = P5 "basic preset"
+        else c.plugin->presetRecall();                          // 2nd press = re-float
         return;
     }
     if (b.pid < 0) return;                            // decorative
@@ -221,6 +250,12 @@ void actuate(Ctx &c, int btnIdx)
     {
         const int banks = (int)PW_FACTORY_N / 8;
         c.plugin->guiSet(PID_BANK, (double)((c.plugin->bank + 1) % banks));
+        return;
+    }
+    if (b.ledmode == 6)                               // KEYBD>FLT: OFF -> HALF -> FULL cycle
+    {
+        const int v = (int)(c.plugin->guiValue((clap_id)b.pid) + 0.5);
+        c.plugin->guiSet((clap_id)b.pid, (double)((v + 1) % 3));
         return;
     }
     c.plugin->guiSet((clap_id)b.pid, c.plugin->guiValue((clap_id)b.pid) != 0.0 ? 0.0 : 1.0);
@@ -307,6 +342,39 @@ void pump(Ctx &c)
                     break;
                 }
                 if (ev.xbutton.button != Button1) break;
+                if (c.modal == 4)
+                {
+                    float lx, ly;
+                    p5ui::pointToLayout((float)ev.xbutton.x, (float)ev.xbutton.y,
+                                        (float)c.w, (float)c.h, lx, ly);
+                    if (!p5ui::pick::inside(lx, ly)) { c.modal = 0; dirty = true; break; }
+                    const int tab = p5ui::pick::hitTab(lx, ly);
+                    if (tab >= 0) { c.pickerTab = tab; c.pickerPage = 0; dirty = true; break; }
+                    const int pg = p5ui::pick::hitPage(lx, ly);
+                    if (pg != 0) { c.pickerPage += (pg < 0 ? -1 : 1);
+                        if (c.pickerPage < 0) c.pickerPage = 0; dirty = true; break; }
+                    if (p5ui::pick::hitClose(lx, ly)) { c.modal = 0; dirty = true; break; }
+                    const int row = p5ui::pick::hitRow(lx, ly);
+                    if (row >= 0)
+                    {
+                        const int g = c.pickerPage * p5ui::pick::rows + row;
+                        p5store::Source s;
+                        if (c.pickerTab == 0)
+                        {
+                            if (g >= (int)PW_FACTORY_N + 2) break;
+                            s.kind = p5store::SourceKind::Factory;
+                            s.factory = g == 0 ? -2 : g == 1 ? -1 : g - 2;
+                        }
+                        else
+                        {
+                            if (g >= (int)c.userRows.size()) break;
+                            s.kind = p5store::SourceKind::File; s.file = c.userRows[g];
+                        }
+                        c.plugin->assignAndLoad(c.modalSlot, s);
+                        c.modal = 0; dirty = true;
+                    }
+                    break;
+                }
                 c.dragKnob = p5ui::knobAt(p5ui::State{}, (float)ev.xbutton.x, (float)ev.xbutton.y,
                                           (float)c.w, (float)c.h);
                 if (c.dragKnob >= 0)
@@ -324,10 +392,13 @@ void pump(Ctx &c)
                 {
                     c.pressBtn = p5ui::btnAt(p5ui::State{}, (float)ev.xbutton.x, (float)ev.xbutton.y,
                                              (float)c.w, (float)c.h);
+                    if (c.pressBtn >= 0 && p5ui::kBtns[c.pressBtn].pid == -2)
+                        c.heldRecord = c.pressBtn;          // RECORD held -> enables basic-preset
                 }
                 break;
             case ButtonRelease:
                 if (ev.xbutton.button != Button1) break;
+                if (ev.xbutton.button == Button1) c.heldRecord = -1;
                 if (c.pointerGrabbed) { XUngrabPointer(c.dpy, CurrentTime); c.pointerGrabbed = false; }
                 if (c.pressBtn >= 0 &&
                     p5ui::btnAt(p5ui::State{}, (float)ev.xbutton.x, (float)ev.xbutton.y,

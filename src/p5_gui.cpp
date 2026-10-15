@@ -80,7 +80,7 @@ void knobDial(const Gui &g, float cx, float cy, double norm, bool white)
     nvgLineCap(g.vg, NVG_BUTT);
 }
 
-void button(const Gui &g, const Btn &b, bool lit)
+void button(const Gui &g, const Btn &b, int ledv)
 {
     uint32_t fillc, strokec;
     switch (b.color)
@@ -100,7 +100,8 @@ void button(const Gui &g, const Btn &b, bool lit)
     // LED at (0,-8) r=2.6 relative to center
     nvgBeginPath(g.vg);
     nvgCircle(g.vg, b.x, b.y - 8.0f, 2.6f);
-    nvgFillColor(g.vg, col(lit && b.led ? kColLedOn : kColLedOff));
+    nvgFillColor(g.vg, ledv == 1 ? nvgRGBA(240, 160, 30, 255)              // amber = HALF
+                   : (ledv && b.led) ? col(kColLedOn) : col(kColLedOff));  // red = on
     nvgFill(g.vg);
 
     if (b.glyph == G_NONE) return;
@@ -261,6 +262,87 @@ void draw(const Gui &g, const State &s, float w, float h)
         tracked(g, t.x, t.y, t.txt, kTxtTrack[t.style], col(kColInk));
     }
 
+    // ---- preset picker (programmer PRESET): Factory|User tabs, paged rows ----
+    if (s.pickerTitle && s.pickerTitle[0])
+    {
+        nvgBeginPath(g.vg);
+        nvgRect(g.vg, 0, 0, kPanelW, kPanelH);
+        nvgFillColor(g.vg, nvgRGBA(0, 0, 0, 150));
+        nvgFill(g.vg);
+        nvgBeginPath(g.vg);
+        nvgRoundedRect(g.vg, pick::x, pick::y, pick::w, pick::h, 6);
+        nvgFillColor(g.vg, col(kColPanel));
+        nvgFill(g.vg);
+        nvgStrokeColor(g.vg, col(kColBox));
+        nvgStrokeWidth(g.vg, 1.5f);
+        nvgStroke(g.vg);
+        // tabs
+        for (int t = 0; t < 2; t++)
+        {
+            const float tx = pick::x + 12 + t * 136;
+            nvgBeginPath(g.vg);
+            nvgRoundedRect(g.vg, tx, pick::y + 10, 130, 26, 3);
+            nvgFillColor(g.vg, s.pickerTab == t ? col(kColDispBg) : nvgRGBA(52, 52, 58, 255));
+            nvgFill(g.vg);
+            nvgStrokeColor(g.vg, col(kColDispStroke));
+            nvgStrokeWidth(g.vg, 1.f);
+            nvgStroke(g.vg);
+            nvgFontFaceId(g.vg, g.fontId);
+            nvgFontSize(g.vg, 9.5f);
+            nvgTextAlign(g.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
+            nvgFillColor(g.vg, s.pickerTab == t ? col(kColDispText) : col(kColInk));
+            nvgText(g.vg, tx + 65, pick::y + 23, t ? "USER" : "FACTORY", nullptr);
+        }
+        // page controls + close
+        const char *pp[2] = { "<", ">" };
+        for (int t = 0; t < 2; t++)
+        {
+            const float px2 = pick::x + pick::w - 172 + t * 50;
+            nvgBeginPath(g.vg);
+            nvgRoundedRect(g.vg, px2, pick::y + 10, 44, 26, 3);
+            nvgFillColor(g.vg, nvgRGBA(52, 52, 58, 255));
+            nvgFill(g.vg);
+            nvgStrokeColor(g.vg, col(kColDispStroke));
+            nvgStroke(g.vg);
+            nvgFontSize(g.vg, 11.f);
+            nvgTextAlign(g.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
+            nvgFillColor(g.vg, col(kColInk));
+            nvgText(g.vg, px2 + 22, pick::y + 23, pp[t], nullptr);
+        }
+        nvgBeginPath(g.vg);
+        nvgRoundedRect(g.vg, pick::x + pick::w - 44, pick::y + 10, 30, 26, 3);
+        nvgFillColor(g.vg, nvgRGBA(90, 40, 36, 255));
+        nvgFill(g.vg);
+        nvgFontSize(g.vg, 10.f);
+        nvgTextAlign(g.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
+        nvgFillColor(g.vg, col(kColInk));
+        nvgText(g.vg, pick::x + pick::w - 29, pick::y + 23, "X", nullptr);
+        // target line + rows
+        nvgFontSize(g.vg, 8.5f);
+        nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_BASELINE);
+        nvgFillColor(g.vg, nvgRGBA(180, 180, 190, 255));
+        nvgText(g.vg, pick::x + 292, pick::y + 28, s.pickerTitle, nullptr);
+        char pg[16];
+        std::snprintf(pg, sizeof pg, "%d/%d", s.pickerPage + 1, s.pickerPages < 1 ? 1 : s.pickerPages);
+        nvgTextAlign(g.vg, NVG_ALIGN_RIGHT | NVG_ALIGN_BASELINE);
+        nvgText(g.vg, pick::x + pick::w - 182, pick::y + 28, pg, nullptr);
+        nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
+        nvgFontFaceId(g.vg, g.screenId);
+        nvgFontSize(g.vg, 12.f);
+        for (int i = 0; i < s.pickerCount && i < pick::rows; i++)
+        {
+            const float ry = pick::rowTop(i);
+            nvgBeginPath(g.vg);
+            nvgRoundedRect(g.vg, pick::x + 12, ry, pick::w - 24, pick::rowH, 3);
+            nvgFillColor(g.vg, i & 1 ? nvgRGBA(40, 40, 46, 255) : nvgRGBA(32, 32, 37, 255));
+            nvgFill(g.vg);
+            nvgFillColor(g.vg, col(kColDispText));
+            nvgText(g.vg, pick::x + 22, ry + pick::rowH / 2, s.pickerRows[i], nullptr);
+        }
+        nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_BASELINE);
+        nvgFontFaceId(g.vg, g.fontId);
+    }
+
     // ---- text-entry modal over the programmer area (RECORD save / PRESET assign) ----
     if (s.modalTitle && s.modalTitle[0])
     {
@@ -344,5 +426,36 @@ int btnAt(const State &, float px, float py, float w, float h)
     }
     return -1;
 }
+
+void pointToLayout(float px, float py, float w, float h, float &lx, float &ly)
+{ toLayout(w, h, px, py, lx, ly); }
+
+namespace pick {
+int hitTab(float lx, float ly)
+{
+    if (ly < y + 10 || ly > y + 36) return -1;
+    if (lx >= x + 12  && lx <= x + 142) return 0;
+    if (lx >= x + 148 && lx <= x + 278) return 1;
+    return -1;
+}
+int hitRow(float lx, float ly)
+{
+    if (lx < x + 12 || lx > x + w - 12) return -1;
+    for (int i = 0; i < rows; i++)
+        if (ly >= rowTop(i) && ly <= rowTop(i) + rowH) return i;
+    return -1;
+}
+int hitPage(float lx, float ly)
+{
+    if (ly < y + 10 || ly > y + 36) return 0;
+    if (lx >= x + w - 172 && lx <= x + w - 128) return -1;
+    if (lx >= x + w - 122  && lx <= x + w - 78)  return +1;
+    return 0;
+}
+bool hitClose(float lx, float ly)
+{ return lx >= x + w - 44 && lx <= x + w - 14 && ly >= y + 10 && ly <= y + 36; }
+bool inside(float lx, float ly)
+{ return lx >= x && lx <= x + w && ly >= y && ly <= y + h; }
+} // namespace pick
 
 } // namespace p5ui

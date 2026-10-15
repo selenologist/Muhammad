@@ -8,6 +8,7 @@
 #include <string>
 
 #include "p5_engine.hpp"
+#include "p5_store.hpp"
 
 namespace pw {
 
@@ -35,6 +36,8 @@ struct Plugin {
     int program = -1;                   // factory program loaded (-1: edited/INIT)
     bool hasSrc_ = false;
     uint8_t srcRaw_[133] = {};
+    bool floatValid_ = false;                 // presetRecall() may toggle back once
+    uint8_t floatSnap_[133] = {};
     std::string srcFile_;
     int lastProgClick_ = 0;
     int bank = 0;                       // panel bank cursor
@@ -46,6 +49,9 @@ struct Plugin {
     // programmer PRESET button recalls; the LED floats lit while the panel
     // disagrees with it, exactly like the original's parameter floating.
     void programSlot(int slot);                       // resolve retrieval map -> load
+    void assignAndLoad(int slot, const p5store::Source &s);  // picker click
+    void recallBasicInit();                           // hold-RECORD+PRESET: bare INIT
+    void syncAllParams();
     bool loadUserPatch(const std::string &name);      // false if missing
     void savePatchNamed(const std::string &name);     // writes file + becomes source
     void assignSlotFromText(int slot, const std::string &text);

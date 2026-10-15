@@ -36,6 +36,7 @@ static p5ui::State stateFor(const char *name, p5::Engine &e, int &programOut)
     else if (!std::strcmp(name, "pad"))  program = 1;
     else if (!std::strcmp(name, "arp"))  program = 42;
     else if (!std::strcmp(name, "bass")) program = 91;
+    else if (!std::strcmp(name, "pick")) { /* INIT content, picker overlay */ }
     else { std::fprintf(stderr, "unknown state '%s'\n", name); std::exit(2); }
 
     if (program >= 0) e.loadFactory((uint32_t)program);
@@ -67,6 +68,20 @@ static p5ui::State stateFor(const char *name, p5::Engine &e, int &programOut)
     s.bank = program >= 0 ? program / 8 + 1 : 0;
     s.program = program >= 0 ? program % 8 + 1 : 0;
     if (s.bank > 0) std::snprintf(s.bp, sizeof s.bp, "%d-%d", s.bank, s.program);
+    if (!std::strcmp(name, "pick"))
+    {
+        static const char title[] = "slot 1-1  <-  click assigns + loads";
+        s.pickerTitle = title;
+        s.pickerTab = 0; s.pickerPage = 0; s.pickerPages = 21; s.pickerCount = 10;
+        for (int i = 0; i < 10; i++)
+        {
+            if (i == 0) std::snprintf(s.pickerRows[i], 44, "  INIT - Peace Be Upon Him (default)");
+            else if (i == 1) std::snprintf(s.pickerRows[i], 44, "  INIT (bare patch)");
+            else { char nm[24]; p5::Engine::patchNameAt((uint32_t)(i - 1), nm);
+                   std::snprintf(s.pickerRows[i], 44, "%3d %s", i - 2, nm); }
+        }
+    }
+
     return s;
 }
 

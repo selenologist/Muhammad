@@ -65,6 +65,16 @@ bool provider_get_metadata(const clap_preset_discovery_provider *p, uint32_t loc
         receiver->set_flags(receiver, CLAP_PRESET_DISCOVERY_IS_FACTORY_CONTENT);
         receiver->add_feature(receiver, "synthesizer");
     }
+    {   // the bare INIT patch, loadable straight from the browser
+        if (!receiver->begin_preset(receiver, "INIT", "init")) return false;
+        clap_universal_plugin_id_t upid{};
+        upid.abi = "clap";
+        upid.id = "muhammad.unresolvable";
+        receiver->add_plugin_id(receiver, &upid);
+        receiver->set_soundpack_id(receiver, "muhammad.unresolvable.factory");
+        receiver->set_flags(receiver, CLAP_PRESET_DISCOVERY_IS_FACTORY_CONTENT);
+        receiver->add_feature(receiver, "synthesizer");
+    }
     // user patch files: scanned fresh per query, load_key "user:<name>"
     for (const std::string &name : p5store::listPatches())
     {

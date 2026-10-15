@@ -78,7 +78,7 @@ const clap_plugin_descriptor_t kDescriptor = {
     "selenologist",
     "https://github.com/keremimo/melodee",
     nullptr, nullptr,
-    "1.2-visible",   // bump per shipped build: the version Bitwig shows proves which binary is loaded
+    "1.3-picker",   // bump per shipped build: the version Bitwig shows proves which binary is loaded
     "P5 clone (PROPHET engine ported from the Melodee firmware)",
     kFeatures
 };
@@ -205,6 +205,7 @@ void Plugin::markSource(int kind, int idx, const std::string &file)
 {
     std::memcpy(srcRaw_, engine.patch().raw, 133);
     hasSrc_ = true;
+    floatValid_ = false;
     srcFile_.clear();
     if (kind == 1) srcFile_ = file;
     (void)idx;
@@ -227,6 +228,12 @@ bool Plugin::loadUserPatch(const std::string &name)
     return true;
 }
 
+void Plugin::syncAllParams()
+{
+    for (clap_id id = 0; id < 57; id++) markPending(id, paramValue(this, id));
+    requestHostParamFlush(this);
+}
+
 void Plugin::programSlot(int slot)
 {
     const p5store::Source s = p5store::slot(slot);
@@ -237,8 +244,28 @@ void Plugin::programSlot(int slot)
     }
     const int idx = s.kind == p5store::SourceKind::Factory ? s.factory : slot;
     if (idx >= 0 && idx < (int)PW_FACTORY_N) loadProgram(idx);
-    else { p5::Patch i; p5::patchInit(i); engine.setPatch(i); program = -1; markSource(0, -1, {}); }
+    else
+    {   // negative source codes: -1 bare INIT, -2 default patch; anything else -> default
+        p5::Patch i; p5::patchInit(i);
+        if (idx != -1) p5::patchDefaultName(i);
+        engine.setPatch(i); program = -1; markSource(0, idx, {}); syncAllParams();
+    }
     lastProgClick_ = slot % 8;
+}
+
+void Plugin::assignAndLoad(int slot, const p5store::Source &s)
+{
+    p5store::setSlot(slot, s);
+    p5store::saveMap();
+    programSlot(slot);
+}
+
+void Plugin::recallBasicInit()
+{   // the real P5's hold-RECORD + PRESET: strip back to the bare INIT patch
+    p5::Patch i; p5::patchInit(i);
+    engine.setPatch(i); program = -1; markSource(0, -1, {});
+    floatValid_ = false;
+    syncAllParams();
 }
 
 void Plugin::savePatchNamed(const std::string &name)
@@ -264,6 +291,8 @@ void Plugin::assignSlotFromText(int slot, const std::string &textRaw)
     while (!t.empty() && t.back() == ' ') t.pop_back();
     if (t.empty()) { p5store::clearSlot(slot); p5store::saveMap(); return; }
     p5store::Source s;
+    if (t == "INIT") { s.kind = p5store::SourceKind::Factory; s.factory = -1;
+                       p5store::setSlot(slot, s); p5store::saveMap(); return; }
     size_t i = 0;
     bool numeric = true;
     for (; i < t.size(); i++) if (!std::isdigit((unsigned char)t[i])) { numeric = false; break; }
@@ -283,15 +312,28 @@ void Plugin::assignSlotFromText(int slot, const std::string &textRaw)
     p5store::saveMap();
 }
 
-void Plugin::presetRecall()   // the original PRESET button: un-float the panel
+void Plugin::presetRecall()   // PRESET: un-float; press again (nothing touched
+                              // since) and the floating edits come BACK
 {
     if (!hasSrc_) return;
+    const uint8_t *cur = engine.patch().raw;
+    if (!panelDirty() && floatValid_ && std::memcmp(cur, floatSnap_, 133) != 0)
+    {   // second press right after a recall: restore the pre-recall panel state
+        p5::Patch p = engine.patch();
+        std::memcpy(p.raw, floatSnap_, 133);
+        engine.setPatch(p);
+        syncAllParams();
+        return;
+    }
+    if (panelDirty())
+    {
+        std::memcpy(floatSnap_, cur, 133);
+        floatValid_ = true;
+    }
     p5::Patch p = engine.patch();
     std::memcpy(p.raw, srcRaw_, 133);
     engine.setPatch(p);
-    for (clap_id id = 0; id < 57; id++)
-        markPending(id, paramValue(this, id));
-    requestHostParamFlush(this);
+    syncAllParams();
 }
 
 // ---- events ------------------------------------------------------------------
@@ -654,6 +696,8 @@ static bool preset_from_location(const clap_plugin_t *p, uint32_t location_kind,
     auto *s = fromPlugin(p);
     if (location_kind == CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN && load_key &&
         !std::strncmp(load_key, "user:", 5)) return s->loadUserPatch(load_key + 5);
+    if (location_kind == CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN && load_key &&
+        !std::strcmp(load_key, "init")) { s->recallBasicInit(); return true; }
     (void)location;
     if (location_kind != CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN || !load_key) return false;
     int k = atoi(load_key);

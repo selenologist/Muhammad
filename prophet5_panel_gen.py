@@ -137,6 +137,7 @@ def btn(x, y, param, color="btnDark", label=None, glyph=None, led=True,
     if param == "lfo_preset": ledmode = 3      # lit while the panel floats over the loaded source
     if param == "prog_record": ledmode = 4     # armed (modal open)
     if param == "prog_preset": ledmode = 5     # assigning
+    if param == "flt_keyboard": ledmode = 6    # 3-state: off / amber / red
     value = int(param.split("_")[1]) - 1 if param.startswith("program_") else 0
     btns.append(dict(pid=PID[param], x=x, y=y, color=color, glyph=glyph or "",
                      led=led, ledmode=ledmode, value=value))
@@ -271,7 +272,7 @@ knob(956, 196, "flt_a", label="ATTACK", label_dy=42)
 knob(1020, 196, "flt_d", label="DECAY", label_dy=42)
 knob(1084, 196, "flt_s", label="SUSTAIN", label_dy=42)
 knob(1148, 196, "flt_r", label="RELEASE", label_dy=42)
-knob(1212, 196, "flt_keyboard", label="KEYBD", label_dy=42, ticks=(0, 2))
+btn(1212, 196, "flt_keyboard", label="KEYBD", label_dy=42)
 
 # --- MASTER TUNE / VOLUME (white knobs, unbordered, right) ---
 knob(1330, 66, "master_tune", label="MASTER TUNE", white=True, label_dy=40)
