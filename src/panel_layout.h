@@ -44,7 +44,7 @@ struct Box   { float x, y, w, h; const char *header; };
 struct Rule  { float x1, y1, x2, y2; };
 struct Disp  { float x, y, w, h; };
 
-inline constexpr int kNumKnobs = 26, kNumBtns = 37, kNumTexts = 68, kNumBoxes = 9, kNumRules = 15, kNumDisplays = 1;
+inline constexpr int kNumKnobs = 26, kNumBtns = 38, kNumTexts = 69, kNumBoxes = 9, kNumRules = 15, kNumDisplays = 1;
 inline constexpr Knob kKnobs[] = {
     {32, 60.0f, 60.0f, false},
     {33, 124.0f, 60.0f, false},
@@ -96,6 +96,7 @@ inline constexpr Btn kBtns[] = {
         {11, 614.0f, 196.0f, BC_DARK, G_NONE, true, 1, 0},
         {12, 666.0f, 196.0f, BC_DARK, G_NONE, true, 1, 0},
         {52, 444.0f, 332.0f, BC_DARK, G_NONE, true, 1, 0},
+        {81, 804.0f, 196.0f, BC_DARK, G_NONE, true, 1, 0},
         {-1, 928.0f, 62.0f, BC_GRAY, G_NONE, true, 0, 0},
         {19, 1204.0f, 62.0f, BC_DARK, G_NONE, true, 0, 0},
         {-1, 500.0f, 330.0f, BC_GRAY, G_NONE, true, 0, 0},
@@ -149,6 +150,7 @@ inline constexpr Text kTexts[] = {
         {756.0f, 98.0f, T_LBL, "OSC 1"},
         {804.0f, 98.0f, T_LBL, "OSC 2"},
         {852.0f, 98.0f, T_LBL, "NOISE"},
+        {804.0f, 234.0f, T_LBL, "OVERSAMPLE"},
         {928.0f, 91.0f, T_LBL, "PRESET"},
         {988.0f, 92.0f, T_LBL, "CUTOFF"},
         {1060.0f, 92.0f, T_LBL, "RESONANCE"},

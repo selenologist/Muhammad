@@ -27,7 +27,7 @@ PID = {
     "flt_a": 43, "amp_a": 44, "flt_d": 45, "amp_d": 46,
     "flt_s": 47, "amp_s": 48, "flt_r": 49, "amp_r": 50,
     "release_btn": 51, "unison": 52,
-    "volume": 80, "master_tune": 82, "prog_bankselect": 84,
+    "volume": 80, "master_tune": 82, "prog_bankselect": 84, "os": 81,
     "lfo_preset": -1, "flt_preset": -1, "prog_preset": -1, "prog_record": -1,
     "edit_btn": -1, "tune_btn": -1,
 }
@@ -38,7 +38,7 @@ for _i in range(1, 9):
 SWITCHES = {"osc1_saw", "osc1_sq", "osc2_saw", "osc2_tri", "osc2_sq", "osc1_sync",
             "osc2_lofreq", "osc2_keyboard", "lfo_saw", "lfo_tri", "lfo_sq",
             "wm_freq1", "wm_freq2", "wm_pw1", "wm_pw2", "wm_filter",
-            "pm_freq1", "pm_pw1", "pm_filter", "unison", "release_btn"}
+            "pm_freq1", "pm_pw1", "pm_filter", "unison", "release_btn", "os"}
 
 def f(x):
     s = f"{x:.1f}"
@@ -243,6 +243,9 @@ box(712, 10, 184, 120, "MIXER")
 knob(756, 64, "mix_osc1", label="OSC 1")
 knob(804, 64, "mix_osc2", label="OSC 2")
 knob(852, 64, "mix_noise", label="NOISE")
+
+# --- OVERSAMPLE (PC-side feature; fills the dead strip under MIXER) ---
+btn(804, 196, "os", color="btnDark", label="OVERSAMPLE", label_dy=38)
 
 # --- FILTER (tall r1+r2) ---
 box(902, 10, 334, 248, "FILTER")

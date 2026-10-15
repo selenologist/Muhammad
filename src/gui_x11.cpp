@@ -125,6 +125,7 @@ void actuate(Ctx &c, int btnIdx)
 
 void pump(Ctx &c)
 {
+    bool dirty = false;
     XEvent ev;
     while (XPending(c.dpy))
     {
@@ -157,6 +158,7 @@ void pump(Ctx &c)
                         const double step = r ? (r->hi - r->lo) / 50.0 : 5.0;
                         v += (ev.xbutton.button == Button4 ? step : -step);
                         c.plugin->guiSet((clap_id)pid, normToValue(pid, p5::knobNorm(pid, v)));
+                        dirty = true;
                     }
                     break;
                 }
@@ -186,7 +188,7 @@ void pump(Ctx &c)
                 if (c.pressBtn >= 0 &&
                     p5ui::btnAt(p5ui::State{}, (float)ev.xbutton.x, (float)ev.xbutton.y,
                                 (float)c.w, (float)c.h) == c.pressBtn)
-                    actuate(c, c.pressBtn);
+                { actuate(c, c.pressBtn); dirty = true; }   // LEDs must flip NOW, not on the next tick
                 c.dragKnob = -1; c.pressBtn = -1;
                 break;
             case MotionNotify:
@@ -210,6 +212,7 @@ void pump(Ctx &c)
                 break;
         }
     }
+    if (dirty) render(c);
 }
 
 // ---- lifecycle ---------------------------------------------------------------
@@ -313,9 +316,10 @@ bool gui_set_scale(const clap_plugin_t *p, double scale)
 }
 bool gui_get_size(const clap_plugin_t *p, uint32_t *w, uint32_t *h)
 {
-    const double sc = 0.75;
-    *w = (uint32_t)(p5ui::kPanelW * sc);
-    *h = (uint32_t)(p5ui::kPanelH * sc);
+    double scale = 1.0;
+    if (auto *c = ctxFrom(p)) if (c->scale > 0.0) scale = c->scale;
+    *w = (uint32_t)(p5ui::kPanelW * 0.75 * scale);
+    *h = (uint32_t)(p5ui::kPanelH * 0.75 * scale);
     return true;
 }
 bool gui_can_resize(const clap_plugin_t *) { return true; }

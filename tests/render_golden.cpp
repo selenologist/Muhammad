@@ -53,7 +53,9 @@ static p5ui::State stateFor(const char *name, p5::Engine &e, int &programOut)
     for (int i = 0; i < p5ui::kNumBtns; i++)
     {
         const auto &b = p5ui::kBtns[i];
-        if (b.ledmode == 1 && b.pid >= 0) s.led[i] = pp.raw[b.pid] != 0;
+        if (b.ledmode == 1 && b.pid >= 0)
+            s.led[i] = b.pid == 81 ? e.oversample() > 1   // OVERSAMPLE button: engine state, not a patch byte
+                                   : pp.raw[b.pid] != 0;
         else if (b.ledmode == 2) s.led[i] = program >= 0 && (program % 8) == b.value && (program / 8) % 8 == 0;
     }
     std::memcpy(s.name, pp.raw + p5::P5_NAME, 20);
@@ -70,7 +72,8 @@ int main(int argc, char **argv)
     const char *out = argv[1];
     const char *state = argc > 2 ? argv[2] : "init";
     const int W = argc > 3 ? std::atoi(argv[3]) : (int)p5ui::kPanelW;
-    const int H = (int)std::lround(W * p5ui::kPanelH / p5ui::kPanelW);
+    const int H = argc > 4 ? std::atoi(argv[4])                     // host-forced height
+                            : (int)std::lround(W * p5ui::kPanelH / p5ui::kPanelW);
 
     // Headless-capable EGL: surfaceless (Mesa) -> device platform -> legacy default.
     EGLDisplay dpy = eglGetPlatformDisplay(EGL_PLATFORM_SURFACELESS_MESA,

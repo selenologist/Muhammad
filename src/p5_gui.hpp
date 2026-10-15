@@ -29,6 +29,16 @@ struct Gui
 // Load the embedded font into the context (call once per NVGcontext).
 Gui create(NVGcontext *vg);
 
+// Window fit: uniform scale that keeps the 1560x416 layout fully visible,
+// centered symmetrically. Shared by draw(), hit tests and the embedders.
+inline void fitWindow(float w, float h, float &sc, float &xoff, float &yoff)
+{
+    const float sx = w / kPanelW, sy = h / kPanelH;
+    sc = sx < sy ? sx : sy;
+    xoff = (w - sc * kPanelW) / 2;
+    yoff = (h - sc * kPanelH) / 2;
+}
+
 // Draw the panel filling w x h pixels; scales layout (1560x416) uniformly.
 void draw(const Gui &g, const State &s, float w, float h);
 

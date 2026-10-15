@@ -137,14 +137,16 @@ Gui create(NVGcontext *vg)
 
 void draw(const Gui &g, const State &s, float w, float h)
 {
-    const float sc = w / kPanelW;
-    const float yoff = (h - sc * kPanelH) / 2;
+    // Fit the layout into the window preserving aspect; any letterbox margins
+    // go symmetrically around the panel, never stacked under it.
+    float sc, xoff, yoff;
+    fitWindow(w, h, sc, xoff, yoff);
 
     nvgFontFaceId(g.vg, g.fontId);
     nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_BASELINE);  // y values are baselines, as in the SVG
 
     nvgSave(g.vg);
-    nvgTranslate(g.vg, 0, yoff);
+    nvgTranslate(g.vg, xoff, yoff);
     nvgScale(g.vg, sc, sc);
 
     nvgBeginPath(g.vg);
@@ -239,9 +241,9 @@ void draw(const Gui &g, const State &s, float w, float h)
 namespace {
 inline void toLayout(float w, float h, float px, float py, float &lx, float &ly)
 {
-    const float sc = w / kPanelW;
-    const float yoff = (h - sc * kPanelH) / 2;
-    lx = px / sc;
+    float sc, xoff, yoff;
+    fitWindow(w, h, sc, xoff, yoff);
+    lx = (px - xoff) / sc;
     ly = (py - yoff) / sc;
 }
 }

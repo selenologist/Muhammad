@@ -97,6 +97,7 @@
   <g class="knob" data-param="mix_osc1" transform="translate(756,64)"><use xlink:href="#knobScale" href="#knobScale"/><g class="dial" transform="rotate(-60)"><use xlink:href="#knobDial" href="#knobDial"/></g><text class="lbl" y="34">OSC 1</text></g>
   <g class="knob" data-param="mix_osc2" transform="translate(804,64)"><use xlink:href="#knobScale" href="#knobScale"/><g class="dial" transform="rotate(-60)"><use xlink:href="#knobDial" href="#knobDial"/></g><text class="lbl" y="34">OSC 2</text></g>
   <g class="knob" data-param="mix_noise" transform="translate(852,64)"><use xlink:href="#knobScale" href="#knobScale"/><g class="dial" transform="rotate(-60)"><use xlink:href="#knobDial" href="#knobDial"/></g><text class="lbl" y="34">NOISE</text></g>
+  <g class="button" data-param="os" transform="translate(804,196)"><use xlink:href="#btnDark" href="#btnDark"/><text class="lbl" y="38">OVERSAMPLE</text></g>
   <rect class="box" rx="8" x="902" y="10" width="334" height="248"/><rect class="hdrbg" x="1044.6" y="4" width="48.8" height="12"/><text class="hdr" x="1069" y="13.6">FILTER</text>
   <g class="button" data-param="flt_preset" transform="translate(928,62)"><use xlink:href="#btnGray" href="#btnGray"/><text class="lbl" y="29">PRESET</text></g>
   <g class="knob" data-param="flt_cutoff" transform="translate(988,58)"><use xlink:href="#knobScale" href="#knobScale"/><g class="dial" transform="rotate(-60)"><use xlink:href="#knobDial" href="#knobDial"/></g><text class="lbl" y="34">CUTOFF</text></g>
