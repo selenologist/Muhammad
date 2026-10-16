@@ -302,24 +302,9 @@ long nowMs()
     return ts.tv_sec * 1000L + ts.tv_nsec / 1000000L;
 }
 
-// The host owns the container size; when it hands us one whose height exceeds
-// the layout aspect, ask once per second for the correct height (final clap-gui
-// request_resize). After 2 ignored requests we stop pestering and accept the
-// letterbox — better a quiet band than a fight.
-void askHostForAspect(Ctx &c)
-{
-    if (!c.hostGui || !c.hostGui->request_resize || c.w < 40u || c.resizeRequests >= 2) return;
-    const uint32_t wantH = (uint32_t)(c.w * p5ui::kPanelH / p5ui::kPanelW);
-    if (c.h <= wantH + 2) return;                        // already fine
-    const long t = nowMs();
-    if (t - c.lastAskMs < 1000) return;
-    c.lastAskMs = t;
-    c.resizeRequests++;
-    const bool ok = c.hostGui->request_resize(c.plugin->host, c.w, wantH);
-    c.lastRrOk = ok ? 1 : 0;
-    std::fprintf(stderr, "[p5gui] request_resize %ux%u -> %ux%u accepted=%d\n",
-                 c.w, c.h, c.w, wantH, (int)ok);
-}
+// askHostForAspect REMOVED (v1.7): chassis mode owns surplus height;
+// shrinking it via request_resize would directly fight the grow request.
+
 
 void pump(Ctx &c)
 {
@@ -551,7 +536,8 @@ void pump(Ctx &c)
     // stale backlog kept replaying positions (and their blocking swaps) long
     // after release — that was the audible "trail", ours, not the host's.
     if (dirty) render(c);
-    askHostForAspect(c);
+    // (shrink-negotiation removed: surplus height is now DRAWN chassis, so
+    // asking the host to shrink it would fight the ancestor-grow request)
 }
 
 // ---- lifecycle ---------------------------------------------------------------
