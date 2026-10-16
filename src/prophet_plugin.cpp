@@ -78,7 +78,7 @@ const clap_plugin_descriptor_t kDescriptor = {
     "selenologist",
     "https://github.com/keremimo/melodee",
     nullptr, nullptr,
-    "1.9-balance",   // bump per shipped build: the version Bitwig shows proves which binary is loaded
+    "1.9.1-captions",   // bump per shipped build: the version Bitwig shows proves which binary is loaded
     "P5 clone (PROPHET engine ported from the Melodee firmware)",
     kFeatures
 };

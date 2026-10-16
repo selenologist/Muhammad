@@ -33,8 +33,12 @@ def translate_of(el):
     return 0.0, 0.0
 
 def collect(path):
-    """key -> kind, position, and (for boxes) size."""
+    """key -> kind, position, and (for boxes) size. Text nodes are keyed by
+    their content (with an occurrence index if duplicated) at their absolute
+    layout position — captions the user drags independently of their control
+    are part of the edit."""
     out = {}
+    tcount = {}
     tree = ET.parse(path)
     def walk(el, ox, oy):
         dx, dy = translate_of(el)
@@ -51,6 +55,13 @@ def collect(path):
                 # group's accumulated translate), not by a group transform
                 out[key] = dict(kind="box", x=x + NUM(el, "x"), y=y + NUM(el, "y"),
                                 w=NUM(el, "width"), h=NUM(el, "height"))
+        if tag(el) == "text" and (el.text or "").strip():
+            content = " ".join((el.text or "").split())
+            i = tcount.get(content, 0)
+            tcount[content] = i + 1
+            key = f"TEXT[{content}]" if i == 0 else f"TEXT[{content}]#{i}"
+            out[key] = dict(kind="txt", x=x + NUM(el, "x"), y=y + NUM(el, "y"),
+                            w=0.0, h=0.0)
         for ch in el:
             walk(ch, x, y)
     walk(tree.getroot(), 0.0, 0.0)
@@ -62,7 +73,7 @@ def main():
     base, edit = collect(sys.argv[1]), collect(sys.argv[2])
     only_base = sorted(set(base) - set(edit))
     only_edit = sorted(set(edit) - set(base))
-    print(f"{'element':<24} {'kind':<5} {'dx':>7} {'dy':>7} {'dw':>7} {'dh':>7}")
+    print(f"{'element':<34} {'kind':<5} {'dx':>7} {'dy':>7} {'dw':>7} {'dh':>7}")
     moved = 0
     for k in sorted(set(base) & set(edit)):
         b, e = base[k], edit[k]
@@ -73,7 +84,7 @@ def main():
         if max(abs(dx), abs(dy), abs(dw), abs(dh)) < 1.5:
             continue
         moved += 1
-        print(f"{k:<24} {b['kind']:<5} {dx:>+7.1f} {dy:>+7.1f} {dw:>+7.1f} {dh:>+7.1f}")
+        print(f"{k:<34} {b['kind']:<5} {dx:>+7.1f} {dy:>+7.1f} {dw:>+7.1f} {dh:>+7.1f}")
     if not moved:
         print("(no differences over 1.5 layout px)")
     # gutter report for boxes on the same row (top-edge within 12px)

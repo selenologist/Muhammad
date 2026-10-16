@@ -204,7 +204,7 @@ subhead(229, 106, "DESTINATION", 8)
 # --- LFO (A, r2) ---
 btn(26, 190, "lfo_preset", color="btnGray", label="PRESET", label_dy=34)
 box(52, 138, 248, 120, "VIBRATO")
-knob(110, 196, "lfo_freq", label="FREQUENCY", label_dy=48)
+knob(110, 196, "lfo_freq", label="FREQUENCY", label_dy=44)
 for x, g, p in ((180, "gSaw", "lfo_saw"), (214, "gTri", "lfo_tri"), (248, "gSq", "lfo_sq")):
     btn(x, 196, p, glyph=g)
 subhead(214, 240, "SHAPE", 10)
@@ -218,7 +218,7 @@ knob(56, 330, "wm_mix", angle=0,
 for x, lab, p in ((122, "FREQ 1", "wm_freq1"), (160, "FREQ 2", "wm_freq2"),
                   (198, "PW 1", "wm_pw1"), (236, "PW 2", "wm_pw2"), (274, "FILTER", "wm_filter")):
     btn(x, 330, p, label=lab, label_above=-24)
-subhead(204, 380, "DESTINATION", 10)
+subhead(196, 376, "DESTINATION", 10)
 
 # absolute positions of the wm_mix in-group labels (mirror the SVG offsets)
 texts.append(dict(x=56 - 24, y=330 + 40, style="lbl", text="LFO"))
@@ -230,9 +230,9 @@ box(306, 14, 398, 116, "OSCILLATOR 1")
 knob(374, 68, "osc1_freq", label="FREQUENCY")
 btn(458, 68, "osc1_saw", glyph="gSaw")
 btn(494, 68, "osc1_sq", glyph="gSq")
-subhead(454, 96, "SHAPE", 8)
+subhead(476, 104, "SHAPE", 8)
 knob(562, 68, "osc1_pw", label="PULSE WIDTH")
-btn(642, 68, "osc1_sync", label="SYNC")
+btn(642, 68, "osc1_sync", label="SYNC", label_dy=33)
 
 # --- OSCILLATOR 2 (B, r2) ---
 box(306, 138, 398, 118, "OSCILLATOR 2")
@@ -240,13 +240,13 @@ knob(344, 190, "osc2_freq", label="FREQUENCY", label_dy=48)
 knob(402, 190, "osc2_fine", label="FINE", label_dy=48)
 for x, g, p in ((452, "gSaw", "osc2_saw"), (480, "gTri", "osc2_tri"), (508, "gSq", "osc2_sq")):
     btn(x, 190, p, glyph=g)
-subhead(484, 240, "SHAPE", 8)
-knob(562, 190, "osc2_pw", label="PULSE WIDTH", label_dy=48)
+subhead(480, 228, "SHAPE", 8)
+knob(562, 190, "osc2_pw", label="PULSE WIDTH", label_dy=36)
 btn(620, 190, "osc2_lofreq", label="LO FREQ", label_dy=48)
 btn(672, 190, "osc2_keyboard", label="KEYBOARD", label_dy=48)
 
 # --- UNISON group (B, r3, unbordered): DETUNE / UNISON / COUNT ---
-knob(360, 332, "unison_det", label="UNISON DET.", label_dy=38, ticks=(0, 7))
+knob(360, 332, "unison_det", label="DETUNE", label_dy=38, ticks=(0, 7))
 btn(430, 332, "unison", label="UNISON", label_dy=38)
 knob(498, 332, "unison_cnt", label="COUNT", label_dy=38, ticks=(1, 8))
 
@@ -262,12 +262,12 @@ btn(848, 192, "os", color="btnDark", label="OVERSAMPLE", label_dy=38)
 
 # --- FILTER (tall r1+r2) ---
 box(902, 14, 332, 244, "FILTER")
-btn(928, 78, "flt_model", color="btnGray", label="MODEL")   # real-P5 filter PRESET slot -> SSI/Curtis toggle
-knob(996, 74, "flt_cutoff", label="CUTOFF")
-knob(1064, 74, "flt_reso", label="RESONANCE")
-knob(1132, 74, "flt_envamt", label="ENVELOPE")
-notes((1132, 100, "AMOUNT"))
-knob(1200, 74, "vel_flt", label="VEL>FLT")
+btn(934, 78, "flt_model", color="btnGray", label="MODEL")   # real-P5 filter PRESET slot -> SSI/Curtis toggle
+knob(988, 74, "flt_cutoff", label="CUTOFF")
+knob(1056, 74, "flt_reso", label="RESONANCE")
+knob(1124, 74, "flt_envamt", label="ENVELOPE")
+notes((1124, 118, "AMOUNT"))
+knob(1190, 74, "vel_flt", label="VEL>FLT")
 knob(946, 196, "flt_a", label="ATTACK", label_dy=42)
 knob(1010, 196, "flt_d", label="DECAY", label_dy=42)
 knob(1074, 196, "flt_s", label="SUSTAIN", label_dy=42)
