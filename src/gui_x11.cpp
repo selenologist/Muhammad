@@ -68,6 +68,7 @@ struct Ctx
     bool timerRegistered = false;
 
     uint32_t reqW = 0, reqH = 0;   // set_size may arrive before set_parent
+    uint32_t parW = 0, parH = 0, ancW = 0, ancH = 0;   // wrapper / ancestor sizes (diag)
 
     // host-side gui service + aspect negotiation bookkeeping
     const clap_host_gui_t *hostGui = nullptr;
@@ -111,10 +112,10 @@ void fillState(Ctx &c, p5ui::State &st)
     st.build = P5_BUILD_INFO;
 #endif
     {   // live diagnostics in-window: Bitwig's plugin host swallows our stderr
-        static char diagBuf[64];
-        std::snprintf(diagBuf, sizeof diagBuf, "svc %s rr %d %s src %s win %ux%u",
+        static char diagBuf[120];
+        std::snprintf(diagBuf, sizeof diagBuf, "svc %s rr %d src %s win %ux%u p %ux%u a %ux%u",
                       c.hostGui ? "y" : "n", c.resizeRequests, c.plugin->loadTag_,
-                      c.lastRrOk < 0 ? "-" : c.lastRrOk ? "ok" : "no", c.w, c.h);
+                      c.w, c.h, c.parW, c.parH, c.ancW, c.ancH);
         st.diag = diagBuf;
     }
     std::memcpy(st.name, c.plugin->engine.patch().raw + p5::P5_NAME, 20);
@@ -323,27 +324,32 @@ void pump(Ctx &c)
             dirty = true;
         }
     }
-    // Bitwig sizes our immediate container to the aspect we report; the waste
-    // lives one level up in the device panel. If an ancestor is markedly taller
-    // than our wrapper, ask the host (request_resize) to hand us that space —
-    // the renderer turns it into chassis. Two polite tries, then we stop pestering.
-    if (c.parent && c.hostGui && c.hostGui->request_resize && c.resizeRequests < 2 && c.w > 40)
+    // Bitwig sizes our immediate container to the aspect we report; wasted
+    // space may live one level up. Measure both every ~1s (diag shows them:
+    // a screenshot then proves WHICH window owns any dead band), and while
+    // still polite ask the host for the ancestor's height.
     {
-        XWindowAttributes pa{};
-        if (XGetWindowAttributes(c.dpy, c.parent, &pa))
+        const long t = nowMs();
+        if (t - c.lastAskMs >= 1000)
         {
-            Window r, pp, *kids = nullptr; unsigned nk = 0;
-            if (XQueryTree(c.dpy, c.parent, &r, &pp, &kids, &nk) && kids) XFree(kids);
-            XWindowAttributes ga{};
-            if (pp && XGetWindowAttributes(c.dpy, pp, &ga) &&
-                ga.height > pa.height + 60 && pa.height > 1)
+            XWindowAttributes pa{};
+            if (c.parent && XGetWindowAttributes(c.dpy, c.parent, &pa))
             {
-                const long t = nowMs();
-                if (t - c.lastAskMs >= 1000)
+                c.parW = pa.width; c.parH = pa.height;
+                Window r, pp = 0, *kids = nullptr; unsigned nk = 0;
+                c.ancW = c.ancH = 0;
+                if (XQueryTree(c.dpy, c.parent, &r, &pp, &kids, &nk) && pp)
+                {
+                    XWindowAttributes ga{};
+                    if (XGetWindowAttributes(c.dpy, pp, &ga)) { c.ancW = ga.width; c.ancH = ga.height; }
+                }
+                if (kids) XFree(kids);
+                if (c.hostGui && c.hostGui->request_resize && c.resizeRequests < 2 &&
+                    c.ancH > c.parH + 60 && c.parH > 1)
                 {
                     c.lastAskMs = t;
                     c.resizeRequests++;
-                    c.hostGui->request_resize(c.plugin->host, (uint32_t)pa.width, (uint32_t)ga.height);
+                    c.hostGui->request_resize(c.plugin->host, c.parW, c.ancH);
                 }
             }
         }

@@ -44,7 +44,7 @@ struct Box   { float x, y, w, h; const char *header; };
 struct Rule  { float x1, y1, x2, y2; };
 struct Disp  { float x, y, w, h; };
 
-inline constexpr int kNumKnobs = 31, kNumBtns = 37, kNumTexts = 73, kNumBoxes = 10, kNumRules = 14, kNumDisplays = 1;
+inline constexpr int kNumKnobs = 31, kNumBtns = 37, kNumTexts = 74, kNumBoxes = 11, kNumRules = 17, kNumDisplays = 1;
 inline constexpr Knob kKnobs[] = {
         {32, 60.0f, 60.0f, false, 0, 10},
         {33, 124.0f, 60.0f, false, 0, 10},
@@ -175,6 +175,7 @@ inline constexpr Text kTexts[] = {
         {1364.0f, 240.0f, T_LBL, "DECAY"},
         {1432.0f, 240.0f, T_LBL, "SUSTAIN"},
         {1498.0f, 240.0f, T_LBL, "RELEASE"},
+        {1396.0f, 296.0f, T_SUB, "PERFORM"},
         {598.0f, 366.0f, T_LBL, "PRESET"},
         {640.0f, 366.0f, T_LBL, "RECORD"},
         {682.0f, 356.0f, T_LBL, "BANK"},
@@ -196,16 +197,17 @@ inline constexpr Text kTexts[] = {
 };
 
 inline constexpr Box kBoxes[] = {
-        {8.0f, 14.0f, 292.0f, 116.0f, "POLY-MOD"},
+        {8.0f, 14.0f, 290.0f, 116.0f, "POLY-MOD"},
         {52.0f, 138.0f, 248.0f, 120.0f, "VIBRATO"},
-        {8.0f, 266.0f, 292.0f, 138.0f, "WHEEL-MOD"},
-        {306.0f, 14.0f, 400.0f, 116.0f, "OSCILLATOR 1"},
-        {306.0f, 138.0f, 400.0f, 120.0f, "OSCILLATOR 2"},
-        {712.0f, 14.0f, 184.0f, 116.0f, "MIXER"},
-        {902.0f, 14.0f, 334.0f, 244.0f, "FILTER"},
-        {1242.0f, 14.0f, 310.0f, 116.0f, "MASTER"},
-        {1242.0f, 138.0f, 310.0f, 120.0f, "AMPLIFIER"},
-        {560.0f, 266.0f, 676.0f, 138.0f, "PROGRAMMER"},
+        {8.0f, 266.0f, 290.0f, 138.0f, "WHEEL-MOD"},
+        {306.0f, 14.0f, 398.0f, 116.0f, "OSCILLATOR 1"},
+        {306.0f, 138.0f, 398.0f, 118.0f, "OSCILLATOR 2"},
+        {712.0f, 14.0f, 182.0f, 116.0f, "MIXER"},
+        {902.0f, 14.0f, 332.0f, 244.0f, "FILTER"},
+        {1240.0f, 14.0f, 312.0f, 116.0f, "MASTER"},
+        {1240.0f, 138.0f, 312.0f, 120.0f, "AMPLIFIER"},
+        {306.0f, 266.0f, 246.0f, 138.0f, "UNISON"},
+        {560.0f, 266.0f, 992.0f, 138.0f, "PROGRAMMER"},
 };
 
 inline constexpr Rule kRules[] = {
@@ -221,6 +223,9 @@ inline constexpr Rule kRules[] = {
         {476.75f, 93.4f, 484.75f, 93.4f},
         {453.25f, 237.4f, 461.25f, 237.4f},
         {506.75f, 237.4f, 514.75f, 237.4f},
+        {1236.0f, 280.0f, 1236.0f, 394.0f},
+        {1360.15f, 293.4f, 1368.15f, 293.4f},
+        {1423.85f, 293.4f, 1431.85f, 293.4f},
         {987.3f, 373.4f, 1001.3f, 373.4f},
         {1092.7f, 373.4f, 1106.7f, 373.4f},
 };

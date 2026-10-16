@@ -192,7 +192,7 @@ def line(x1, y1, x2, y2):
 # Rows: r1 y10..130 | r2 y138..258 | r3 y266..404. FILTER box spans r1+r2.
 
 # --- POLY-MOD (A, r1) ---
-box(8, 14, 292, 116, "POLY-MOD")
+box(8, 14, 290, 116, "POLY-MOD")
 knob(60, 60, "fil_env")
 knob(124, 60, "osc2")
 notes((60, 94, "FIL. ENV."), (124, 94, "OSC 2"))
@@ -210,7 +210,7 @@ for x, g, p in ((180, "gSaw", "lfo_saw"), (214, "gTri", "lfo_tri"), (248, "gSq",
 subhead(214, 240, "SHAPE", 10)
 
 # --- WHEEL-MOD (A, r3) ---
-box(8, 266, 292, 138, "WHEEL-MOD")
+box(8, 266, 290, 138, "WHEEL-MOD")
 knob(62, 330, "wm_mix", angle=0,
      extra=('<text class="lbl" x="-24" y="40">LFO</text>'
             '<text class="lbl" x="26" y="40">NOISE</text>'
@@ -226,7 +226,7 @@ texts.append(dict(x=62 + 26, y=330 + 40, style="lbl", text="NOISE"))
 texts.append(dict(x=62, y=330 + 56, style="lbl", text="SOURCE MIX"))
 
 # --- OSCILLATOR 1 (B, r1) ---
-box(306, 14, 400, 116, "OSCILLATOR 1")
+box(306, 14, 398, 116, "OSCILLATOR 1")
 knob(352, 60, "osc1_freq", label="FREQUENCY")
 btn(436, 60, "osc1_saw", glyph="gSaw")
 btn(472, 60, "osc1_sq", glyph="gSq")
@@ -235,7 +235,7 @@ knob(540, 60, "osc1_pw", label="PULSE WIDTH")
 btn(620, 60, "osc1_sync", label="SYNC")
 
 # --- OSCILLATOR 2 (B, r2) ---
-box(306, 138, 400, 120, "OSCILLATOR 2")
+box(306, 138, 398, 118, "OSCILLATOR 2")
 knob(344, 196, "osc2_freq", label="FREQUENCY", label_dy=48)
 knob(402, 196, "osc2_fine", label="FINE", label_dy=48)
 for x, g, p in ((456, "gSaw", "osc2_saw"), (484, "gTri", "osc2_tri"), (512, "gSq", "osc2_sq")):
@@ -251,7 +251,7 @@ btn(442, 332, "unison", label="UNISON", label_dy=38)
 knob(512, 332, "unison_cnt", label="COUNT", label_dy=38, ticks=(1, 8))
 
 # --- MIXER (r1) ---
-box(712, 14, 184, 116, "MIXER")
+box(712, 14, 182, 116, "MIXER")
 knob(756, 64, "mix_osc1", label="OSC 1")
 knob(804, 64, "mix_osc2", label="OSC 2")
 knob(852, 64, "mix_noise", label="NOISE")
@@ -261,7 +261,7 @@ knob(756, 196, "glide", label="GLIDE", label_dy=38)
 btn(850, 196, "os", color="btnDark", label="OVERSAMPLE", label_dy=38)
 
 # --- FILTER (tall r1+r2) ---
-box(902, 14, 334, 244, "FILTER")
+box(902, 14, 332, 244, "FILTER")
 btn(928, 62, "flt_model", color="btnGray", label="MODEL")   # real-P5 filter PRESET slot -> SSI/Curtis toggle
 knob(996, 58, "flt_cutoff", label="CUTOFF")
 knob(1064, 58, "flt_reso", label="RESONANCE")
@@ -280,15 +280,18 @@ knob(1396, 66, "vel_amp", label="VEL>AMP", label_dy=40)
 knob(1462, 66, "volume", label="VOLUME", white=True, label_dy=40)
 
 # --- AMPLIFIER (right, r2) ---
-box(1242, 14, 310, 116, "MASTER")
-box(1242, 138, 310, 120, "AMPLIFIER")
+box(1240, 14, 312, 116, "MASTER")
+box(1240, 138, 312, 120, "AMPLIFIER")
 knob(1296, 196, "amp_a", label="ATTACK", label_dy=44)
 knob(1364, 196, "amp_d", label="DECAY", label_dy=44)
 knob(1432, 196, "amp_s", label="SUSTAIN", label_dy=44)
 knob(1498, 196, "amp_r", label="RELEASE", label_dy=44)
 
 # --- PROGRAMMER (r3, shifted right; larger display; spread program row) ---
-box(560, 266, 676, 138, "PROGRAMMER")
+box(306, 266, 246, 138, "UNISON")
+box(560, 266, 992, 138, "PROGRAMMER")
+line(1236, 280, 1236, 394)
+subhead(1396, 296, "PERFORM", 8)
 btn(598, 330, "prog_preset", color="btnGray", label="PRESET", label_dy=36)
 btn(640, 330, "prog_record", color="btnOrange", label="RECORD", label_dy=36)
 btn(682, 330, "prog_bankselect", color="btnGray", led=False)

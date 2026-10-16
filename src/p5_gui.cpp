@@ -245,7 +245,7 @@ void draw(const Gui &g, const State &s, float w, float h)
             nvgFontSize(g.vg, 13.f);
             nvgTextAlign(g.vg, NVG_ALIGN_CENTER | NVG_ALIGN_BASELINE);
             nvgFillColor(g.vg, nvgRGBA(255, 120, 60, 255));
-            nvgText(g.vg, sxp(876.f), syp(372.f), s.bindHint, nullptr);
+            nvgText(g.vg, sxp(1056.f), syp(372.f), s.bindHint, nullptr);
             nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_BASELINE);
             nvgFontFaceId(g.vg, g.fontId);
         }
