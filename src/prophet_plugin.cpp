@@ -78,7 +78,7 @@ const clap_plugin_descriptor_t kDescriptor = {
     "selenologist",
     "https://github.com/keremimo/melodee",
     nullptr, nullptr,
-    "1.6.1-crisp",   // bump per shipped build: the version Bitwig shows proves which binary is loaded
+    "1.6.2-bind",   // bump per shipped build: the version Bitwig shows proves which binary is loaded
     "P5 clone (PROPHET engine ported from the Melodee firmware)",
     kFeatures
 };
@@ -217,6 +217,12 @@ void Plugin::markSource(int kind, int idx, const std::string &file)
     std::memcpy(srcRaw_, engine.patch().raw, 133);
     hasSrc_ = true;
     floatValid_ = false;
+    // one identity truth: every source-bearing load re-stamps curSrc_ here
+    curSrc_ = p5store::Source{};                       // default: unbound sentinel
+    if (kind == 1 && !file.empty())
+    { curSrc_.kind = p5store::SourceKind::File; curSrc_.file = file; }
+    else if (idx >= 0 || idx == -1 || idx == -2)
+    { curSrc_.kind = p5store::SourceKind::Factory; curSrc_.factory = idx; }
     srcFile_.clear();
     if (kind == 1) srcFile_ = file;
     (void)idx;
@@ -261,7 +267,8 @@ void Plugin::loadSource(const p5store::Source &s)
     }
     const int idx = s.factory;
     if (idx >= 0 && idx < (int)PW_FACTORY_N) { loadProgram(idx); return; }
-    if (idx == -2 && loadUserPatch("Peace Be Upon Him")) return;   // recorded default wins
+    if (idx == -2 && loadUserPatch("Peace Be Upon Him"))
+    { curSrc_ = s; return; }   // recorded default wins, but the requested row identity stays
     p5::Patch i; p5::patchInit(i);
     if (idx != -1) p5::patchDefaultName(i);
     engine.setPatch(i); program = -1; markSource(0, idx, {}); syncAllParams();
