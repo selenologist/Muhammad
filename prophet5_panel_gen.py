@@ -193,11 +193,11 @@ def line(x1, y1, x2, y2):
 
 # --- POLY-MOD (A, r1) ---
 box(8, 14, 290, 116, "POLY-MOD")
-knob(60, 60, "fil_env")
-knob(124, 60, "osc2")
-notes((60, 94, "FIL. ENV."), (124, 94, "OSC 2"))
+knob(48, 60, "fil_env")
+knob(112, 60, "osc2")
+notes((48, 94, "FIL. ENV."), (112, 94, "OSC 2"))
 subhead(92, 116, "SOURCE AMOUNT", 10)
-for x, p, lab in ((182, "pm_freq1", "FREQ 1"), (228, "pm_pw1", "PW 1"), (276, "pm_filter", "FILTER")):
+for x, p, lab in ((170, "pm_freq1", "FREQ 1"), (216, "pm_pw1", "PW 1"), (264, "pm_filter", "FILTER")):
     btn(x, 60, p, label=lab, label_above=-24)
 subhead(229, 106, "DESTINATION", 8)
 

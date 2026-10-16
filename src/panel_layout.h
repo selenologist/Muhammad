@@ -46,8 +46,8 @@ struct Disp  { float x, y, w, h; };
 
 inline constexpr int kNumKnobs = 31, kNumBtns = 37, kNumTexts = 74, kNumBoxes = 11, kNumRules = 17, kNumDisplays = 1;
 inline constexpr Knob kKnobs[] = {
-        {32, 60.0f, 60.0f, false, 0, 10},
-        {33, 124.0f, 60.0f, false, 0, 10},
+        {32, 48.0f, 60.0f, false, 0, 10},
+        {33, 112.0f, 60.0f, false, 0, 10},
         {21, 110.0f, 196.0f, false, 0, 10},
         {26, 56.0f, 330.0f, false, 0, 10},
         {0, 374.0f, 68.0f, false, 0, 10},
@@ -80,9 +80,9 @@ inline constexpr Knob kKnobs[] = {
 };
 
 inline constexpr Btn kBtns[] = {
-        {34, 182.0f, 60.0f, BC_DARK, G_NONE, true, 1, 0},
-        {35, 228.0f, 60.0f, BC_DARK, G_NONE, true, 1, 0},
-        {36, 276.0f, 60.0f, BC_DARK, G_NONE, true, 1, 0},
+        {34, 170.0f, 60.0f, BC_DARK, G_NONE, true, 1, 0},
+        {35, 216.0f, 60.0f, BC_DARK, G_NONE, true, 1, 0},
+        {36, 264.0f, 60.0f, BC_DARK, G_NONE, true, 1, 0},
         {-4, 26.0f, 190.0f, BC_GRAY, G_NONE, true, 3, 0},
         {23, 180.0f, 196.0f, BC_DARK, G_SAW, true, 1, 0},
         {24, 214.0f, 196.0f, BC_DARK, G_TRI, true, 1, 0},
@@ -120,12 +120,12 @@ inline constexpr Btn kBtns[] = {
 };
 
 inline constexpr Text kTexts[] = {
-        {60.0f, 94.0f, T_LBL, "FIL. ENV."},
-        {124.0f, 94.0f, T_LBL, "OSC 2"},
+        {48.0f, 94.0f, T_LBL, "FIL. ENV."},
+        {112.0f, 94.0f, T_LBL, "OSC 2"},
         {92.0f, 116.0f, T_SUB, "SOURCE AMOUNT"},
-        {182.0f, 36.0f, T_LBL, "FREQ 1"},
-        {228.0f, 36.0f, T_LBL, "PW 1"},
-        {276.0f, 36.0f, T_LBL, "FILTER"},
+        {170.0f, 36.0f, T_LBL, "FREQ 1"},
+        {216.0f, 36.0f, T_LBL, "PW 1"},
+        {264.0f, 36.0f, T_LBL, "FILTER"},
         {229.0f, 106.0f, T_SUB, "DESTINATION"},
         {26.0f, 224.0f, T_LBL, "PRESET"},
         {110.0f, 240.0f, T_LBL, "FREQUENCY"},
