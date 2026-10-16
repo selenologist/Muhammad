@@ -101,7 +101,6 @@
   <g class="knob" data-param="mix_osc1" transform="translate(744,68)"><use xlink:href="#knobScale" href="#knobScale"/><g class="dial" transform="rotate(-60)"><use xlink:href="#knobDial" href="#knobDial"/></g><text class="lbl" y="34">OSC 1</text></g>
   <g class="knob" data-param="mix_osc2" transform="translate(802,68)"><use xlink:href="#knobScale" href="#knobScale"/><g class="dial" transform="rotate(-60)"><use xlink:href="#knobDial" href="#knobDial"/></g><text class="lbl" y="34">OSC 2</text></g>
   <g class="knob" data-param="mix_noise" transform="translate(860,68)"><use xlink:href="#knobScale" href="#knobScale"/><g class="dial" transform="rotate(-60)"><use xlink:href="#knobDial" href="#knobDial"/></g><text class="lbl" y="34">NOISE</text></g>
-  <g class="knob" data-param="glide" transform="translate(756,192)"><use xlink:href="#knobScale" href="#knobScale"/><g class="dial" transform="rotate(-60)"><use xlink:href="#knobDial" href="#knobDial"/></g><text class="lbl" y="38">GLIDE</text></g>
   <g class="button" data-param="os" transform="translate(848,192)"><use xlink:href="#btnDark" href="#btnDark"/><text class="lbl" y="38">OVERSAMPLE</text></g>
   <rect class="box" data-box="FILTER" rx="8" x="902" y="14" width="332" height="244"/><rect class="hdrbg" x="1041.8" y="8" width="52.4" height="12"/><text class="hdr" x="1068" y="17.6">FILTER</text>
   <g class="button" data-param="flt_model" transform="translate(934,78)"><use xlink:href="#btnGray" href="#btnGray"/><text class="lbl" y="29">MODEL</text></g>
@@ -144,5 +143,7 @@
   <g class="subhead"><line class="rule" x1="987.3" y1="373.4" x2="1001.3" y2="373.4"/><line class="rule" x1="1092.7" y1="373.4" x2="1106.7" y2="373.4"/><text class="sub" x="1047" y="376">PROGRAM SELECT</text></g>
   <g class="button" data-param="release_btn" transform="translate(1270,330)"><use xlink:href="#btnDark" href="#btnDark"/><text class="lbl" y="36">RELEASE</text></g>
   <g class="button" data-param="edit_btn" transform="translate(1312,330)"><use xlink:href="#btnGray" href="#btnGray"/><use xlink:href="#ledOff" href="#ledOff"/><text class="lbl" y="36">EDIT</text></g>
+  <g class="knob" data-param="pan_width" transform="translate(1376,330)"><use xlink:href="#knobScale" href="#knobScale"/><g class="dial" transform="rotate(-60)"><use xlink:href="#knobDial" href="#knobDial"/></g><text class="lbl" y="36">PAN WIDTH</text></g>
+  <g class="knob" data-param="glide" transform="translate(1444,330)"><use xlink:href="#knobScale" href="#knobScale"/><g class="dial" transform="rotate(-60)"><use xlink:href="#knobDial" href="#knobDial"/></g><text class="lbl" y="36">GLIDE</text></g>
   <g class="knob" data-param="vintage" transform="translate(1510,330)"><use xlink:href="#knobScale" href="#knobScale"/><g class="dial" transform="rotate(-60)"><use xlink:href="#knobDial" href="#knobDial"/></g><text class="lbl" y="36">VINTAGE</text></g>
 </svg>

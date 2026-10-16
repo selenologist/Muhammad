@@ -478,7 +478,13 @@ bool Engine::renderLane(Lane &l, int32_t mPitch16, int32_t mFine, int32_t mCutof
     if (!v.active && !mAmp1) {
         if (n > 1u) {
             const int32_t step = l.lastPcm / (int32_t)(n - 1u);
-            for (uint32_t i = 0; i < n - 1u; i++) out[i] += l.lastPcm - step * (int32_t)i;
+            if (panOn_)
+                for (uint32_t i = 0; i < n - 1u; i++)
+                {   const int32_t f = l.lastPcm - step * (int32_t)i;
+                    out[i] += (int32_t)(((int64_t)f * l.panG[0]) >> 15);
+                    mixR_[i] += (int32_t)(((int64_t)f * l.panG[1]) >> 15); }
+            else
+                for (uint32_t i = 0; i < n - 1u; i++) out[i] += l.lastPcm - step * (int32_t)i;
         }
         l.lastPcm = 0;
         return false;
@@ -571,7 +577,24 @@ void Engine::process(int32_t *out, uint32_t n)
     // the wheel covers SUB-samples of this chunk (the LFO runs at the internal
     // rate); callers chop host blocks to <= CTL, so this is <= CTL_*os entries
     wheelLen_ = (n <= CTL_ ? n : CTL_) * (uint32_t)os_;
-    for (uint32_t i = 0; i < n; i++) out[i] = 0;
+    for (uint32_t i = 0; i < n; i++) { out[i] = 0; mixR_[i] = 0; }
+
+    if (panDirty_)
+    {   // slot i sits at (2i-7)/7 of the field; width scales the spread, and a
+        // voice pans only AWAY from a side (linear law, gain 1 at centre-ish).
+        const float t = (float)panWidth_ * (1.0f / 127.0f);
+        for (int i = 0; i < MAXV; i++)
+        {
+            const float pos = (float)(i * 2 - (MAXV - 1)) / (float)(MAXV - 1) * t;
+            int g0 = (int)(32768.0f * (pos <= 0.0f ? 1.0f : 1.0f - pos) + 0.5f);
+            int g1 = (int)(32768.0f * (pos >= 0.0f ? 1.0f : 1.0f + pos) + 0.5f);
+            if (g0 > 32768) g0 = 32768; if (g1 > 32768) g1 = 32768;
+            if (g0 < 0) g0 = 0; if (g1 < 0) g1 = 0;
+            lanes_[i].panG[0] = g0; lanes_[i].panG[1] = g1;
+        }
+        panOn_ = panWidth_ != 0;
+        panDirty_ = false;
+    }
 
     uint32_t live = 0;
     for (int i = 0; i < MAXV; i++) live |= lanes_[i].v.active ? 1u << i : 0;
@@ -641,7 +664,7 @@ void Engine::process(int32_t *out, uint32_t n)
     }
 
     for (uint32_t i = 0; i < n; i++) mixTap_[i] = out[i];
-    if (!nr) { dcX1_ = dcY1_ = 0; live_ = 0; return; }
+    if (!nr) { dcX1_ = dcY1_ = 0; dcX1r_ = dcY1r_ = 0; live_ = 0; return; }
     // p5_post: the part's output coupling capacitor, about 5 Hz. Without a voice it starts afresh.
     int32_t x1 = dcX1_, y = dcY1_;
     for (uint32_t i = 0; i < n; i++) {
@@ -651,6 +674,18 @@ void Engine::process(int32_t *out, uint32_t n)
         out[i] = (y + 128) >> 8;
     }
     dcX1_ = x1; dcY1_ = y;
+    if (panOn_)
+    {   // the same coupling capacitor on the right hand, with its own state
+        int32_t xr = dcX1r_, yr = dcY1r_;
+        for (uint32_t i = 0; i < n; i++)
+        {
+            const int32_t x = mixR_[i];
+            yr = (int32_t)((int64_t)(x - xr) * 256 + (((int64_t)yr * dcK_) >> 30));
+            xr = x;
+            mixR_[i] = (yr + 128) >> 8;
+        }
+        dcX1r_ = xr; dcY1r_ = yr;
+    }
     live_ = nr;
 }
 

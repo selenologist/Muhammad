@@ -182,6 +182,52 @@ int main(int argc, char **argv)
                    !std::memcmp(blob9.data() + 8 + 65, "After Ringer", 12);
         check("audio MIDI PC applied from cache (no I/O)", ok9);
     }
+    {   // PAN WIDTH: readback, then a real per-voice stereo spread on the SIMD path
+        const clap_plugin_params_t *pa2 = (const clap_plugin_params_t *)plugin->get_extension(plugin, CLAP_EXT_PARAMS);
+        clap_event_param_value pv2{};
+        pv2.header.type = CLAP_EVENT_PARAM_VALUE; pv2.header.size = sizeof pv2;
+        pv2.header.time = 0; pv2.param_id = 85; pv2.value = 127.0;
+        EventList pe2{ { &pv2.header } };
+        clap_input_events_t in2{ &pe2, EL_size, EL_get };
+        pa2->flush(plugin, &in2, &out);
+        double vv = 0;
+        bool rdOk = pa2->get_value(plugin, 85, &vv) && vv == 127.0;
+        check("PAN WIDTH readback 127", rdOk);
+
+        float L2[512], R2[512];
+        std::vector<clap_event_note> ons;
+        auto pushOn = [&](int16_t key) {
+            ons.emplace_back(); auto &e = ons.back(); std::memset(&e, 0, sizeof e);
+            e.header.type = CLAP_EVENT_NOTE_ON; e.header.size = sizeof e;
+            e.channel = 0; e.key = key; e.velocity = 0.9;
+        };
+        pushOn(60); pushOn(64); pushOn(67); pushOn(72);
+        plugin->start_processing(plugin);
+        double pkL = 0, pkR = 0;
+        for (int b = 0; b < 8; b++)
+        {
+            std::memset(L2, 0, sizeof L2); std::memset(R2, 0, sizeof R2);
+            float *ch2[2] = { L2, R2 };
+            clap_audio_buffer_t ab2{}; ab2.channel_count = 2; ab2.data32 = ch2;
+            EventList due2;
+            if (b == 0) for (auto &n : ons) due2.evs.push_back(&n.header);
+            clap_input_events_t i2{ &due2, EL_size, EL_get };
+            clap_process_t p2{};
+            p2.in_events = &i2; p2.out_events = &out; p2.audio_outputs = &ab2; p2.frames_count = 512;
+            plugin->process(plugin, &p2);
+            for (int i = 0; i < 512; i++)
+            { double a = std::fabs(L2[i]), r = std::fabs(R2[i]); if (a > pkL) pkL = a; if (r > pkR) pkR = r; }
+        }
+        plugin->stop_processing(plugin);
+        std::printf("clap: pan127 peaks L=%.4f R=%.4f\n", pkL, pkR);
+        check("PAN WIDTH spreads voices (L != R)", pkL > 1e-4 && pkR > 1e-4 && pkR < 0.85 * pkL);
+        clap_event_param_value z{};
+        z.header.type = CLAP_EVENT_PARAM_VALUE; z.header.size = sizeof z; z.header.time = 0;
+        z.param_id = 85; z.value = 0;
+        EventList pz{ { &z.header } };
+        clap_input_events_t iz{ &pz, EL_size, EL_get };
+        pa2->flush(plugin, &iz, &out);   // back to mono for anything downstream
+    }
     check("audio is non-silent", nonzero);
     check("peak in a sane band (0.01..2.0)", peak > 0.01 && peak <= 2.0);
     check("mono engine duplicated to L/R", lrEqual);
@@ -240,7 +286,7 @@ int main(int argc, char **argv)
 
         // programmer params + gui surface
         uint32_t cnt = params->count(plugin);
-        check("param count 70 (57 raw + 8 ov + trim + os + tune + program + bank)", cnt == 70);
+        check("param count 71 (57 raw + 8 ov + trim + os + tune + program + bank)", cnt == 71);
         bool tuneInfo = false;
         for (uint32_t i = 0; i < cnt; i++) {
             clap_param_info_t inf{};

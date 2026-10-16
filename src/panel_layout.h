@@ -44,7 +44,7 @@ struct Box   { float x, y, w, h; const char *header; };
 struct Rule  { float x1, y1, x2, y2; };
 struct Disp  { float x, y, w, h; };
 
-inline constexpr int kNumKnobs = 31, kNumBtns = 37, kNumTexts = 74, kNumBoxes = 11, kNumRules = 17, kNumDisplays = 1;
+inline constexpr int kNumKnobs = 32, kNumBtns = 37, kNumTexts = 75, kNumBoxes = 11, kNumRules = 17, kNumDisplays = 1;
 inline constexpr Knob kKnobs[] = {
         {32, 48.0f, 60.0f, false, 0, 10},
         {33, 112.0f, 60.0f, false, 0, 10},
@@ -60,7 +60,6 @@ inline constexpr Knob kKnobs[] = {
         {14, 744.0f, 68.0f, false, 0, 10},
         {15, 802.0f, 68.0f, false, 0, 10},
         {16, 860.0f, 68.0f, false, 0, 10},
-        {13, 756.0f, 192.0f, false, 0, 10},
         {17, 988.0f, 74.0f, false, 0, 10},
         {18, 1056.0f, 74.0f, false, 0, 10},
         {40, 1124.0f, 74.0f, false, 0, 10},
@@ -76,6 +75,8 @@ inline constexpr Knob kKnobs[] = {
         {46, 1364.0f, 196.0f, false, 0, 10},
         {48, 1432.0f, 196.0f, false, 0, 10},
         {50, 1498.0f, 196.0f, false, 0, 10},
+        {85, 1376.0f, 330.0f, false, 0, 10},
+        {13, 1444.0f, 330.0f, false, 0, 10},
         {37, 1510.0f, 330.0f, false, 0, 10},
 };
 
@@ -155,7 +156,6 @@ inline constexpr Text kTexts[] = {
         {744.0f, 102.0f, T_LBL, "OSC 1"},
         {802.0f, 102.0f, T_LBL, "OSC 2"},
         {860.0f, 102.0f, T_LBL, "NOISE"},
-        {756.0f, 230.0f, T_LBL, "GLIDE"},
         {848.0f, 230.0f, T_LBL, "OVERSAMPLE"},
         {934.0f, 107.0f, T_LBL, "MODEL"},
         {988.0f, 108.0f, T_LBL, "CUTOFF"},
@@ -193,6 +193,8 @@ inline constexpr Text kTexts[] = {
         {1047.0f, 376.0f, T_SUB, "PROGRAM SELECT"},
         {1270.0f, 366.0f, T_LBL, "RELEASE"},
         {1312.0f, 366.0f, T_LBL, "EDIT"},
+        {1376.0f, 366.0f, T_LBL, "PAN WIDTH"},
+        {1444.0f, 366.0f, T_LBL, "GLIDE"},
         {1510.0f, 366.0f, T_LBL, "VINTAGE"},
 };
 

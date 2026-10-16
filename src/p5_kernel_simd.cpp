@@ -351,7 +351,13 @@ void p5KernelSimd(Engine &e, uint32_t mask, int32_t *out, uint32_t n)
                               spl(1.0f / 32768.0f)), laneLive);
         VI last = simde_mm256_cvttps_epi32(mul(mul(mul(ysum, gain), amp), spl(2.0f * VOICE_FS)));
         simde_mm256_storeu_si256((simde__m256i *)lastArr, last);
-        for (int j = 0; j < 8; j++) out[i] += lastArr[j];
+        if (e.panOn_)
+            for (int j = 0; j < 8; j++)
+            {   const int64_t sv = lastArr[j];
+                out[i] += (int32_t)((sv * e.lanes_[j].panG[0]) >> 15);
+                e.mixR_[i] += (int32_t)((sv * e.lanes_[j].panG[1]) >> 15); }
+        else
+            for (int j = 0; j < 8; j++) out[i] += lastArr[j];
     }
 
     stu(h.phA, e.phaseA_); stu(h.phB, e.phaseB_);

@@ -114,7 +114,10 @@ void p5KernelScalar(Engine &e, uint32_t mask, int32_t *out, uint32_t n)
             const float gain = ae * c.ampVel * (1.0f + (float)l.ampDrift / 32768.0f);
             const float amp = (c.amp0 + (c.amp1 - c.amp0) * time) * (1.0f / 32768.0f);
             last = (int32_t)(sum * gain * amp * (2.0f * VOICE_FS));
-            out[i] += last;
+            if (e.panOn_)
+            {   out[i] += (int32_t)(((int64_t)last * l.panG[0]) >> 15);
+                e.mixR_[i] += (int32_t)(((int64_t)last * l.panG[1]) >> 15); }
+            else out[i] += last;
         }
         l.lastPcm = last;
         e.phaseA_[v] = h.ph[0]; e.phaseB_[v] = h.ph[1];

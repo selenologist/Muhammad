@@ -37,7 +37,7 @@ static const char *kOverlayNames[8] = {
 static const double kOverlayMin[8] = { -63, -63, -24, -24, -63, -63, -63, -63 };
 static const double kOverlayMax[8] = {  63,  63,  24,  24,  63,  63,  63,  63 };
 
-constexpr uint32_t PARAM_COUNT = 57 + NUM_OVERLAYS + 5;   // + trim, oversample, tune, program, bank
+constexpr uint32_t PARAM_COUNT = 57 + NUM_OVERLAYS + 6;   // + trim, os, tune, program, bank, pan width
 
 static bool isRawParam(clap_id id) { return id < 57; }
 
@@ -57,6 +57,7 @@ const char *Plugin::nameOf(clap_id id)
     if (id == PID_TUNE) return "MASTER TUNE";
     if (id == PID_PROGRAM) return "PROGRAM";
     if (id == PID_BANK) return "BANK";
+    if (id == PID_PAN_WIDTH) return "PAN WIDTH";
     return "?";
 }
 
@@ -78,7 +79,7 @@ const clap_plugin_descriptor_t kDescriptor = {
     "selenologist",
     "https://github.com/keremimo/melodee",
     nullptr, nullptr,
-    "1.9.3-audiofree",   // bump per shipped build: the version Bitwig shows proves which binary is loaded
+    "1.9.4-panwidth",   // bump per shipped build: the version Bitwig shows proves which binary is loaded
     "P5 clone (PROPHET engine ported from the Melodee firmware)",
     kFeatures
 };
@@ -145,6 +146,12 @@ static void applyParam(Plugin *s, clap_id id, double value)
         if (v > (int)PW_FACTORY_N / 8 - 1) v = (int)PW_FACTORY_N / 8 - 1;
         s->bank = v;
     }
+    else if (id == PID_PAN_WIDTH) {
+        int v = (int)(value + 0.5);
+        if (v < 0) v = 0;
+        if (v > 127) v = 127;
+        s->engine.setPanWidth(v);
+    }
 }
 
 static void requestHostParamFlush(Plugin *s)
@@ -170,6 +177,7 @@ static double paramValue(Plugin *s, clap_id id)
     if (id == PID_TUNE) return s->engine.tuneCents();
     if (id == PID_PROGRAM) return s->program < 0 ? 0 : s->program;
     if (id == PID_BANK) return s->bank;
+    if (id == PID_PAN_WIDTH) return s->engine.panWidth();
     return 0;
 }
 
@@ -535,10 +543,12 @@ static void renderChunk(Plugin *s, clap_audio_buffer_t *ab, uint32_t from, uint3
         s->engine.process(s->scratch, k);
         float *L = ab->data32[0] + from, *R = ab->data32[1] + from;
         const float trim = s->trim * (1.0f / 32768.0f);
+        const bool pan = s->engine.panActive();
+        const int32_t *rbuf = s->engine.mixR();
         for (uint32_t i = 0; i < k; i++) {
             float v = (float)s->scratch[i] * trim;
             L[i] = v;
-            R[i] = v;
+            R[i] = pan ? (float)rbuf[i] * trim : v;
         }
         from += k;
         frames -= k;
@@ -643,9 +653,11 @@ static bool par_get_info(const clap_plugin_t *, uint32_t index, clap_param_info_
     else if (index < 57 + NUM_OVERLAYS + 2) { id = PID_OS; info->min_value = 0; info->max_value = 1; }
     else if (index < 57 + NUM_OVERLAYS + 3) { id = PID_TUNE; info->min_value = -100; info->max_value = 100; }
     else if (index < 57 + NUM_OVERLAYS + 4) { id = PID_PROGRAM; info->min_value = 0; info->max_value = PW_FACTORY_N - 1; }
-    else { id = PID_BANK; info->min_value = 0; info->max_value = PW_FACTORY_N / 8 - 1; }
+    else if (index < 57 + NUM_OVERLAYS + 6 - 1) { id = PID_BANK; info->min_value = 0; info->max_value = PW_FACTORY_N / 8 - 1; }
+    else { id = PID_PAN_WIDTH; info->min_value = 0; info->max_value = 127; }
     info->id = id;
-    const bool stepped = isRawParam(id) || id == PID_TUNE || id == PID_PROGRAM || id == PID_BANK;
+    const bool stepped = isRawParam(id) || id == PID_TUNE || id == PID_PROGRAM || id == PID_BANK ||
+                         id == PID_PAN_WIDTH;
     info->flags = CLAP_PARAM_IS_AUTOMATABLE | CLAP_PARAM_IS_MODULATABLE |
                   (stepped ? CLAP_PARAM_IS_STEPPED : 0);
     std::snprintf(info->name, sizeof info->name, "%s", Plugin::nameOf(id));
@@ -669,7 +681,7 @@ static bool par_value_to_text(const clap_plugin_t *, clap_id id, double v, char 
     if (id == 56) { static const char *const kPr[4] = {"LOW","LOW RET","LAST","LAST RET"};
                     std::snprintf(buf, cap, "%s", kPr[(int)v & 3]); return true; }
     if (id == PID_TUNE) { std::snprintf(buf, cap, "%+d cents", (int)(v < 0 ? v - 0.5 : v + 0.5)); return true; }
-    if (id == PID_PROGRAM || id == PID_BANK) { std::snprintf(buf, cap, "%d", (int)(v + 0.5)); return true; }
+    if (id == PID_PROGRAM || id == PID_BANK || id == PID_PAN_WIDTH) { std::snprintf(buf, cap, "%d", (int)(v + 0.5)); return true; }
     if (isOverlayParam(id)) std::snprintf(buf, cap, "%+g", v);
     else std::snprintf(buf, cap, "%g", v);
     return true;
@@ -686,6 +698,7 @@ static bool par_text_to_value(const clap_plugin_t *, clap_id id, const char *tex
     else if (id == PID_TUNE) v = v < -100 ? -100 : v > 100 ? 100 : v;
     else if (id == PID_PROGRAM) v = v < 0 ? 0 : v > PW_FACTORY_N - 1 ? PW_FACTORY_N - 1 : v;
     else if (id == PID_BANK) v = v < 0 ? 0 : v > PW_FACTORY_N / 8 - 1 ? PW_FACTORY_N / 8 - 1 : v;
+    else if (id == PID_PAN_WIDTH) v = v < 0 ? 0 : v > 127 ? 127 : v;
     *out = v;
     return true;
 }
@@ -719,7 +732,7 @@ const clap_plugin_params_t kParams = { par_count, par_get_info, par_get_value,
 
 // ---- state (versioned binary blob) --------------------------------------------
 #define PW_STATE_MAGIC 0x5035434Cu            // "P5CL"
-#define PW_STATE_VERSION 3u
+#define PW_STATE_VERSION 4u
 static bool wr(const clap_ostream_t *o, const void *b, size_t n)
 { return o->write(o, b, (uint64_t)n) == (int64_t)n; }
 static bool state_save(const clap_plugin_t *p, const clap_ostream_t *out)
@@ -732,9 +745,10 @@ static bool state_save(const clap_plugin_t *p, const clap_ostream_t *out)
     float trim = s->trim;
     int32_t os = s->engine.oversample();
     int16_t gui[3] = { (int16_t)s->engine.tuneCents(), (int16_t)s->program, (int16_t)s->bank };
+    int16_t pan = (int16_t)s->engine.panWidth();
     return wr(out, head, sizeof head) && wr(out, s->engine.patch().raw, 133) &&
            wr(out, ov, sizeof ov) && wr(out, &trim, sizeof trim) && wr(out, &os, sizeof os) &&
-           wr(out, gui, sizeof gui);
+           wr(out, gui, sizeof gui) && wr(out, &pan, sizeof pan);
 }
 static bool rd(const clap_istream_t *i, void *b, size_t n)
 { return i->read(i, b, (uint64_t)n) == (int64_t)n; }
@@ -761,6 +775,7 @@ static bool state_load(const clap_plugin_t *p, const clap_istream_t *in)
             s->engine.setTuneCents(gui[0]);
             s->program = gui[1];
             s->bank = gui[2];
+            if (head[1] >= 4u) { int16_t pan = 0; if (rd(in, &pan, sizeof pan)) s->engine.setPanWidth(pan); }
         }
     }
     p5::Patch patch;

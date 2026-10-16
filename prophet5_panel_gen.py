@@ -30,7 +30,7 @@ PID = {
     "flt_a": 43, "amp_a": 44, "flt_d": 45, "amp_d": 46,
     "flt_s": 47, "amp_s": 48, "flt_r": 49, "amp_r": 50,
     "release_btn": 51, "unison": 52, "unison_det": 54, "vintage": 37,
-    "volume": 80, "master_tune": 82, "prog_bankselect": 84, "os": 81, "unison_cnt": 53,
+    "volume": 80, "master_tune": 82, "prog_bankselect": 84, "os": 81, "pan_width": 85, "unison_cnt": 53,
     "vel_amp": 42, "vel_flt": 41,
     "lfo_preset": -4, "flt_model": 20, "prog_preset": -3, "prog_record": -2,
     "edit_btn": -1, "tune_btn": -1,
@@ -256,8 +256,7 @@ knob(744, 68, "mix_osc1", label="OSC 1")
 knob(802, 68, "mix_osc2", label="OSC 2")
 knob(860, 68, "mix_noise", label="NOISE")
 
-# --- GLIDE + OVERSAMPLE (PC-side feature; the strip under MIXER) ---
-knob(756, 192, "glide", label="GLIDE", label_dy=38)
+# --- OVERSAMPLE (PC-side feature; the strip under MIXER) ---
 btn(848, 192, "os", color="btnDark", label="OVERSAMPLE", label_dy=38)
 
 # --- FILTER (tall r1+r2) ---
@@ -305,6 +304,8 @@ subhead(1047, 376, "PROGRAM SELECT", 14)
 btn(1270, 330, "release_btn", color="btnDark", label="RELEASE", label_dy=36)
 btn(1312, 330, "edit_btn", color="btnGray", led=False, label="EDIT", label_dy=36)
 # VINTAGE replaces the hardware TUNE button (0 = stable Rev4 .. 127 = loose Rev1)
+knob(1376, 330, "pan_width", label="PAN WIDTH", label_dy=36)
+knob(1444, 330, "glide", label="GLIDE", label_dy=36)
 knob(1510, 330, "vintage", label="VINTAGE", label_dy=36)
 
 # ================= assemble SVG =================

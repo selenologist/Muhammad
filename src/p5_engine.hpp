@@ -121,6 +121,13 @@ public:
 
     // ---- audio ----------------------------------------------------------------
     void process(int32_t *out, uint32_t n);   // n <= 32; mono int32 mix, part post applied
+    // PAN WIDTH (port extension, not a wire byte): spreads the 8 voice slots
+    // across the stereo field like an Oberheim voice assigner. 0 = mono sum,
+    // bit-identical to the firmware path; read R after process() via mixR().
+    void setPanWidth(int w) { if (w == panWidth_) return; panWidth_ = w; panDirty_ = true; }
+    int  panWidth() const { return panWidth_; }
+    bool panActive() const { return panOn_; }
+    const int32_t *mixR() const { return mixR_; }
 
 private:
     struct Lane {
@@ -131,6 +138,7 @@ private:
         float filterPrev, ampPrev;            // f0/a0 carried across blocks
         int32_t glidePitch;                   // s->glide_pitch (engine glide)
         int32_t lastPcm;                      // for the one-block release fade
+        int32_t panG[2] = { 32768, 32768 };   // Q15 (max 32768): Oberheim-style slot pan
         LaneParams p;
     };
 
@@ -158,6 +166,10 @@ private:
     float wheel_[CTL_ * 2], wheelPitch_[CTL_ * 2];   // CTL * oversample entries
     uint32_t wheelLen_ = CTL_;
     int32_t dcX1_ = 0, dcY1_ = 0;
+    int32_t dcX1r_ = 0, dcY1r_ = 0;           // the R-side coupling cap, same law
+    int panWidth_ = 0;                        // 0..127
+    bool panDirty_ = true, panOn_ = false;
+    int32_t mixR_[CTL_];
     uint32_t dcK_ = DC_K_DEFAULT;
     int poly_ = MAXV;
     int tuneCents_ = 0;

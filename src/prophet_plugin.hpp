@@ -22,6 +22,7 @@ constexpr clap_id PID_OS = 81;      // 0 = base rate (bit-exact), 1 = 2x oversam
 constexpr clap_id PID_TUNE = 82;    // master tune, -100..100 cents (control-path pitch offset)
 constexpr clap_id PID_PROGRAM = 83; // factory program 0..N-1; writing loads it (panel buttons)
 constexpr clap_id PID_BANK = 84;    // factory bank 0..N/8-1 (BANK SELECT cycles it)
+constexpr clap_id PID_PAN_WIDTH = 85;  // port extension: Oberheim-style per-voice stereo spread    // factory bank 0..N/8-1 (BANK SELECT cycles it)
 
 struct Plugin {
     explicit Plugin(const clap_host_t *host) : host(host) {}
