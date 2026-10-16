@@ -23,7 +23,7 @@ find_program(GIT_EXE git)
 execute_process(COMMAND ${GIT_EXE} rev-parse --short HEAD OUTPUT_VARIABLE P5_GIT OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
 execute_process(COMMAND ${GIT_EXE} status --porcelain OUTPUT_VARIABLE P5_DIRTY OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
 string(TIMESTAMP P5_BUILDDATE "%Y-%m-%d %H:%M")
-set(P5_VERSION "1.9.4-panwidth")
+set(P5_VERSION "1.10.0-avx2")
 set(P5_DIRTY_MARK "")
 if(P5_DIRTY)
     set(P5_DIRTY_MARK "-d")
@@ -60,7 +60,19 @@ if(PROPHET_GUI)
     endif()
 
     # headless golden-image test (see tools/check_goldens.sh)
-    add_executable(render_golden tests/render_golden.cpp ${ENGINE_SOURCES})
+    # x86 ships the wide kernel twice: portable baseline + true AVX2 (SIMDe maps to
+# native instructions under -mavx2 -mfma). Engine::activate selects by cpuid;
+# contract stays OFF so both paths are bit-identical to the firmware reference.
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|i386|i686")
+    add_library(p5_simd_avx2 OBJECT src/p5_kernel_simd.cpp)
+    target_include_directories(p5_simd_avx2 PRIVATE src external)
+    target_compile_definitions(p5_simd_avx2 PRIVATE P5_SIMD_SYMBOL=p5KernelSimdAVX2)
+    target_compile_options(p5_simd_avx2 PRIVATE -mavx2 -mfma)
+    add_compile_definitions(P5_HAVE_AVX2)
+    list(APPEND ENGINE_SOURCES $<TARGET_OBJECTS:p5_simd_avx2>)
+endif()
+
+add_executable(render_golden tests/render_golden.cpp ${ENGINE_SOURCES})
     target_include_directories(render_golden PRIVATE src vendor/clap external ${NANOVG_DIR}/src
                                      external/stb ${X11_INCLUDE_DIR})
     target_compile_definitions(render_golden PRIVATE GL_GLEXT_PROTOTYPES=1 P5_BUILD_INFO="${P5_BUILD_INFO}")

@@ -7,6 +7,9 @@
 // Bit-parity with the scalar kernel: keep the firmware's float expression order
 // (no FMA contraction - build with -ffp-contract=off), and branch only on flags
 // that are patch-wide, hence uniform across lanes.
+#ifndef P5_SIMD_SYMBOL
+#define P5_SIMD_SYMBOL p5KernelSimdSSE2      // recompiled as p5KernelSimdAVX2 by CMake
+#endif
 #include "p5_engine.hpp"
 #include "p5_math.hpp"
 
@@ -185,7 +188,7 @@ inline V filterCoreV(HotV &h, V input, V cutoff, V k, V gain, int curtis, const 
 
 } // namespace
 
-void p5KernelSimd(Engine &e, uint32_t mask, int32_t *out, uint32_t n)
+void P5_SIMD_SYMBOL(Engine &e, uint32_t mask, int32_t *out, uint32_t n)
 {
     const uint8_t *p = e.patch_.raw;
     const int curtis = !!p[P5_FILTER_REV];

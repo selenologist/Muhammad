@@ -79,7 +79,7 @@ const clap_plugin_descriptor_t kDescriptor = {
     "selenologist",
     "https://github.com/keremimo/melodee",
     nullptr, nullptr,
-    "1.9.4-panwidth",   // bump per shipped build: the version Bitwig shows proves which binary is loaded
+    "1.10.0-avx2",   // bump per shipped build: the version Bitwig shows proves which binary is loaded
     "P5 clone (PROPHET engine ported from the Melodee firmware)",
     kFeatures
 };
@@ -506,7 +506,7 @@ static bool plugin_activate(const clap_plugin_t *p, double sample_rate, uint32_t
     s->engine.activate(sample_rate);
     s->engine.setSmoothing(true);   // PC playability; the A/B harness keeps it off
     s->engine.setPcMode(true);      // LFO INITIAL = wheel state at patch load
-    engine.setReleaseCut(1.0f / 16384.0f);   // cut tails -24 dB deeper than firmware (-84 dBFS)
+    s->engine.setReleaseCut(1.0f / 16384.0f);   // cut tails -24 dB deeper than firmware (-84 dBFS)
     p5store::loadMap();             // bank/program retrieval map
     s->rebuildSlotCache();
     s->active = true;

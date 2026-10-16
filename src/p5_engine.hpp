@@ -46,12 +46,18 @@ class Engine;
 // The two render kernels (p5_kernel_scalar.cpp / p5_kernel_simd.cpp):
 // render the lanes of `mask`, n samples into out (additive), advancing the hot state.
 void p5KernelScalar(Engine &e, uint32_t mask, int32_t *out, uint32_t n);
-void p5KernelSimd(Engine &e, uint32_t mask, int32_t *out, uint32_t n);
+void p5KernelSimdSSE2(Engine &e, uint32_t mask, int32_t *out, uint32_t n);
+#ifdef P5_HAVE_AVX2
+void p5KernelSimdAVX2(Engine &e, uint32_t mask, int32_t *out, uint32_t n);
+#endif
 
 class Engine {
 public:
     friend void p5KernelScalar(Engine &, uint32_t, int32_t *, uint32_t);
-    friend void p5KernelSimd(Engine &, uint32_t, int32_t *, uint32_t);
+    friend void p5KernelSimdSSE2(Engine &, uint32_t, int32_t *, uint32_t);
+#ifdef P5_HAVE_AVX2
+    friend void p5KernelSimdAVX2(Engine &, uint32_t, int32_t *, uint32_t);
+#endif
     explicit Engine(KernelMode mode = KernelMode::Auto);
 
     // ---- lifecycle / performance -------------------------------------------
@@ -119,6 +125,7 @@ public:
     int voiceMode() const { return voiceMode_; }             // 0 poly, 1 mono, 2 legato, 3 unison
     void setVoiceModeOverride(int m) { voiceModeOverride_ = m; }
     uint32_t liveVoices() const { return live_; }
+    const char *simdPath() const;                   // "avx2" | "sse2" | "neon" - which wide kernel is live
     const int32_t *lastMix() const { return mixTap_; }   // pre-post block (debug)
     void setKernelMode(KernelMode m) { mode_ = m; }
 
@@ -176,6 +183,7 @@ private:
     bool panDirty_ = true, panOn_ = false;
     int32_t mixR_[CTL_];
     uint32_t dcK_ = DC_K_DEFAULT;
+    void (*simdK_)(Engine &, uint32_t, int32_t *, uint32_t) = p5KernelSimdSSE2;
     int poly_ = MAXV;
     int tuneCents_ = 0;
     bool smooth_ = false;

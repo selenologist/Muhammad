@@ -21,8 +21,23 @@ Engine::Engine(KernelMode mode) : mode_(mode)
     silenceReset();
 }
 
+const char *Engine::simdPath() const
+{
+#ifdef P5_HAVE_AVX2
+    return simdK_ == p5KernelSimdAVX2 ? "avx2" : "sse2";
+#elif defined(__ARM_NEON)
+    return "neon";
+#else
+    return "sse2";
+#endif
+}
+
 void Engine::activate(double sampleRate)
 {
+#ifdef P5_HAVE_AVX2
+    if (__builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma"))
+        simdK_ = p5KernelSimdAVX2;   // wide kernel at true AVX2, still contract=off
+#endif
     srScale_ = sampleRate > 0.0 ? 44100.0 / sampleRate : 1.0;
     hostSr_ = sampleRate > 0.0 ? sampleRate : 44100.0;
     buildTpt();
@@ -667,7 +682,7 @@ void Engine::process(int32_t *out, uint32_t n)
         const int lanes = __builtin_popcount(mask);
         const bool wide = mode_ == KernelMode::Wide ||
                           (mode_ == KernelMode::Auto && lanes >= 2);
-        if (wide) p5KernelSimd(*this, mask, out, n);
+        if (wide) simdK_(*this, mask, out, n);
         else p5KernelScalar(*this, mask, out, n);
     }
 

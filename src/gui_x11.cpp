@@ -113,9 +113,10 @@ void fillState(Ctx &c, p5ui::State &st)
     st.build = P5_BUILD_INFO;
 #endif
     {   // live diagnostics in-window: Bitwig's plugin host swallows our stderr
-        static char diagBuf[120];
-        std::snprintf(diagBuf, sizeof diagBuf, "svc %s rr %d src %s win %ux%u p %ux%u a %ux%u",
+        static char diagBuf[140];
+        std::snprintf(diagBuf, sizeof diagBuf, "svc %s rr %d src %s simd %s win %ux%u p %ux%u a %ux%u",
                       c.hostGui ? "y" : "n", c.resizeRequests, c.plugin->loadTag_,
+                      c.plugin->engine.simdPath(),
                       c.w, c.h, c.parW, c.parH, c.ancW, c.ancH);
         st.diag = diagBuf;
     }
