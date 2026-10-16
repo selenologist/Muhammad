@@ -6,6 +6,7 @@
 #include <clap/ext/timer-support.h>
 #include <cstring>
 #include <string>
+#include <atomic>
 
 #include "p5_engine.hpp"
 #include "p5_store.hpp"
@@ -34,6 +35,9 @@ struct Plugin {
     int32_t scratch[32] = {0};
     int bendRaw = 0;
     int program = -1;                   // factory program loaded (-1: edited/INIT)
+    uint8_t slotRaw_[PW_FACTORY_N][133] = {};
+    int16_t slotCode_[PW_FACTORY_N];                  // -1 init, -2 default, -3 file, else factory idx
+    bool slotReady_ = false;
     bool hasSrc_ = false;
     uint8_t srcRaw_[133] = {};
     bool floatValid_ = false;                 // presetRecall() may toggle back once
@@ -50,7 +54,15 @@ struct Plugin {
     // The loaded SOURCE (factory index or user file) is the "preset state" the
     // programmer PRESET button recalls; the LED floats lit while the panel
     // disagrees with it, exactly like the original's parameter floating.
-    void programSlot(int slot);                       // resolve retrieval map -> load
+    void programSlot(int slot);                       // resolve retrieval map -> load (MAIN thread)
+    // Audio-thread MIDI PC may only memcpy precomputed bytes: the slot->raw
+    // cache is built on the main thread (activate / map edits / saves), the
+    // process() drain applies it, and the GUI tick adopts identity + syncs.
+    void rebuildSlotCache();
+    void adoptPendingIdentity();
+    std::atomic<int> pcReq_{-1};                      // requested slot from audio
+    std::atomic<bool> idSync_{false};                 // applied on audio: main must adopt
+    int idSyncSlot_ = -1;
     void programSlotLoad(const p5store::Source &, int slot);
     void loadSource(const p5store::Source &s);                  // picker row click: LOAD ONLY
     void recallBasicInit();                           // hold-RECORD+PRESET: bare INIT

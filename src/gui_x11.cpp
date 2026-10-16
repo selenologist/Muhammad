@@ -87,6 +87,7 @@ Ctx *ctxFrom(const clap_plugin_t *p)
 
 void fillState(Ctx &c, p5ui::State &st)
 {
+    c.plugin->adoptPendingIdentity();     // audio-thread PC applied bytes; pull identity here
     for (int i = 0; i < p5ui::kNumKnobs; i++)
         st.knob[i] = p5::knobNorm(p5ui::kKnobs[i].pid, c.plugin->guiValue(p5ui::kKnobs[i].pid));
     const int program = c.plugin->program, bank = c.plugin->bank;
@@ -274,6 +275,7 @@ void actuate(Ctx &c, int btnIdx, unsigned mods = 0)
         {   // armed ASSIGN: bind this slot to the picked preset (and load it)
             p5store::setSlot(k, c.bindSrc);
             p5store::saveMap();
+            c.plugin->rebuildSlotCache();  // keep the audio-thread cache current
             c.bindPending = false;
         }
         c.plugin->programSlot(k);

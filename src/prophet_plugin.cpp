@@ -78,7 +78,7 @@ const clap_plugin_descriptor_t kDescriptor = {
     "selenologist",
     "https://github.com/keremimo/melodee",
     nullptr, nullptr,
-    "1.9.2-polymod",   // bump per shipped build: the version Bitwig shows proves which binary is loaded
+    "1.9.3-audiofree",   // bump per shipped build: the version Bitwig shows proves which binary is loaded
     "P5 clone (PROPHET engine ported from the Melodee firmware)",
     kFeatures
 };
@@ -274,6 +274,57 @@ void Plugin::loadSource(const p5store::Source &s)
     engine.setPatch(i); program = -1; markSource(0, idx, {}); syncAllParams();
 }
 
+void Plugin::rebuildSlotCache()
+{   // MAIN thread: every retrieval slot gets its 133 bytes resolved NOW, so a
+    // MIDI program change on the audio thread is only a memcpy.
+    for (int i = 0; i < (int)PW_FACTORY_N; i++)
+    {
+        const p5store::Source s = p5store::slot(i);
+        int code = i;
+        if (s.kind == p5store::SourceKind::File)
+        {
+            if (p5store::loadPatch(s.file, slotRaw_[i])) { slotCode_[i] = -3; }
+            else { std::memcpy(slotRaw_[i], PW_FACTORY_RAW[i], 133); slotCode_[i] = (int16_t)i; }
+            continue;
+        }
+        code = s.factory;
+        if (code >= 0 && code < (int)PW_FACTORY_N) std::memcpy(slotRaw_[i], PW_FACTORY_RAW[code], 133);
+        else { p5::Patch p; p5::patchInit(p); if (code != -1) p5::patchDefaultName(p);
+               std::memcpy(slotRaw_[i], p.raw, 133); }
+        slotCode_[i] = (int16_t)code;
+    }
+    slotReady_ = true;
+}
+
+void Plugin::adoptPendingIdentity()
+{   // main thread: an audio-thread PC changed the patch from the cache; pull
+    // the string-bearing identity and GUI sync here, never in process().
+    if (!idSync_.exchange(false)) return;
+    const p5store::Source src = p5store::slot(idSyncSlot_);
+    curSrc_ = src;
+    if (src.kind == p5store::SourceKind::File) srcFile_ = src.file; else srcFile_.clear();
+    for (clap_id id = 0; id < 57; id++) markPending(id, paramValue(this, id));
+    requestHostParamFlush(this);
+}
+
+static void applyPcFromCache(Plugin *s, int slot)
+{
+    if (!s->slotReady_ || slot < 0 || slot >= (int)PW_FACTORY_N) return;
+    p5::Patch p;
+    std::memset(&p, 0, sizeof p);
+    std::memcpy(p.raw, s->slotRaw_[slot], 133);
+    p.size = 133; p.model = 0x32; p.command = 3;
+    s->engine.setPatch(p);                        // pure POD state, no I/O
+    std::memcpy(s->srcRaw_, p.raw, 133);
+    s->hasSrc_ = true; s->floatValid_ = false;
+    const int code = s->slotCode_[slot];
+    s->program = (code >= 0 && code < (int)PW_FACTORY_N) ? code : -1;
+    s->lastProgClick_ = slot % 8;
+    s->idSyncSlot_ = slot;
+    s->idSync_.store(true);
+    requestHostParamFlush(s);                     // documented thread-safe request
+}
+
 void Plugin::programSlot(int slot)
 {
     loadTag_ = "slot";
@@ -312,6 +363,7 @@ void Plugin::savePatchNamed(const std::string &name)
     program = -1;
     p5store::savePatch(n, engine.patch().raw);
     markSource(1, -1, n);
+    rebuildSlotCache();
     curSrc_.kind = p5store::SourceKind::File; curSrc_.factory = 0; curSrc_.file = n;
     for (clap_id id = 0; id < 57; id++)
         markPending(id, paramValue(this, id));
@@ -343,6 +395,7 @@ void Plugin::assignSlotFromText(int slot, const std::string &textRaw)
     }
     p5store::setSlot(slot, s);
     p5store::saveMap();
+    rebuildSlotCache();
 }
 
 void Plugin::presetRecall()
@@ -409,7 +462,7 @@ static void dispatchEvent(Plugin *s, const clap_event_header_t *ev)
             if (d1 == 1) s->engine.setModWheel(d2);
             else if (d1 == 0) applyParam(s, PID_BANK, d2 / 8);      // CC0: bank cursor
             break;
-        case 0xC0: s->programSlot(d1 < 8 ? s->bank * 8 + d1 : d1); break;  // legacy grid or flat
+        case 0xC0: applyPcFromCache(s, d1 < 8 ? s->bank * 8 + d1 : d1); break;  // audio-safe cache memcpy
         case 0xD0: s->engine.setAftertouch(d2); break;
         default: break;
         }
@@ -446,6 +499,7 @@ static bool plugin_activate(const clap_plugin_t *p, double sample_rate, uint32_t
     s->engine.setSmoothing(true);   // PC playability; the A/B harness keeps it off
     s->engine.setPcMode(true);      // LFO INITIAL = wheel state at patch load
     p5store::loadMap();             // bank/program retrieval map
+    s->rebuildSlotCache();
     s->active = true;
     return true;
 }
@@ -671,6 +725,7 @@ static bool wr(const clap_ostream_t *o, const void *b, size_t n)
 static bool state_save(const clap_plugin_t *p, const clap_ostream_t *out)
 {
     auto *s = fromPlugin(p);
+    s->adoptPendingIdentity();
     uint32_t head[2] = { PW_STATE_MAGIC, PW_STATE_VERSION };
     int16_t ov[8];
     for (int i = 0; i < 8; i++) ov[i] = (int16_t)s->engine.overlay(i);

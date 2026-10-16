@@ -31,7 +31,8 @@ static bool EL_try_out(const clap_output_events_t *, const clap_event_header_t *
 int main(int argc, char **argv)
 {
     setvbuf(stdout, nullptr, _IONBF, 0);
-    const char *path = argc > 1 ? argv[1] : "./prophet.clap";
+    setenv("P5_STORE_DIR", "/tmp/muh-smoke-store", 1);   // never touch the user's patch store
+    const char *path = argc > 1 ? argv[1] : "./muhammad.clap";
     void *lib = dlopen(path, RTLD_NOW | RTLD_LOCAL);
     if (!lib) { printf("dlopen %s: %s\n", path, dlerror()); return 2; }
     auto *entry = (const clap_plugin_entry_t *)dlsym(lib, "clap_entry");
@@ -110,11 +111,26 @@ int main(int argc, char **argv)
     pushNote(22050, CLAP_EVENT_NOTE_ON, 64, 0.8);
     pushNote(22050, CLAP_EVENT_NOTE_ON, 67, 0.9);
 
+    std::vector<clap_event_midi_t> mids;
+    mids.emplace_back();                       // MIDI PC 1 on the AUDIO thread:
+    auto &pc = mids.back();                    // must be a cache memcpy, no file I/O
+    std::memset(&pc, 0, sizeof pc);
+    pc.header.type = CLAP_EVENT_MIDI; pc.header.size = sizeof pc; pc.header.time = 0;
+    pc.data[0] = 0xC0; pc.data[1] = 1; pc.data[2] = 0;
+
     EventList all;
+    all.evs.push_back(&pc.header);
     for (auto &n : notes) all.evs.push_back(&n.header);
     size_t hePos = 0;
 
     float L[512], R[512];
+    typedef void (*awsetf)(int);
+    typedef long (*awcntf)(void);
+    auto aw_set = (awsetf)dlsym(RTLD_DEFAULT, "allocwatch_set");
+    auto aw_count = (awcntf)dlsym(RTLD_DEFAULT, "allocwatch_count");
+    long aw_blocks = 0;
+    if (!aw_set) std::printf("clap: (allocwatch not preloaded — audio-alloc check skipped)\n");
+
     float *chan[2] = { L, R };
     clap_audio_buffer_t ab{};
     ab.channel_count = 2; ab.data32 = chan;
@@ -137,7 +153,10 @@ int main(int argc, char **argv)
         clap_process_t pr{};
         pr.in_events = &in; pr.out_events = &out;
         pr.audio_outputs = &ab; pr.frames_count = n;
-        if (plugin->process(plugin, &pr) != CLAP_PROCESS_CONTINUE) procOk = false;
+        if (aw_set) aw_set(1);                                   // count only plugin work
+        const auto st = plugin->process(plugin, &pr);
+        if (aw_set) { aw_set(0); ++aw_blocks; }
+        if (st != CLAP_PROCESS_CONTINUE) procOk = false;
         for (uint32_t i = 0; i < n; i++) {
             if (std::fabs(L[i]) > 1e-6) nonzero = true;
             if (std::fabs(L[i]) > peak) peak = std::fabs(L[i]);
@@ -146,6 +165,23 @@ int main(int argc, char **argv)
     }
     plugin->stop_processing(plugin);
     check("process status", procOk);
+    if (aw_count && aw_blocks)
+    {   // audio-thread contract: process() must not touch the allocator
+        const long allocs = aw_count();
+        std::printf("clap: audio-thread allocs during %d process blocks: %ld\n", (int)aw_blocks, allocs);
+        check("zero allocations on audio thread", allocs == 0);
+    }
+    {   // the audio-thread PC must have switched to slot 1's default (factory "After Ringer")
+        const clap_plugin_state_t *st9 = (const clap_plugin_state_t *)plugin->get_extension(plugin, CLAP_EXT_STATE);
+        std::vector<char> blob9;
+        struct O9 { static int64_t w9(const clap_ostream_t *o, const void *d, uint64_t n) {
+            auto *v = (std::vector<char> *)o->ctx; const char *p2 = (const char *)d;
+            v->insert(v->end(), p2, p2 + n); return (int64_t)n; } };
+        clap_ostream_t os9{ &blob9, O9::w9 };
+        bool ok9 = st9->save(plugin, &os9) && blob9.size() > 8 + 65 + 12 &&
+                   !std::memcmp(blob9.data() + 8 + 65, "After Ringer", 12);
+        check("audio MIDI PC applied from cache (no I/O)", ok9);
+    }
     check("audio is non-silent", nonzero);
     check("peak in a sane band (0.01..2.0)", peak > 0.01 && peak <= 2.0);
     check("mono engine duplicated to L/R", lrEqual);
