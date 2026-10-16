@@ -87,6 +87,7 @@ void button(const Gui &g, const Btn &b, int ledv)
     {
         case BC_GRAY:   fillc = kColBtnGray;   strokec = kColBtnGrayStroke;   break;
         case BC_ORANGE: fillc = kColBtnOrange; strokec = kColBtnOrangeStroke; break;
+        case BC_WHITE:  fillc = kColBtnWhite;  strokec = kColBtnWhiteStroke;   break;
         default:        fillc = kColBtnDark;   strokec = kColBtnDarkStroke;   break;
     }
     nvgBeginPath(g.vg);
@@ -505,6 +506,156 @@ void draw(const Gui &g, const State &s, float w, float h)
         nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_BASELINE);
     }
 
+    // ---- microtuning editor (TUNING) ----
+    if (s.tuneOpen)
+    {
+        nvgBeginPath(g.vg);
+        nvgRect(g.vg, 0, 0, kPanelW, kPanelH);
+        nvgFillColor(g.vg, nvgRGBA(0, 0, 0, 150));
+        nvgFill(g.vg);
+        nvgBeginPath(g.vg);
+        nvgRoundedRect(g.vg, tune::x, tune::y, tune::w, tune::h, 6);
+        nvgFillColor(g.vg, col(kColPanel));
+        nvgFill(g.vg);
+        nvgStrokeColor(g.vg, col(kColBox));
+        nvgStrokeWidth(g.vg, 1.5f);
+        nvgStroke(g.vg);
+        nvgFontFaceId(g.vg, g.fontId);
+        nvgTextAlign(g.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
+        nvgFontSize(g.vg, 17.f);
+        nvgFillColor(g.vg, col(kColInk));
+        nvgText(g.vg, sxp(tune::x + 285), syp(tune::y + 22), "MICROTUNING", nullptr);
+        nvgFontSize(g.vg, 12.f);
+        nvgText(g.vg, sxp(tune::x + 285), syp(tune::y + 42), s.tuneName, nullptr);
+        nvgFontSize(g.vg, 11.f);
+        nvgText(g.vg, sxp(316), syp(tune::y + 62), "KEY", nullptr);
+        nvgText(g.vg, sxp(470), syp(tune::y + 62), "FREQUENCY", nullptr);
+        nvgText(g.vg, sxp(655), syp(tune::y + 62), "CENTS vs 12-TET", nullptr);
+        static const char *const kNote[12] = { "C", "C#", "D", "D#", "E", "F",
+                                               "F#", "G", "G#", "A", "A#", "B" };
+        nvgFontSize(g.vg, 13.f);
+        for (int i = 0; i < tune::rows; i++)
+        {
+            const int key = 48 + i;
+            const float ry = tune::rowTop(i);
+            const int dev = s.tuneDev[key];
+            const double f = 440.0 * std::pow(2.0, (key - 69 + dev / 16.0) / 12.0);
+            char lab[8];
+            std::snprintf(lab, sizeof lab, "%s3", kNote[i]);
+            nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
+            nvgFillColor(g.vg, col(kColInk));
+            nvgText(g.vg, sxp(300), syp(ry), lab, nullptr);
+            char ft[16];
+            std::snprintf(ft, sizeof ft, "%.2f Hz", f);
+            nvgTextAlign(g.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
+            nvgText(g.vg, sxp(470), syp(ry), ft, nullptr);
+            char ct[12];
+            std::snprintf(ct, sizeof ct, dev ? "%+.1f" : "%.1f", dev * 6.25f);
+            nvgFillColor(g.vg, dev ? nvgRGBA(240, 160, 30, 255) : col(kColInk));
+            nvgText(g.vg, sxp(655), syp(ry), ct, nullptr);
+            nvgFillColor(g.vg, col(kColInk));
+        }
+        static const char *const kRailLbl[2] = { "BEND UP (st)", "BEND DOWN (st)" };
+        const float rval[2] = { s.tuneUp, s.tuneDn };
+        for (int k = 0; k < 2; k++)
+        {
+            nvgTextAlign(g.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
+            nvgFontSize(g.vg, 12.f);
+            nvgFillColor(g.vg, col(kColInk));
+            nvgText(g.vg, sxp(tune::railX[k] + tune::railW / 2), syp(tune::railY - 26), kRailLbl[k], nullptr);
+            nvgBeginPath(g.vg);
+            nvgRect(g.vg, tune::railX[k], tune::railY - 1.5f, tune::railW, 3);
+            nvgFillColor(g.vg, nvgRGBA(70, 70, 78, 255));
+            nvgFill(g.vg);
+            for (int t = 0; t <= 24; t += 2)
+            {
+                nvgBeginPath(g.vg);
+                nvgRect(g.vg, tune::railX[k] + (t / 24.f) * tune::railW - 0.5f,
+                        tune::railY + (t % 12 ? 5 : 8), 1.f, t % 12 ? 3.f : 5.f);
+                nvgFillColor(g.vg, nvgRGBA(120, 120, 130, 255));
+                nvgFill(g.vg);
+            }
+            nvgBeginPath(g.vg);
+            nvgCircle(g.vg, tune::railHandleX(k, rval[k]), tune::railY, 7);
+            nvgFillColor(g.vg, nvgRGBA(240, 160, 30, 255));
+            nvgFill(g.vg);
+            char vt[10];
+            std::snprintf(vt, sizeof vt, "%.1f", rval[k]);
+            nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
+            nvgFontSize(g.vg, 13.f);
+            nvgFillColor(g.vg, col(kColInk));
+            nvgText(g.vg, sxp(tune::railX[k] + tune::railW + 8), syp(tune::railY), vt, nullptr);
+        }
+        nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
+        nvgFontSize(g.vg, 11.f);
+        nvgFillColor(g.vg, col(kColInk));
+        nvgText(g.vg, sxp(tune::x + 14), syp(tune::y + tune::h - 24),
+                "tunings load from Documents/Muhammad Synth/Tunings (.scl / .kbm)", nullptr);
+        for (int k = 0; k < 2; k++)
+        {
+            const float bx = k ? tune::resetX : tune::loadX;
+            const float bw = k ? tune::resetW : tune::loadW;
+            const char *lbl = k ? "RESET" : "LOAD";
+            nvgBeginPath(g.vg);
+            nvgRoundedRect(g.vg, bx, tune::btnY, bw, tune::btnH, 3);
+            nvgFillColor(g.vg, nvgRGBA(52, 52, 58, 255));
+            nvgFill(g.vg);
+            nvgStrokeColor(g.vg, col(kColBox));
+            nvgStrokeWidth(g.vg, 1.f);
+            nvgStroke(g.vg);
+            nvgTextAlign(g.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
+            nvgFontSize(g.vg, 13.f);
+            nvgFillColor(g.vg, col(kColInk));
+            nvgText(g.vg, sxp(bx + bw / 2), syp(tune::btnY + tune::btnH / 2), lbl, nullptr);
+        }
+        nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_BASELINE);
+    }
+
+    // ---- tuning file picker (same sheet geometry as the patch picker) ----
+    if (s.tunePick)
+    {
+        nvgBeginPath(g.vg);
+        nvgRect(g.vg, 0, 0, kPanelW, kPanelH);
+        nvgFillColor(g.vg, nvgRGBA(0, 0, 0, 170));
+        nvgFill(g.vg);
+        nvgBeginPath(g.vg);
+        nvgRoundedRect(g.vg, pick::x, pick::y, pick::w, pick::h, 6);
+        nvgFillColor(g.vg, col(kColPanel));
+        nvgFill(g.vg);
+        nvgStrokeColor(g.vg, col(kColBox));
+        nvgStrokeWidth(g.vg, 1.5f);
+        nvgStroke(g.vg);
+        nvgFontFaceId(g.vg, g.fontId);
+        nvgTextAlign(g.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
+        nvgFontSize(g.vg, 16.f);
+        nvgFillColor(g.vg, col(kColInk));
+        nvgText(g.vg, sxp(pick::x + pick::w / 2), syp(pick::y + 24), "LOAD TUNING", nullptr);
+        nvgFontSize(g.vg, 15.f);
+        for (int i = 0; i < pick::rows; i++)
+        {
+            if (!s.tuneRows[i]) continue;
+            const float ry = pick::rowTop(i);
+            if (i == s.tuneSel)
+            {
+                nvgBeginPath(g.vg);
+                nvgRoundedRect(g.vg, pick::x + 10, ry - pick::rowH / 2 + 2, pick::w - 20, pick::rowH - 4, 3);
+                nvgFillColor(g.vg, col(kColDispBg));
+                nvgFill(g.vg);
+                nvgFillColor(g.vg, col(kColDispText));
+            }
+            else nvgFillColor(g.vg, col(kColInk));
+            nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
+            nvgText(g.vg, sxp(pick::x + 22), syp(ry), s.tuneRows[i], nullptr);
+        }
+        nvgTextAlign(g.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
+        nvgFontSize(g.vg, 13.f);
+        nvgFillColor(g.vg, col(kColInk));
+        char pg[16];
+        std::snprintf(pg, sizeof pg, "%d / %d", s.tunePage + 1, s.tunePages);
+        nvgText(g.vg, sxp(pick::x + pick::w / 2), syp(pick::y + pick::h - 18), pg, nullptr);
+        nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_BASELINE);
+    }
+
     // ---- text-entry modal over the programmer area (RECORD save / PRESET assign) ----
     if (s.modalTitle && s.modalTitle[0])
     {
@@ -647,5 +798,25 @@ int hitBar(float lx, float ly, int *row, int *col)
     return 0;
 }
 } // namespace trim
+
+namespace tune {
+float railValAt(int k, float lx)
+{   float t = (lx - railX[k]) / railW; t = t < 0.f ? 0.f : t > 1.f ? 1.f : t; return t * 24.f; }
+bool inside(float lx, float ly) { return lx >= x && ly >= y && lx <= x + w && ly <= y + h; }
+int hitControl(float lx, float ly)
+{
+    if (ly >= btnY && ly <= btnY + btnH)
+    {
+        if (lx >= loadX && lx <= loadX + loadW) return 1;
+        if (lx >= resetX && lx <= resetX + resetW) return 2;
+    }
+    for (int k = 0; k < 2; k++)
+        if (ly >= railY - 14 && ly <= railY + 14 && lx >= railX[k] - 10 && lx <= railX[k] + railW + 10)
+            return 3 + k;
+    return 0;
+}
+} // namespace tune
+
+
 
 } // namespace p5ui

@@ -10,7 +10,7 @@ bin="$build/render_golden"
 command -v compare >/dev/null || { echo "ImageMagick 'compare' required"; exit 2; }
 
 fail=0
-for spec in "init 1560" "pad 936" "bass 1560" "trim 1560" "init 1052 1016 tall"; do
+for spec in "init 1560" "pad 936" "bass 1560" "trim 1560" "tune 1560" "init 1052 1016 tall"; do
     set -- $spec
     state=$1; w=$2
     h=$(( w * 430 / 1560 )); tag=$w

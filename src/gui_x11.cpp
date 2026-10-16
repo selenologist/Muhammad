@@ -55,6 +55,9 @@ struct Ctx
     int trimDrag = 0, trimRow = 0, trimCol = 0;
     int pickerTab = 0, pickerPage = 0;
     std::vector<std::string> userRows;   // cached dir listing for the picker
+    std::vector<std::string> tuneFiles;  // Tunings dir listing (TUNING page)
+    int tuneDrag = 0, tunePage = 0;      // 3/4 = which bend-range rail
+    char tuneRowBuf[8][64] = {};
     bool bindPending = false;            // ASSIGN armed: next program 1-8 binds
     p5store::Source bindSrc;
     char modalBuf[32] = {};
@@ -103,6 +106,14 @@ void applyTrimDrag(Ctx &c, float lx)
 {   applyTrimSet(c, c.trimRow, c.trimCol, p5ui::trim::valueAt(c.trimCol, lx));
 }
 
+void applyTuneDrag(Ctx &c, float lx)
+{   const int k = c.tuneDrag - 3;
+    const float v = p5ui::tune::railValAt(k, lx);
+    const float up = k == 0 ? v : (float)c.plugin->engine.bendRangeUpDefault();
+    const float dn = k == 1 ? v : (float)c.plugin->engine.bendRangeDownDefault();
+    c.plugin->engine.setBendRangeDefault(up, dn);   // resolved pair stored (WYSIWYG)
+}
+
 void fillState(Ctx &c, p5ui::State &st)
 {
     c.plugin->adoptPendingIdentity();
@@ -111,6 +122,39 @@ void fillState(Ctx &c, p5ui::State &st)
         for (int k = 0; k < 2; k++)
         {   int sc, of; c.plugin->engine.voiceTrim(i, k, &sc, &of);
             st.trimV[4*i+2*k] = (short)sc; st.trimV[4*i+2*k+1] = (short)of; }     // audio-thread PC applied bytes; pull identity here
+    st.tuneOpen = (c.modal == 6);
+    st.tunePick = (c.modal == 7);
+    std::snprintf(st.tuneName, sizeof st.tuneName, "%s", c.plugin->tuneName_);
+    for (int k = 0; k < 128; k++) st.tuneDev[k] = c.plugin->engine.tuningDeviation()[k];
+    st.tuneUp = (float)c.plugin->engine.bendRangeUpDefault();
+    st.tuneDn = (float)c.plugin->engine.bendRangeDownDefault();
+    {
+        const int per = p5ui::pick::rows;
+        const int total = 1 + (int)c.tuneFiles.size();
+        st.tunePages = (total + per - 1) / per;
+        if (c.tunePage >= st.tunePages) c.tunePage = st.tunePages - 1;
+        if (c.tunePage < 0) c.tunePage = 0;
+        st.tunePage = c.tunePage;
+        int sel = 0;                                  // row index of the loaded tuning (0 = standard)
+        const std::string nm(c.plugin->tuneName_);
+        for (size_t i = 0; i < c.tuneFiles.size(); i++)
+            if (c.tuneFiles[i] == nm) sel = 1 + (int)i;
+        st.tuneSel = sel - c.tunePage * per;
+        if (st.tuneSel < 0 || st.tuneSel >= per) st.tuneSel = -1;
+        for (int i = 0; i < per; i++)
+        {
+            const int idx = c.tunePage * per + i;
+            if (idx >= total) { st.tuneRows[i] = nullptr; continue; }
+            if (idx == 0) std::snprintf(c.tuneRowBuf[i], 64, "12-TET (standard)");
+            else
+            {   std::string s = c.tuneFiles[idx - 1];
+                const size_t dot = s.rfind('.');
+                if (dot != std::string::npos) s = s.substr(0, dot);   // stem, not file, is the identity
+                std::snprintf(c.tuneRowBuf[i], 64, "%s", s.c_str());
+            }
+            st.tuneRows[i] = c.tuneRowBuf[i];
+        }
+    }
     for (int i = 0; i < p5ui::kNumKnobs; i++)
         st.knob[i] = p5::knobNorm(p5ui::kKnobs[i].pid, c.plugin->guiValue(p5ui::kKnobs[i].pid));
     const int program = c.plugin->program, bank = c.plugin->bank;
@@ -119,6 +163,8 @@ void fillState(Ctx &c, p5ui::State &st)
         const auto &b = p5ui::kBtns[i];
         if (b.pid == -1)                              // EDIT button LED: lit while page open
         {   st.led[i] = c.modal == 5 ? 2 : 0; continue; }
+        if (b.pid == -6)                              // TUNING button LED
+        {   st.led[i] = (c.modal == 6 || c.modal == 7) ? 2 : 0; continue; }
         if (b.ledmode == 1) st.led[i] = c.plugin->guiValue(b.pid) != 0.0 ? 2 : 0;
         else if (b.ledmode == 2)
         {   // light the quickload button whose SLOT this patch is bound to
@@ -295,6 +341,11 @@ void actuate(Ctx &c, int btnIdx, unsigned mods = 0)
     if (b.pid == -1)                                  // EDIT: voice V/OCT trim page
     {   std::fprintf(stderr, "[p5gui] EDIT actuate: modal %d -> %d\n", c.modal, c.modal == 5 ? 0 : 5);
         c.modal = (c.modal == 5) ? 0 : 5; c.trimDrag = 0; return; }
+    if (b.pid == -6)                                  // TUNING: microtuning editor
+    {   std::fprintf(stderr, "[p5gui] TUNING actuate: modal %d -> %d\n", c.modal, c.modal == 6 ? 0 : 6);
+        if (c.modal == 6) c.modal = 0;
+        else { c.modal = 6; c.tuneFiles = p5store::listTunings(); }
+        c.tuneDrag = 0; return; }
     if (b.pid < 0) return;                            // decorative
     if (b.ledmode == 2)                               // quickload buttons 1-8
     {
@@ -508,6 +559,61 @@ void pump(Ctx &c)
                     }
                     break;                            // page is modal: swallow the press
                 }
+                if (c.modal == 7)                     // tuning file picker
+                {
+                    float lx, ly;
+                    p5ui::pointToLayout((float)ev.xbutton.x, (float)ev.xbutton.y,
+                                        (float)c.w, (float)c.h, lx, ly);
+                    if (!p5ui::pick::inside(lx, ly)) { c.modal = 6; dirty = true; break; }
+                    const int pages = (int)((c.tuneFiles.size() + p5ui::pick::rows) / p5ui::pick::rows);
+                    const int pg = p5ui::pick::hitPage(lx, ly);
+                    if (pg)
+                    {   c.tunePage += pg;
+                        if (c.tunePage < 0) c.tunePage = 0;
+                        if (c.tunePage >= pages) c.tunePage = pages - 1;
+                        dirty = true; break; }
+                    const int r = p5ui::pick::hitRow(lx, ly);
+                    std::fprintf(stderr, "[p5gui] tune picker hitRow=%d at (%.0f,%.0f)\n", r, lx, ly);
+                    if (r >= 0)
+                    {   const int idx = c.tunePage * p5ui::pick::rows + r;
+                        if (idx == 0)
+                        {   c.plugin->engine.setTuningDeviation(nullptr);
+                            std::snprintf(c.plugin->tuneName_, sizeof c.plugin->tuneName_, "12-TET");
+                            std::fprintf(stderr, "[p5gui] tuning: standard 12-TET selected\n"); }
+                        else if (idx - 1 < (int)c.tuneFiles.size())
+                        {   static int16_t dev[128]; char nm[40];
+                            if (p5store::loadTuningDev(c.tuneFiles[idx - 1], dev, nm, sizeof nm))
+                            {   c.plugin->engine.setTuningDeviation(dev);
+                                std::snprintf(c.plugin->tuneName_, sizeof c.plugin->tuneName_, "%s", nm);
+                                std::fprintf(stderr, "[p5gui] tuning loaded: %s\n", nm); }
+                            else std::fprintf(stderr, "[p5gui] tuning LOAD failed: %s\n",
+                                              c.tuneFiles[idx - 1].c_str());
+                        }
+                        c.modal = 6; dirty = true; break;
+                    }
+                    break;
+                }
+                if (c.modal == 6)                     // microtuning editor page
+                {
+                    float lx, ly;
+                    p5ui::pointToLayout((float)ev.xbutton.x, (float)ev.xbutton.y,
+                                        (float)c.w, (float)c.h, lx, ly);
+                    if (!p5ui::tune::inside(lx, ly)) { c.modal = 0; dirty = true; break; }
+                    const int ctl = p5ui::tune::hitControl(lx, ly);
+                    if (ctl == 1) { c.modal = 7; c.tunePage = 0; dirty = true; }
+                    else if (ctl == 2)
+                    {   c.plugin->engine.setTuningDeviation(nullptr);
+                        std::snprintf(c.plugin->tuneName_, sizeof c.plugin->tuneName_, "12-TET");
+                        std::fprintf(stderr, "[p5gui] tuning RESET to 12-TET\n");
+                        dirty = true; }
+                    else if (ctl >= 3)
+                    {   c.tuneDrag = ctl; applyTuneDrag(c, lx);
+                        XGrabPointer(c.dpy, c.win, True,
+                                     ButtonReleaseMask | PointerMotionMask, GrabModeAsync, GrabModeAsync,
+                                     None, None, CurrentTime);
+                        c.pointerGrabbed = true; dirty = true; }
+                    break;                            // page is modal: swallow the press
+                }
                 c.dragKnob = p5ui::knobAt(p5ui::State{}, (float)ev.xbutton.x, (float)ev.xbutton.y,
                                           (float)c.w, (float)c.h);
                 if (c.dragKnob >= 0)
@@ -536,9 +642,18 @@ void pump(Ctx &c)
                 { actuate(c, c.pressBtn, ev.xkey.state); dirty = true; }  // LEDs flip NOW
                 if (c.dragKnob >= 0)                        // gesture ends: tell the host the FINAL value
                 { c.plugin->guiSync((clap_id)p5ui::kKnobs[c.dragKnob].pid); dirty = true; }
-                c.dragKnob = -1; c.pressBtn = -1; c.trimDrag = 0;
+                c.dragKnob = -1; c.pressBtn = -1; c.trimDrag = 0; c.tuneDrag = 0;
                 break;
             case MotionNotify:
+                if (c.tuneDrag)
+                {
+                    float lx, ly;
+                    p5ui::pointToLayout((float)ev.xmotion.x, (float)ev.xmotion.y,
+                                        (float)c.w, (float)c.h, lx, ly);
+                    applyTuneDrag(c, lx);
+                    dirty = true;
+                    break;
+                }
                 if (c.trimDrag)
                 {
                     float lx, ly;

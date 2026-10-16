@@ -33,7 +33,7 @@ PID = {
     "volume": 80, "master_tune": 82, "prog_bankselect": 84, "os": 81, "pan_width": 85, "unison_cnt": 53,
     "vel_amp": 42, "vel_flt": 41,
     "lfo_preset": -4, "flt_model": 20, "prog_preset": -3, "prog_record": -2,
-    "edit_btn": -1, "tune_btn": -1,
+    "edit_btn": -1, "tune_btn": -6,
 }
 for _i in range(1, 9):
     PID[f"program_{_i}"] = 83   # value written = bank * 8 + (i - 1)
@@ -78,6 +78,10 @@ DEFS = f'''
     </g>
     <g id="btnOrange">
       <rect x="-12" y="-17" width="24" height="34" rx="2.5" fill="#e0781e" stroke="#a05215" stroke-width="1"/>
+      <use xlink:href="#led" href="#led"/>
+    </g>
+    <g id="btnWhite">
+      <rect x="-12" y="-17" width="24" height="34" rx="2.5" fill="#f4f4f6" stroke="#70707a" stroke-width="1"/>
       <use xlink:href="#led" href="#led"/>
     </g>
     <g id="gSaw" stroke="#f0f0f0" stroke-width="1.3" fill="none"><path d="M-6,3 L6,-3 L6,3"/></g>
@@ -257,6 +261,7 @@ knob(802, 68, "mix_osc2", label="OSC 2")
 knob(860, 68, "mix_noise", label="NOISE")
 
 # --- OVERSAMPLE (PC-side feature; the strip under MIXER) ---
+btn(756, 192, "tune_btn", color="btnWhite", label="TUNING", label_dy=38)
 btn(848, 192, "os", color="btnDark", label="OVERSAMPLE", label_dy=38)
 
 # --- FILTER (tall r1+r2) ---
@@ -364,6 +369,7 @@ for name, col in [("kColInk", "#f0f0f0"), ("kColScale", "#e8e8e8"), ("kColBox", 
                   ("kColBtnDark", "#262626"), ("kColBtnDarkStroke", "#7a7a7a"),
                   ("kColBtnGray", "#c9c9c9"), ("kColBtnGrayStroke", "#8f8f8f"),
                   ("kColBtnOrange", "#e0781e"), ("kColBtnOrangeStroke", "#a05215"),
+                  ("kColBtnWhite", "#f4f4f6"), ("kColBtnWhiteStroke", "#70707a"),
                   ("kColDispBg", "#2b0d0d"), ("kColDispStroke", "#7a7a7a"),
                   ("kColDispText", "#ff5a3c")]:
     hdr.append(f"inline constexpr uint32_t {name} = {c16(col)};\n")
@@ -373,7 +379,7 @@ enum TxtStyle { T_HDR = 0, T_LBL, T_SUB, T_NUM, T_SCALE };
 """)
 hdr.append("inline constexpr float kTxtSize[5] = {" + ", ".join(f"{TXT[s]}f" for s in STY) + "};\n")
 hdr.append("inline constexpr float kTxtTrack[5] = {" + ", ".join(f"{TRK[s]}f" for s in STY) + "};\n")
-hdr.append("""enum BtnColor { BC_DARK = 0, BC_GRAY, BC_ORANGE };
+hdr.append("""enum BtnColor { BC_DARK = 0, BC_GRAY, BC_ORANGE, BC_WHITE };
 enum Glyph { G_NONE = 0, G_SAW, G_TRI, G_SQ };
 // LED modes: 0 static, 1 lit when param nonzero, 2 lit when PROGRAM == bank*8+value
 struct Knob  { int pid; float x, y; bool white; int tickLo, tickHi; };
@@ -396,7 +402,7 @@ def arr(name, plural, items, fmt):
     hdr.append("};\n\n")
 
 arr("Knob", "kKnobs", knobs, lambda k: f"    {{{k['pid']}, {fx(k['x'])}, {fx(k['y'])}, {'true' if k['white'] else 'false'}, {int(k['ticks'][0])}, {int(k['ticks'][1])}}},")
-colorid = {"btnDark": "BC_DARK", "btnGray": "BC_GRAY", "btnOrange": "BC_ORANGE"}
+colorid = {"btnDark": "BC_DARK", "btnGray": "BC_GRAY", "btnOrange": "BC_ORANGE", "btnWhite": "BC_WHITE"}
 glyphid = {"": "G_NONE", "gSaw": "G_SAW", "gTri": "G_TRI", "gSq": "G_SQ"}
 arr("Btn", "kBtns", btns, lambda b: f"    {{{b['pid']}, {fx(b['x'])}, {fx(b['y'])}, {colorid[b['color']]}, "
                             f"{glyphid[b['glyph']]}, {'true' if b['led'] else 'false'}, {b['ledmode']}, {b['value']}}},")

@@ -33,7 +33,8 @@ static p5ui::State stateFor(const char *name, p5::Engine &e, int &programOut)
     p5::Patch p;
     int program = -1;                 // -1 == INIT
     const bool trimMode = !std::strcmp(name, "trim");
-    if (!std::strcmp(name, "init") || trimMode) { p5::patchInit(p); }
+    const bool tuneMode = !std::strcmp(name, "tune");
+    if (!std::strcmp(name, "init") || trimMode || tuneMode) { p5::patchInit(p); }
     else if (!std::strcmp(name, "pad"))  program = 1;
     else if (!std::strcmp(name, "arp"))  program = 42;
     else if (!std::strcmp(name, "bass")) program = 91;
@@ -47,6 +48,14 @@ static p5ui::State stateFor(const char *name, p5::Engine &e, int &programOut)
     const p5::Patch &pp = e.patch();
 
     p5ui::State s;
+    if (tuneMode)
+    {   // microtuning editor: 1/4-comma meantone-ish window, ranges deflected
+        s.tuneOpen = true;
+        std::snprintf(s.tuneName, sizeof s.tuneName, "1/4-comma meantone (demo)");
+        static const short demo[12] = { 0, -5, -3, 2, -4, 0, -4, -1, -3, 1, -2, -5 };
+        for (int i = 0; i < 12; i++) s.tuneDev[48 + i] = demo[i];
+        s.tuneUp = 5.f; s.tuneDn = 2.f;
+    }
     if (trimMode)
     {   // voice trim page, partly deflected, for the golden
         s.trimOpen = true;

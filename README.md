@@ -284,6 +284,33 @@ GLIDE, CC59/60/61/62/63 poly-mod, CC70 bend range, CC71 retrigger, CC73
 cutoff, CC103-110 envelopes, CC112-114 unison, CC116-119 wave switches,
 ...). Unassigned CCs are ignored. NRPN uses the same numbers, if wanted.
 
+## Microtuning & MPE (v1.12.0-tunebend)
+
+**TUNING** — white button left of OVERSAMPLE opens a microtuning editor (modal
+like EDIT): a C3–B3 window of the per-key deviation table (frequency and cents
+vs 12-TET), a **LOAD** file picker over `~/Documents/Muhammad Synth/Tunings/`
+(`.scl`, optionally paired with a same-stem `.kbm`; parsed with the Surge
+tuning-library, MIT, vendored under `vendor/tuning-library/`), and a big
+**RESET** that returns to 12-TET. Tunings apply live; zero deviation renders
+bit-identical to the untuned path. Deviations are per-1/16-semitone ints
+applied at voice start and mono legato, so nothing floats into the kernel.
+
+**Pitch bend ranges** — the editor carries BEND UP / BEND DOWN rails
+(0–24 semitones, asymmetric). Resolution law per channel:
+host-set range (RPN0 = CC101/100 select + CC6/CC38 data, or MPE absolute RCS
+CC#2) **>** editor default **>** patch wire byte (`BEND RANGE`).
+
+**MPE** — bend, note-on and note-off are channel-aware: every voice lane
+carries its MIDI channel and reads only its channel's bend lane (16 independent
+smoothed lanes, same ~6 ms law). Same key on two channels = two voices;
+releasing one channel leaves the other sounding. Voice reuse and note-off
+match within a channel, so all-ch0 firmware behavior is unchanged (A/B stayed
+bit-exact). CLAP note events pass `channel` through; raw-MIDI dialect takes it
+from the status nibble.
+
+State blob v7 persists the 128-key deviation table, tuning name, and the
+editor range defaults; v6 blobs still load (standard tuning, wire ranges).
+
 ## Measurements log
 
 * v1.11: trim offset +16 measured +1.009 semitones; drift depth 127 walks

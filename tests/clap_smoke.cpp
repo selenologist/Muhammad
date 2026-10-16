@@ -8,6 +8,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <cmath>
+#include <array>
+#include <utility>
 #include <vector>
 
 static int failures = 0;
@@ -247,6 +249,98 @@ int main(int argc, char **argv)
             std::printf("clap: damper held %.4f, after lift %.6f\n", held, dead);
             check("CC64 holds notes, lift releases", held > 0.05 && dead < 0.01 * held);   // >20 dB decay boundary
         }
+    }
+
+    {   // MPE routing through the real event path, twin fresh instances so the
+        // comparison is one-event-deep determinism, not carry-over state.
+        auto spawn = [&]() {
+            clap_plugin_t *q = (clap_plugin_t *)factory->create_plugin(factory, &host, desc->id);
+            q->init(q);
+            q->activate(q, 44100.0, 32, 1024);
+            q->start_processing(q);
+            return q;
+        };
+        float L1[512], R1[512];
+        auto feed = [&](clap_plugin_t *P, std::vector<std::array<uint8_t,3>> bytes, std::vector<float> *out, int blocks)
+        {
+            std::vector<clap_event_midi_t> ms(bytes.size());
+            EventList el{ {} };
+            for (size_t i = 0; i < bytes.size(); i++)
+            {   auto &m = ms[i];
+                m.header.type = CLAP_EVENT_MIDI; m.header.size = sizeof m; m.header.time = 0;
+                m.data[0] = bytes[i][0]; m.data[1] = bytes[i][1]; m.data[2] = bytes[i][2];
+                el.evs.push_back(&m.header);
+            }
+            clap_input_events_t in{ &el, EL_size, EL_get };
+            float *ch[2] = { L1, R1 };
+            clap_audio_buffer_t ab{}; ab.channel_count = 2; ab.data32 = ch;
+            clap_process_t pr{};
+            pr.in_events = &in; pr.out_events = nullptr; pr.audio_outputs = &ab; pr.frames_count = 512;
+            P->process(P, &pr);
+            if (out) for (int i = 0; i < 512; i++) out->push_back(L1[i]);
+            pr.in_events = nullptr;
+            for (int b = 0; b < blocks; b++)
+            {
+                P->process(P, &pr);
+                if (out) for (int i = 0; i < 512; i++) out->push_back(L1[i]);
+            }
+        };
+        const std::array<uint8_t,3> FASTREL[]{ {0xB0,110,6} };
+        auto baseOn = [&](std::vector<std::array<uint8_t,3>> tail)
+        {   std::vector<std::array<uint8_t,3>> v{ FASTREL[0] };
+            for (auto &t : tail) v.push_back(t);
+            return v; };
+        std::vector<float> ref1, ref2, bendOwn, bendIdle, rpn12;
+        clap_plugin_t *P1 = spawn(), *P2 = spawn(), *P3 = spawn(), *P4 = spawn(), *P5 = spawn();
+        feed(P1, baseOn({ {0x92,60,100} }), &ref1, 90);
+        feed(P2, baseOn({ {0x92,60,100} }), &ref2, 90);
+        feed(P3, baseOn({ {0x92,60,100}, {0xE2,127,127} }), &bendOwn, 90);
+        feed(P4, baseOn({ {0x92,60,100}, {0xE7,127,127} }), &bendIdle, 90);
+        feed(P5, baseOn({ {0xB2,101,0}, {0xB2,100,0}, {0xB2,6,5}, {0xB2,38,0},     // RPN0 = 5 st ON CH2
+                          {0x92,60,100}, {0xE2,127,127} }), &rpn12, 90);
+        check("MPE: fresh instances render the identical feed identically", ref1 == ref2);
+        check("MPE: bend on an idle channel is exactly inaudible", ref1 == bendIdle);
+        check("MPE: bend on the voice's own channel moves it", bendOwn != ref1);
+        // wire default at INIT is raw 0x40 -> 12 st; RPN0 = 5 st must change the bend depth
+        check("MPE: RPN0 range overrides the wire default", rpn12 != bendOwn && rpn12 != ref1);
+        // same key, two channels: release one, the other holds (fresh pair)
+        std::vector<float> twoCh, oneCh;
+        clap_plugin_t *P6 = spawn(), *P7 = spawn();
+        feed(P6, baseOn({ {0x92,60,100}, {0x93,60,100}, {0x82,60,0} }), &twoCh, 90);
+        feed(P7, baseOn({ {0x92,60,100}, {0x82,60,0}, {0x93,60,0}, {0x83,60,0} }), &oneCh, 90);
+        double pk2 = 0, pk1 = 0;
+        for (size_t i = 40*512; i < twoCh.size(); i++) pk2 = std::max(pk2, (double)std::fabs(twoCh[i]));
+        for (size_t i = 40*512; i < oneCh.size(); i++) pk1 = std::max(pk1, (double)std::fabs(oneCh[i]));
+        std::printf("clap: MPE ch-hold peak %.4f, all-released peak %.6f\n", pk2, pk1);
+        check("MPE: same key, other channel survives the release", pk2 > 0.05 && pk1 < 0.01 * pk2);
+        for (auto *P : {P1,P2,P3,P4,P5,P6,P7}) { P->stop_processing(P); P->destroy(P); }
+    }
+
+    {   // state blob v7: version byte + a hand-stripped v6 blob still loads
+        const clap_plugin_state_t *st7 = (const clap_plugin_state_t *)plugin->get_extension(plugin, CLAP_EXT_STATE);
+        struct O7 { static int64_t w7(const clap_ostream_t *o, const void *d, uint64_t n) {
+            auto *v = (std::vector<char> *)o->ctx; const char *p2 = (const char *)d;
+            v->insert(v->end(), p2, p2 + n); return (int64_t)n; } };
+        std::vector<char> blob7;
+        clap_ostream_t os7{ &blob7, O7::w7 };
+        bool ok7 = st7->save(plugin, &os7);
+        uint32_t ver = 0;
+        if (ok7 && blob7.size() >= 8) std::memcpy(&ver, blob7.data() + 4, 4);
+        check("state blob version 7", ok7 && ver == 7);
+        std::vector<char> blob6 = blob7;
+        const size_t tail = 2 * 128 + 2 * 2 + 40;         // dev + ranges + name
+        bool sizes = blob6.size() > tail;
+        if (sizes)
+        {   blob6.resize(blob6.size() - tail);
+            const uint32_t v6 = 6; std::memcpy(blob6.data() + 4, &v6, 4); }
+        auto rd7 = [](const clap_istream_t *s, void *b, uint64_t n) -> int64_t {
+            auto *st = (std::pair<std::vector<char>*, size_t> *)s->ctx;
+            if (st->second + n > st->first->size()) return 0;
+            std::memcpy(b, st->first->data() + st->second, n); st->second += n; return (int64_t)n; };
+        std::pair<std::vector<char>*, size_t> cur6{ &blob6, 0 };
+        clap_istream_t is6{ &cur6, rd7 };
+        bool ok6 = sizes && st7->load(plugin, &is6);
+        check("v6 blob loads with 300 bytes stripped (compat)", ok6 && blob6.size() == blob7.size() - tail);
     }
 
     {   // PAN WIDTH: readback, then a real per-voice stereo spread on the SIMD path

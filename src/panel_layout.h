@@ -26,6 +26,8 @@ inline constexpr uint32_t kColBtnGray = 0xc9c9c9u;
 inline constexpr uint32_t kColBtnGrayStroke = 0x8f8f8fu;
 inline constexpr uint32_t kColBtnOrange = 0xe0781eu;
 inline constexpr uint32_t kColBtnOrangeStroke = 0xa05215u;
+inline constexpr uint32_t kColBtnWhite = 0xf4f4f6u;
+inline constexpr uint32_t kColBtnWhiteStroke = 0x70707au;
 inline constexpr uint32_t kColDispBg = 0x2b0d0du;
 inline constexpr uint32_t kColDispStroke = 0x7a7a7au;
 inline constexpr uint32_t kColDispText = 0xff5a3cu;
@@ -34,7 +36,7 @@ inline constexpr uint32_t kColDispText = 0xff5a3cu;
 enum TxtStyle { T_HDR = 0, T_LBL, T_SUB, T_NUM, T_SCALE };
 inline constexpr float kTxtSize[5] = {12.0f, 8.4f, 8.0f, 9.2f, 6.6f};
 inline constexpr float kTxtTrack[5] = {1.6f, 0.8f, 1.4f, 0.5f, 0.0f};
-enum BtnColor { BC_DARK = 0, BC_GRAY, BC_ORANGE };
+enum BtnColor { BC_DARK = 0, BC_GRAY, BC_ORANGE, BC_WHITE };
 enum Glyph { G_NONE = 0, G_SAW, G_TRI, G_SQ };
 // LED modes: 0 static, 1 lit when param nonzero, 2 lit when PROGRAM == bank*8+value
 struct Knob  { int pid; float x, y; bool white; int tickLo, tickHi; };
@@ -44,7 +46,7 @@ struct Box   { float x, y, w, h; const char *header; };
 struct Rule  { float x1, y1, x2, y2; };
 struct Disp  { float x, y, w, h; };
 
-inline constexpr int kNumKnobs = 32, kNumBtns = 37, kNumTexts = 75, kNumBoxes = 11, kNumRules = 17, kNumDisplays = 1;
+inline constexpr int kNumKnobs = 32, kNumBtns = 38, kNumTexts = 76, kNumBoxes = 11, kNumRules = 17, kNumDisplays = 1;
 inline constexpr Knob kKnobs[] = {
         {32, 48.0f, 60.0f, false, 0, 10},
         {33, 112.0f, 60.0f, false, 0, 10},
@@ -102,6 +104,7 @@ inline constexpr Btn kBtns[] = {
         {11, 620.0f, 190.0f, BC_DARK, G_NONE, true, 1, 0},
         {12, 672.0f, 190.0f, BC_DARK, G_NONE, true, 1, 0},
         {52, 430.0f, 332.0f, BC_DARK, G_NONE, true, 1, 0},
+        {-6, 756.0f, 192.0f, BC_WHITE, G_NONE, true, 0, 0},
         {81, 848.0f, 192.0f, BC_DARK, G_NONE, true, 1, 0},
         {20, 934.0f, 78.0f, BC_GRAY, G_NONE, true, 1, 0},
         {19, 1196.0f, 196.0f, BC_DARK, G_NONE, true, 6, 0},
@@ -156,6 +159,7 @@ inline constexpr Text kTexts[] = {
         {744.0f, 102.0f, T_LBL, "OSC 1"},
         {802.0f, 102.0f, T_LBL, "OSC 2"},
         {860.0f, 102.0f, T_LBL, "NOISE"},
+        {756.0f, 230.0f, T_LBL, "TUNING"},
         {848.0f, 230.0f, T_LBL, "OVERSAMPLE"},
         {934.0f, 107.0f, T_LBL, "MODEL"},
         {988.0f, 108.0f, T_LBL, "CUTOFF"},

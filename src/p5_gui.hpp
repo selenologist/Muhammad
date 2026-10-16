@@ -29,6 +29,13 @@ struct State
     char pickerRows[7][44] = {};
     // voice trim page: [lane][osc][scale,offset]
     bool trimOpen = false;
+    // microtuning editor (TUNING): octave window of the dev table + picker + bend ranges
+    bool tuneOpen = false, tunePick = false;
+    char tuneName[40] = "12-TET";
+    short tuneDev[128] = {};
+    float tuneUp = 2.f, tuneDn = 2.f;           // editor default ranges, semitones
+    const char *tuneRows[8] = {};               // "standard" + Tunings files
+    int tuneRowCount = 0, tunePage = 0, tunePages = 1, tuneSel = -1;
     short trimV[32] = {};
     const char *modalTitle = nullptr;
     const char *modalPrompt = nullptr;
@@ -100,6 +107,21 @@ inline int valueAt(int col, float lx)
     t = t < 0.f ? 0.f : t > 1.f ? 1.f : t;
     return (int)(t * 127.0f + 0.5f);
 }
+}
+
+// ---- microtuning editor page geometry (renderer draws, gui_x11 hit-tests) ----
+namespace tune {
+constexpr float x = 250, y = 20, w = 1060, h = 408;
+constexpr int rows = 12;                        // octave window C3..B3
+inline float rowTop(int i) { return y + 76 + i * 22; }
+constexpr float btnY = 360, btnH = 26;
+constexpr float loadX = 280, loadW = 140, resetX = 440, resetW = 140;
+constexpr float railX[2] = { 780, 1040 };       // BEND UP / BEND DOWN (0..24 st)
+constexpr float railW = 160, railY = 250;
+inline float railHandleX(int k, float v) { return railX[k] + (v / 24.f) * railW; }
+float railValAt(int k, float lx);               // 0..24 semitones, clamped
+bool inside(float lx, float ly);
+int hitControl(float lx, float ly);             // 1 LOAD 2 RESET 3/4 rails, 0 miss
 }
 void pointToLayout(float px, float py, float w, float h, float &lx, float &ly);
 int knobAt(const State &s, float px, float py, float w, float h);

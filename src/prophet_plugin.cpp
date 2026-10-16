@@ -578,7 +578,10 @@ static bool plugin_init(const clap_plugin_t *p)
 {
     std::fprintf(stderr, "[p5] plugin init: Muhammad build %s (gui-x11, 7-bit law, coalesced gestures, xembed)\n",
                  kDescriptor.version);
-    return fromPlugin(p) != nullptr;
+    auto *s = fromPlugin(p);
+    if (!s) return false;
+    for (int i = 0; i < 16; i++) { s->rpnM_[i] = s->rpnL_[i] = 127; s->rpnV_[i] = 0; }  // RPN deselected on ALL channels
+    return true;
 }
 
 static void plugin_destroy(const clap_plugin_t *p)
