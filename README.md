@@ -253,17 +253,26 @@ panel globals on the original, EDIT overlays ride params 64..71.
 ## Voice trim, DRIFT, and Rev4 MIDI CC (v1.11)
 
 **EDIT -> V/OCT TRIM page.** The EDIT button opens a modal calibration page:
-two bar-sliders per voice (8 rows) — SCALE (slope error, pivoted at C4) and
-OFFSET (1/16-semitone shift) — exactly the trimmers under an analog lid.
-Values are fixed per voice until retrimmed, applied at note-on, persisted in
-the session state (blob v5). Neutral = 64 = bit-identical to a stock engine.
+**per oscillator** — 8 voice rows x 4 rails (A SCALE, A OFFSET, B SCALE,
+B OFFSET): slope error pivoted at C4 and 1/16-semitone offset, exactly the
+trimmers under an analog lid. Trims apply at each oscillator's increment read,
+AFTER the shared glide/CV bus — the hardware topology, so per-osc detune and
+glide interact the real way. Persistence: state blob v6 = the DAW PROJECT
+(the song carries the instance's calibration); they are deliberately NOT
+patch bytes — switching presets never re-trims the machine. v5 blobs expand
+the old one-per-voice value to both oscillators. Neutral = 64 = bit-identical.
+Drift and trim are live: held notes keep re-shaping, no retrigger needed.
 
 **VINTAGE is now DRIFT** (param 86, depth 0..127): per-voice leaky random
-walks (OU processes at control-block rate) wander pitch (A and B oppositely),
-cutoff, and amplitude — continuous across notes, like a hot board. The
-firmware's old static per-note roulette is retired, and raw byte 37 is left
-opaque: Sequential's factory wire files own that slot (137 of 200 carry
-non-zero data), so Muhammad never reads it any more.
+walks (OU processes, ~1.5 s tau) wander pitch (A and B oppositely), cutoff,
+and amplitude — continuous across notes, like a hot board. The firmware's old
+static per-note roulette is retired, and raw byte 37 is left opaque:
+Sequential's factory wire files own that slot (137 of 200 carry non-zero
+data), so Muhammad never reads it any more. Measured cost of max drift:
++1.1% (wide 8 voices), within noise (1 v) — block-rate arithmetic, ~0.15
+ops/sample. (First cut had a DC-biased noise draw that parked the walk at
+about -110 cents — a "fixed detune", caught by the unit suite; the drift
+checks now assert unbiasedness directly from early-vs-neutral pitch.)
 
 **Rev4-compatible MIDI CC** (per Sequential's Prophet-5 MIDI Implementation
 1.4 — its parameter numbering is identical to the wire enum): CC1 mod wheel,

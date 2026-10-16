@@ -83,7 +83,7 @@ const clap_plugin_descriptor_t kDescriptor = {
     "selenologist",
     "https://github.com/keremimo/melodee",
     nullptr, nullptr,
-    "1.11.0-trimdrift",   // bump per shipped build: the version Bitwig shows proves which binary is loaded
+    "1.11.1-osctrims",   // bump per shipped build: the version Bitwig shows proves which binary is loaded
     "P5 clone (PROPHET engine ported from the Melodee firmware)",
     kFeatures
 };
@@ -822,7 +822,7 @@ const clap_plugin_params_t kParams = { par_count, par_get_info, par_get_value,
 
 // ---- state (versioned binary blob) --------------------------------------------
 #define PW_STATE_MAGIC 0x5035434Cu            // "P5CL"
-#define PW_STATE_VERSION 5u
+#define PW_STATE_VERSION 6u
 static bool wr(const clap_ostream_t *o, const void *b, size_t n)
 { return o->write(o, b, (uint64_t)n) == (int64_t)n; }
 static bool state_save(const clap_plugin_t *p, const clap_ostream_t *out)
@@ -837,8 +837,10 @@ static bool state_save(const clap_plugin_t *p, const clap_ostream_t *out)
     int16_t gui[3] = { (int16_t)s->engine.tuneCents(), (int16_t)s->program, (int16_t)s->bank };
     int16_t pan = (int16_t)s->engine.panWidth();
     int16_t dr = (int16_t)s->engine.driftDepth();
-    int16_t tr[16];
-    for (int i = 0; i < 8; i++) { int sc, of; s->engine.voiceTrim(i, &sc, &of); tr[2*i] = (int16_t)sc; tr[2*i+1] = (int16_t)of; }
+    int16_t tr[32];   // per-voice, per-oscillator: [lane][osc][scale,offset]
+    for (int i = 0; i < 8; i++)
+        for (int k = 0; k < 2; k++)
+        { int sc, of; s->engine.voiceTrim(i, k, &sc, &of); tr[4*i+2*k] = (int16_t)sc; tr[4*i+2*k+1] = (int16_t)of; }
     return wr(out, head, sizeof head) && wr(out, s->engine.patch().raw, 133) &&
            wr(out, ov, sizeof ov) && wr(out, &trim, sizeof trim) && wr(out, &os, sizeof os) &&
            wr(out, gui, sizeof gui) && wr(out, &pan, sizeof pan) &&
@@ -872,11 +874,18 @@ static bool state_load(const clap_plugin_t *p, const clap_istream_t *in)
             if (head[1] >= 4u) { int16_t pan = 0; if (rd(in, &pan, sizeof pan)) s->engine.setPanWidth(pan); }
             if (head[1] >= 5u)
             {
-                int16_t dr = 0, tr[16];
+                int16_t dr = 0, tr[32];
                 if (!rd(in, &dr, sizeof dr)) return false;
-                if (!rd(in, tr, sizeof tr)) return false;
+                const int nvals = head[1] >= 6u ? 32 : 16;
+                if (!rd(in, tr, (size_t)nvals * sizeof tr[0])) return false;
                 s->engine.setDriftDepth(dr);
-                for (int i = 0; i < 8; i++) s->engine.setVoiceTrim(i, tr[2*i], tr[2*i+1]);
+                for (int i = 0; i < 8; i++)
+                {
+                    if (head[1] >= 6u)
+                        for (int k = 0; k < 2; k++) s->engine.setVoiceTrim(i, k, tr[4*i+2*k], tr[4*i+2*k+1]);
+                    else  /* v5: one trim per voice, apply to both oscillators */
+                        for (int k = 0; k < 2; k++) s->engine.setVoiceTrim(i, k, tr[2*i], tr[2*i+1]);
+                }
             }
         }
     }

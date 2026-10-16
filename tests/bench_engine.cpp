@@ -7,11 +7,12 @@
 #include <string>
 #include "p5_engine.hpp"
 
-static double bench(p5::KernelMode mode, int voices, int os = 1)
+static double bench(p5::KernelMode mode, int voices, int os = 1, int drift = 0)
 {
     p5::Engine e(mode);
     e.activate(44100);
     e.setOverSample(os);
+    e.setDriftDepth(drift);
     e.setPolyphony(8);
     p5::Patch p;
     p5::patchInit(p);
@@ -37,5 +38,8 @@ int main()
     printf("8 voices os2   : %6.1f ns/sample\n", bench(p5::KernelMode::Wide, 8, 2));
     printf("1 voice  scalar: %6.1f ns/sample\n", bench(p5::KernelMode::Scalar, 1));
     printf("1 voice  auto  : %6.1f ns/sample\n", bench(p5::KernelMode::Auto, 1));
+    printf("8 voices wide drift0  : %6.1f ns/sample\n", bench(p5::KernelMode::Wide, 8, 1, 0));
+    printf("8 voices wide drift127: %6.1f ns/sample\n", bench(p5::KernelMode::Wide, 8, 1, 127));
+    printf("1 voice  auto  drift127: %6.1f ns/sample\n", bench(p5::KernelMode::Auto, 1, 1, 127));
     return 0;
 }

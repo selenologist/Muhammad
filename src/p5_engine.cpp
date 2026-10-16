@@ -166,7 +166,7 @@ void Engine::silenceReset()
     vage_ = 0;   // (the firmware's vage clock is process-global; the A/B harness resets it per scenario)
     for (int i = 0; i < MAXV; i++)
     {
-        trimS_[i] = trimO_[i] = 64;
+        lanes_[i].trimS[0] = lanes_[i].trimS[1] = lanes_[i].trimO[0] = lanes_[i].trimO[1] = 64;
         wP_[i] = wF_[i] = wA_[i] = 0.0f;
         wSt_[i] = (uint32_t)(0x9E3779B9u + i * 0x85EBCA6Bu);
     }
@@ -224,7 +224,7 @@ void Engine::voiceStart(int lane, int note, int vel, uint8_t mvel, int *voiceWas
     l.v.active = 1;
     l.v.stage = 1;
     l.v.age = ++vage_;
-    l.v.pitch16 = applyTrim(lane, note * 16 + tuneUnits_);
+    l.v.pitch16 = note * 16 + tuneUnits_;
     l.v.pitchCur = l.v.pitch16;                   // glide_set: the track's glide is off
     l.v.mvel = mvel;                              // t->m_vel (mod.c: the note's VEL)
     if (!*sounding) { l.v.env = 0; l.v.envOut = 0; }
@@ -315,7 +315,7 @@ void Engine::monoNoteOn(int note, int vel)
             }
         } else {
             l.v.note = (uint8_t)want;                   // legato: new pitch, same envelope
-            l.v.pitch16 = applyTrim(i, want * 16 + tuneUnits_);
+            l.v.pitch16 = want * 16 + tuneUnits_;
             l.v.pitchCur = l.v.pitch16;
             l.v.mvel = (uint8_t)vel;
             if (vel > l.v.vel && nv == 1) l.v.vel = (uint8_t)vel;
@@ -407,21 +407,25 @@ void Engine::p5_update_bend()
     bendTarget_ = bendRaw_ * range / (bendRaw_ < 0 ? 8192 : 8191);
 }
 
-void Engine::setVoiceTrim(int lane, int scale, int offset)
+void Engine::setVoiceTrim(int lane, int osc, int scale, int offset)
 {
-    if (lane < 0 || lane >= MAXV) return;
-    trimS_[lane] = (int16_t)(scale < 0 ? 0 : scale > 127 ? 127 : scale);
-    trimO_[lane] = (int16_t)(offset < 0 ? 0 : offset > 127 ? 127 : offset);
+    if (lane < 0 || lane >= MAXV || osc < 0 || osc > 1) return;
+    Lane &l = lanes_[lane];
+    l.trimS[osc] = (int16_t)(scale < 0 ? 0 : scale > 127 ? 127 : scale);
+    l.trimO[osc] = (int16_t)(offset < 0 ? 0 : offset > 127 ? 127 : offset);
 }
-void Engine::voiceTrim(int lane, int *scale, int *offset) const
+void Engine::voiceTrim(int lane, int osc, int *scale, int *offset) const
 {
-    *scale = trimS_[lane]; *offset = trimO_[lane];
+    *scale = lanes_[lane].trimS[osc]; *offset = lanes_[lane].trimO[osc];
 }
 
-// V/oct calibration, 1/16-semitone domain, slope pivoted at C4 like a scope trim.
-int32_t Engine::applyTrim(int lane, int32_t p16) const
+// Per-oscillator V/oct calibration, 1/16-semitone domain, slope pivoted at C4
+// like a scope trim. Applied at the oscillator increment read, AFTER the shared
+// glide/CV bus — which is exactly the hardware topology: each osc's own trim
+// pot shapes its own control voltage.
+int32_t Engine::applyTrim(const Lane &l, int32_t p16, int osc)
 {
-    const int32_t sc = trimS_[lane] - 64, of = trimO_[lane] - 64;
+    const int32_t sc = l.trimS[osc] - 64, of = l.trimO[osc] - 64;
     int32_t pt = p16 + of + (int32_t)(((int64_t)(p16 - 960) * sc) >> 10);
     return pt < 0 ? 0 : pt > 2047 ? 2047 : pt;
 }
@@ -555,11 +559,11 @@ bool Engine::renderLane(Lane &l, int32_t mPitch16, int32_t mFine, int32_t mCutof
     // quantized; the patch bytes stay exact.
     const int32_t coarse_a = (i_clamp(q[P5_FREQ_A], 0, 96) / 2 - 12) * 16;
     const int32_t coarse_b = (i_clamp(q[P5_FREQ_B], 0, 96) / 2 - 12) * 16;
-    const int32_t pa = mPitch16 + glide + coarse_a + (int32_t)e_[2] * 16;
+    const int32_t pa = applyTrim(l, mPitch16 + glide + coarse_a + (int32_t)e_[2] * 16, 0);
     const int32_t pb = (p[P5_KEY_B] ? mPitch16 + glide + coarse_b
                                     : 12 * 16 + (int32_t)q[P5_FREQ_B] * 108 * 16 / 127) + (int32_t)e_[3] * 16;
     uint32_t ia = centsInc(pa, l.drift, mFine);
-    uint32_t ib = centsInc(pb, (int32_t)q[P5_FINE_B] * 100 / 128 - l.drift, mFine);
+    uint32_t ib = centsInc(applyTrim(l, pb, 1), (int32_t)q[P5_FINE_B] * 100 / 128 - l.drift, mFine);
     if (srScale_ != 1.0) {                            // pitch is exact at any host sr
         ia = (uint32_t)((double)ia * srScale_);
         ib = (uint32_t)((double)ib * srScale_);
@@ -674,13 +678,15 @@ void Engine::process(int32_t *out, uint32_t n)
                 for (int k = 0; k < 3; k++)
                 {
                     const uint32_t r = fastNoise32((int32_t *)&wSt_[i]);
-                    const float n01 = (float)(r >> 8) * (1.0f / 16777216.0f) - 1.0f;   // -1..1
-                    *w[k] = *w[k] * 0.9844f + n01 * 0.35f;
+                    const float n01 = ((float)(r >> 8) * (1.0f / 8388608.0f)) - 1.0f;   // -1..1 SYM
+                    *w[k] = *w[k] * 0.9995f + n01 * 0.11f;
                 }
                 const float v = (float)driftDepth_ * (1.0f / 127.0f);
-                l.drift       = (int)(wP_[i] * v * 10.0f);
-                l.filterDrift = (int)(wF_[i] * v * 170.0f);
-                l.ampDrift    = (int)(wA_[i] * v * 340.0f);
+                // slow corner (~1.5 s tau): drift, not flutter. Scales are the
+                // firmware's old static-draw magnitudes so max depth feels familiar.
+                l.drift       = (int)(wP_[i] * v * 4.0f);     // cents, A up as B down
+                l.filterDrift = (int)(wF_[i] * v * 110.0f);
+                l.ampDrift    = (int)(wA_[i] * v * 260.0f);
             }
             int32_t env = adsrTick(l);
             if (v.active) {                       // ownenv: the engine's envelopes end the voice

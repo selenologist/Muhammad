@@ -87,11 +87,17 @@ Ctx *ctxFrom(const clap_plugin_t *p)
 // ---- state <-> layout -------------------------------------------------------
 
 void applyTrimDrag(Ctx &c, float lx)
-{   // main-thread: engine trim setters are POD writes, next note-on picks them up
-    int sc, of;
-    c.plugin->engine.voiceTrim(c.trimRow, &sc, &of);
+{   // main-thread: engine trim setters are POD writes; trims apply at the
+    // oscillator increment read, so held notes keep re-trimming live
+    const int osc = c.trimCol / 2, which = c.trimCol % 2;
+    int sa, oa, sb, ob;
+    c.plugin->engine.voiceTrim(c.trimRow, 0, &sa, &oa);
+    c.plugin->engine.voiceTrim(c.trimRow, 1, &sb, &ob);
     const int v = p5ui::trim::valueAt(c.trimCol, lx);
-    c.plugin->engine.setVoiceTrim(c.trimRow, c.trimCol == 0 ? v : sc, c.trimCol == 1 ? v : of);
+    if (which == 0) { if (osc == 0) sa = v; else sb = v; }
+    else            { if (osc == 0) oa = v; else ob = v; }
+    c.plugin->engine.setVoiceTrim(c.trimRow, 0, sa, oa);
+    c.plugin->engine.setVoiceTrim(c.trimRow, 1, sb, ob);
 }
 
 void fillState(Ctx &c, p5ui::State &st)
@@ -99,7 +105,9 @@ void fillState(Ctx &c, p5ui::State &st)
     c.plugin->adoptPendingIdentity();
     st.trimOpen = (c.modal == 5);
     for (int i = 0; i < 8; i++)
-    {   int sc, of; c.plugin->engine.voiceTrim(i, &sc, &of); st.trimS[i] = (short)sc; st.trimO[i] = (short)of; }     // audio-thread PC applied bytes; pull identity here
+        for (int k = 0; k < 2; k++)
+        {   int sc, of; c.plugin->engine.voiceTrim(i, k, &sc, &of);
+            st.trimV[4*i+2*k] = (short)sc; st.trimV[4*i+2*k+1] = (short)of; }     // audio-thread PC applied bytes; pull identity here
     for (int i = 0; i < p5ui::kNumKnobs; i++)
         st.knob[i] = p5::knobNorm(p5ui::kKnobs[i].pid, c.plugin->guiValue(p5ui::kKnobs[i].pid));
     const int program = c.plugin->program, bank = c.plugin->bank;
@@ -169,7 +177,7 @@ void fillState(Ctx &c, p5ui::State &st)
             st.pickerCount++;
         }
     }
-    else if (c.modal)
+    else if (c.modal == 1 || c.modal == 2 || c.modal == 3)   // 5 = trim page, not a text modal
     {
         st.modalTitle = c.modal == 2 ? "ASSIGN BANK/PROGRAM"
                           : c.modal == 3 ? "OVERWRITE ?" : "SAVE PATCH";
@@ -282,7 +290,8 @@ void actuate(Ctx &c, int btnIdx, unsigned mods = 0)
         return;
     }
     if (b.pid == -1)                                  // EDIT: voice V/OCT trim page
-    {   c.modal = (c.modal == 5) ? 0 : 5; c.trimDrag = 0; return; }
+    {   std::fprintf(stderr, "[p5gui] EDIT actuate: modal %d -> %d\n", c.modal, c.modal == 5 ? 0 : 5);
+        c.modal = (c.modal == 5) ? 0 : 5; c.trimDrag = 0; return; }
     if (b.pid < 0) return;                            // decorative
     if (b.ledmode == 2)                               // quickload buttons 1-8
     {

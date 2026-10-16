@@ -136,8 +136,8 @@ public:
     void setDriftDepth(int d) { driftDepth_ = d < 0 ? 0 : d > 127 ? 127 : d; }
     int  driftDepth() const { return driftDepth_; }
     void setBrightness(int b) { brightness_ = b < 0 ? 0 : b > 127 ? 127 : b; }
-    void setVoiceTrim(int lane, int scale, int offset);
-    void voiceTrim(int lane, int *scale, int *offset) const;
+    void setVoiceTrim(int lane, int osc, int scale, int offset);
+    void voiceTrim(int lane, int osc, int *scale, int *offset) const;
     const int32_t *lastMix() const { return mixTap_; }   // pre-post block (debug)
     void setKernelMode(KernelMode m) { mode_ = m; }
 
@@ -159,6 +159,8 @@ private:
         int32_t drift, filterDrift, ampDrift, envDrift;   // vintage mismatch, fixed per note
         float filterPrev, ampPrev;            // f0/a0 carried across blocks
         int32_t glidePitch;                   // s->glide_pitch (engine glide)
+        int16_t trimS[2] = {64, 64};          // per-OSC V/oct slope trim, 64 = neutral
+        int16_t trimO[2] = {64, 64};          // per-OSC V/oct offset trim
         int32_t lastPcm;                      // for the one-block release fade
         int32_t panG[2] = { 32768, 32768 };   // Q15 (max 32768): Oberheim-style slot pan
         LaneParams p;
@@ -184,11 +186,11 @@ private:
     int16_t e_[8] = {0, 0, 0, 0, 0, 0, 0, 0}; // P_E0..P_E7 editor overlays
     uint8_t value_[55] = {0};                 // part->value: p5_value-clamped knobs
     int driftDepth_ = 0, brightness_ = 0;
-    int16_t trimS_[MAXV];                     // V/oct slope trim, 64 = neutral
-    int16_t trimO_[MAXV];                     // V/oct offset trim, 64 = neutral
+    static int32_t applyTrim(const Lane &l, int32_t p16, int osc);
+
     float wP_[MAXV], wF_[MAXV], wA_[MAXV];    // DRIFT thermal walks: pitch, cutoff, amp
     uint32_t wSt_[MAXV];                      // walk LCGs (separate from the osc noise state)
-    int32_t applyTrim(int lane, int32_t p16) const;
+
     uint32_t lfoPhase_ = 0;
     int32_t lastPitch_ = 0, modNoise_ = 0;
     float wheel_[CTL_ * 2], wheelPitch_[CTL_ * 2];   // CTL * oversample entries

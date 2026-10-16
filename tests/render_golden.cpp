@@ -50,7 +50,9 @@ static p5ui::State stateFor(const char *name, p5::Engine &e, int &programOut)
     if (trimMode)
     {   // voice trim page, partly deflected, for the golden
         s.trimOpen = true;
-        for (int i = 0; i < 8; i++) { s.trimS[i] = (short)(64 + (i % 3) * 6 - 6); s.trimO[i] = (short)(64 - i * 4); }
+        for (int i = 0; i < 8; i++) for (int k = 0; k < 2; k++)
+        {   s.trimV[4*i+2*k] = (short)(64 + ((i + k) % 3) * 6 - 6);
+            s.trimV[4*i+2*k+1] = (short)(64 - i * 3 + k * 2); }
     }
     for (int i = 0; i < p5ui::kNumKnobs; i++)
     {

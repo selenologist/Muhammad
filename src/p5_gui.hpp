@@ -27,9 +27,9 @@ struct State
     int  pickerSel = -1;             // row currently matching the loaded patch
     int  pickerBind = -1;            // row whose ASSIGN is armed
     char pickerRows[7][44] = {};
-    // voice trim page
+    // voice trim page: [lane][osc][scale,offset]
     bool trimOpen = false;
-    short trimS[8] = {}, trimO[8] = {};
+    short trimV[32] = {};
     const char *modalTitle = nullptr;
     const char *modalPrompt = nullptr;
     const char *modalText = nullptr;
@@ -80,20 +80,23 @@ bool hitClose(float lx, float ly);
 bool inside(float lx, float ly);
 }
 
-// voice V/OCT trim page (EDIT): 8 rows x scale/offset bar-sliders
+// voice V/OCT trim page (EDIT): 8 rows x 4 rails — per OSCILLATOR:
+// cols 0,1 = OSC A scale/offset; cols 2,3 = OSC B scale/offset
 namespace trim {
-constexpr float x = 300, y = 20, w = 960, h = 408;
+constexpr float x = 190, y = 20, w = 1180, h = 408;
 constexpr int rows = 8;
-inline float rowTop(int i) { return y + 56 + i * 42; }
-constexpr float scX = 410, scW = 350, ofX = 880, ofW = 330;
+inline float rowTop(int i) { return y + 72 + i * 40; }
+constexpr int ncols = 4;
+constexpr float railX[4] = { 290, 570, 860, 1140 };
+constexpr float railW = 200;
 bool inside(float lx, float ly);
-int hitBar(float lx, float ly, int *row, int *col);   // 1 hit, 0 miss (still inside)
-inline float barX(int col) { return col ? ofX : scX; }
-inline float barW(int col) { return col ? ofW : scW; }
-inline float handleX(int col, int v) { return barX(col) + (float)v * (barW(col) * (1.0f / 127.0f)); }
+int hitBar(float lx, float ly, int *row, int *col);   // 1 hit (col may be -1), 0 miss
+inline float barX(int col) { return railX[col]; }
+inline float barW(int col) { return railW; }
+inline float handleX(int col, int v) { return railX[col] + (float)v * (railW * (1.0f / 127.0f)); }
 inline int valueAt(int col, float lx)
 {
-    float t = (lx - barX(col)) / barW(col);
+    float t = (lx - railX[col]) / railW;
     t = t < 0.f ? 0.f : t > 1.f ? 1.f : t;
     return (int)(t * 127.0f + 0.5f);
 }

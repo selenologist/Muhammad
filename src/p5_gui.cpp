@@ -460,40 +460,46 @@ void draw(const Gui &g, const State &s, float w, float h)
         nvgFontSize(g.vg, 17.f);
         nvgTextAlign(g.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
         nvgFillColor(g.vg, col(kColInk));
-        nvgText(g.vg, sxp(trim::x + trim::w / 2), syp(trim::y + 26),
-                "VOICE  V/OCT  TRIM        SCALE            OFFSET", nullptr);
+        nvgText(g.vg, sxp(trim::x + trim::w / 2), syp(trim::y + 22),
+                "VOICE  V/OCT  TRIM   -   PER  OSCILLATOR", nullptr);
+        nvgFontSize(g.vg, 12.f);
+        static const char *const kCols[4] = { "A SCALE", "A OFFSET", "B SCALE", "B OFFSET" };
+        for (int k = 0; k < trim::ncols; k++)
+            nvgText(g.vg, sxp(trim::railX[k] + trim::railW / 2), syp(trim::y + 46), kCols[k], nullptr);
         nvgFontSize(g.vg, 11.f);
         nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
-        nvgText(g.vg, sxp(trim::x + 14), syp(trim::y + trim::h - 8),
-                "calibration pots, fixed per voice - like under the lid. EDIT closes.", nullptr);
+        nvgText(g.vg, sxp(trim::x + 14), syp(trim::y + trim::h - 10),
+                "trimmers fixed per oscillator - like under the lid. EDIT closes.", nullptr);
         for (int i = 0; i < trim::rows; i++)
         {
-            const float ry = trim::rowTop(i) + 12;
+            const float ry = trim::rowTop(i) + 10;
             char lab[8];
             std::snprintf(lab, sizeof lab, "V%d", i + 1);
             nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
-            nvgText(g.vg, sxp(trim::x + 74), syp(ry), lab, nullptr);
-            for (int k = 0; k < 2; k++)
+            nvgFillColor(g.vg, col(kColInk));
+            nvgText(g.vg, sxp(trim::x + 66), syp(ry), lab, nullptr);
+            for (int k = 0; k < trim::ncols; k++)
             {
-                const int v = k ? s.trimO[i] : s.trimS[i];
-                const float bx = trim::barX(k), bw = trim::barW(k);
-                nvgBeginPath(g.vg);                       // rail
+                const int v = s.trimV[4*i + 2*(k/2) + (k%2)];
+                const float bx = trim::railX[k], bw = trim::railW;
+                nvgBeginPath(g.vg);
                 nvgRect(g.vg, bx, ry - 1.5f, bw, 3);
                 nvgFillColor(g.vg, nvgRGBA(70, 70, 78, 255));
                 nvgFill(g.vg);
-                nvgBeginPath(g.vg);                       // centre tick at neutral
-                nvgRect(g.vg, bx + bw * (64.0f / 127.0f) - 0.75f, ry - 9.f, 1.5f, 18.f);
+                nvgBeginPath(g.vg);
+                nvgRect(g.vg, bx + bw * (64.0f / 127.0f) - 0.75f, ry - 8.f, 1.5f, 16.f);
                 nvgFillColor(g.vg, nvgRGBA(120, 120, 130, 255));
                 nvgFill(g.vg);
                 const float hx = trim::handleX(k, v);
-                nvgBeginPath(g.vg);                       // handle
-                nvgCircle(g.vg, hx, ry, 8);
+                nvgBeginPath(g.vg);
+                nvgCircle(g.vg, hx, ry, 7);
                 nvgFillColor(g.vg, v == 64 ? nvgRGBA(150, 150, 158, 255) : nvgRGBA(240, 160, 30, 255));
                 nvgFill(g.vg);
                 char vt[8];
-                std::snprintf(vt, sizeof vt, "%3d", v);
+                std::snprintf(vt, sizeof vt, "%d", v);
                 nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
-                nvgText(g.vg, sxp(bx + bw + 10), syp(ry), vt, nullptr);
+                nvgFillColor(g.vg, col(kColInk));
+                nvgText(g.vg, sxp(bx + bw + 7), syp(ry), vt, nullptr);
             }
         }
         nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_BASELINE);
@@ -630,11 +636,11 @@ int hitBar(float lx, float ly, int *row, int *col)
     for (int i = 0; i < rows; i++)
     {
         const float t = rowTop(i);
-        if (ly >= t - 10.f && ly <= t + 34.f)
+        if (ly >= t - 10.f && ly <= t + 30.f)
         {
             *row = i;
-            for (int k = 0; k < 2; k++)
-                if (lx >= barX(k) - 12.f && lx <= barX(k) + barW(k) + 12.f) { *col = k; return 1; }
+            for (int k = 0; k < ncols; k++)
+                if (lx >= barX(k) - 10.f && lx <= barX(k) + barW(k) + 10.f) { *col = k; return 1; }
             *col = -1; return 1;
         }
     }
