@@ -145,5 +145,5 @@
   <g class="button" data-param="edit_btn" transform="translate(1312,330)"><use xlink:href="#btnGray" href="#btnGray"/><use xlink:href="#ledOff" href="#ledOff"/><text class="lbl" y="36">EDIT</text></g>
   <g class="knob" data-param="pan_width" transform="translate(1376,330)"><use xlink:href="#knobScale" href="#knobScale"/><g class="dial" transform="rotate(-60)"><use xlink:href="#knobDial" href="#knobDial"/></g><text class="lbl" y="36">PAN WIDTH</text></g>
   <g class="knob" data-param="glide" transform="translate(1444,330)"><use xlink:href="#knobScale" href="#knobScale"/><g class="dial" transform="rotate(-60)"><use xlink:href="#knobDial" href="#knobDial"/></g><text class="lbl" y="36">GLIDE</text></g>
-  <g class="knob" data-param="vintage" transform="translate(1510,330)"><use xlink:href="#knobScale" href="#knobScale"/><g class="dial" transform="rotate(-60)"><use xlink:href="#knobDial" href="#knobDial"/></g><text class="lbl" y="36">VINTAGE</text></g>
+  <g class="knob" data-param="vintage" transform="translate(1510,330)"><use xlink:href="#knobScale" href="#knobScale"/><g class="dial" transform="rotate(-60)"><use xlink:href="#knobDial" href="#knobDial"/></g><text class="lbl" y="36">DRIFT</text></g>
 </svg>

@@ -22,7 +22,8 @@ constexpr clap_id PID_OS = 81;      // 0 = base rate (bit-exact), 1 = 2x oversam
 constexpr clap_id PID_TUNE = 82;    // master tune, -100..100 cents (control-path pitch offset)
 constexpr clap_id PID_PROGRAM = 83; // factory program 0..N-1; writing loads it (panel buttons)
 constexpr clap_id PID_BANK = 84;    // factory bank 0..N/8-1 (BANK SELECT cycles it)
-constexpr clap_id PID_PAN_WIDTH = 85;  // port extension: Oberheim-style per-voice stereo spread    // factory bank 0..N/8-1 (BANK SELECT cycles it)
+constexpr clap_id PID_PAN_WIDTH = 85;  // port extension: Oberheim-style per-voice stereo spread
+constexpr clap_id PID_DRIFT = 86;      // VINTAGE re-scoped: per-voice thermal walk depth (byte 37 retired)    // factory bank 0..N/8-1 (BANK SELECT cycles it)
 
 struct Plugin {
     explicit Plugin(const clap_host_t *host) : host(host) {}
@@ -39,6 +40,12 @@ struct Plugin {
     uint8_t slotRaw_[PW_FACTORY_N][133] = {};
     int16_t slotCode_[PW_FACTORY_N];                  // -1 init, -2 default, -3 file, else factory idx
     bool slotReady_ = false;
+    // Rev4 MIDI performance layer: CC7 volume * CC13 expression (linear,
+    // default exactly 1.0f so untouched renders are bit-identical), CC64 damper.
+    float ccVol = 1.0f, ccExp = 1.0f;
+    bool sustain_ = false;
+    uint8_t heldFlag_[128] = {}, heldNotes_[128] = {};
+    int heldCnt_ = 0;
     bool hasSrc_ = false;
     uint8_t srcRaw_[133] = {};
     bool floatValid_ = false;                 // presetRecall() may toggle back once

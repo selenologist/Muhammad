@@ -23,7 +23,7 @@ find_program(GIT_EXE git)
 execute_process(COMMAND ${GIT_EXE} rev-parse --short HEAD OUTPUT_VARIABLE P5_GIT OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
 execute_process(COMMAND ${GIT_EXE} status --porcelain OUTPUT_VARIABLE P5_DIRTY OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
 string(TIMESTAMP P5_BUILDDATE "%Y-%m-%d %H:%M")
-set(P5_VERSION "1.10.1-ftzdaz")
+set(P5_VERSION "1.11.0-trimdrift")
 set(P5_DIRTY_MARK "")
 if(P5_DIRTY)
     set(P5_DIRTY_MARK "-d")
@@ -147,6 +147,12 @@ endif()
 # ---- audio-thread allocation watchdog (LD_PRELOAD shim for clap_smoke) --------
 add_library(allocwatch SHARED tools/allocwatch.c)
 set_target_properties(allocwatch PROPERTIES PREFIX "")
+
+add_executable(test_trimdrift tests/test_trimdrift.cpp ${ENGINE_SOURCES})
+target_include_directories(test_trimdrift PRIVATE src external)
+if(TARGET m)
+    target_link_libraries(test_trimdrift PRIVATE m)
+endif()
 
 # ---- patch store unit test (headless; P5_STORE_DIR override) -----------------
 add_executable(test_store tests/test_store.cpp src/p5_store.cpp)

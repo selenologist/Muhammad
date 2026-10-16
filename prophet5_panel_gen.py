@@ -29,7 +29,7 @@ PID = {
     "flt_envamt": 40,
     "flt_a": 43, "amp_a": 44, "flt_d": 45, "amp_d": 46,
     "flt_s": 47, "amp_s": 48, "flt_r": 49, "amp_r": 50,
-    "release_btn": 51, "unison": 52, "unison_det": 54, "vintage": 37,
+    "release_btn": 51, "unison": 52, "unison_det": 54, "vintage": 86,   # DRIFT (byte 37 retired: Sequential owns it)
     "volume": 80, "master_tune": 82, "prog_bankselect": 84, "os": 81, "pan_width": 85, "unison_cnt": 53,
     "vel_amp": 42, "vel_flt": 41,
     "lfo_preset": -4, "flt_model": 20, "prog_preset": -3, "prog_record": -2,
@@ -306,7 +306,7 @@ btn(1312, 330, "edit_btn", color="btnGray", led=False, label="EDIT", label_dy=36
 # VINTAGE replaces the hardware TUNE button (0 = stable Rev4 .. 127 = loose Rev1)
 knob(1376, 330, "pan_width", label="PAN WIDTH", label_dy=36)
 knob(1444, 330, "glide", label="GLIDE", label_dy=36)
-knob(1510, 330, "vintage", label="VINTAGE", label_dy=36)
+knob(1510, 330, "vintage", label="DRIFT", label_dy=36)
 
 # ================= assemble SVG =================
 svg = f'''<?xml version="1.0" encoding="UTF-8"?>

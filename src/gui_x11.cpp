@@ -51,7 +51,8 @@ struct Ctx
     int dragKnob = -1, pressBtn = -1;
 
     // text-entry modal: 0 none, 1 save patch (RECORD), 2 assign slot (PRESET)
-    int modal = 0;                    // 1 save, 2 assign, 3 overwrite-confirm, 4 picker
+    int modal = 0;                    // 1 save, 2 assign, 3 overwrite-confirm, 4 picker, 5 trim
+    int trimDrag = 0, trimRow = 0, trimCol = 0;
     int pickerTab = 0, pickerPage = 0;
     std::vector<std::string> userRows;   // cached dir listing for the picker
     bool bindPending = false;            // ASSIGN armed: next program 1-8 binds
@@ -85,15 +86,28 @@ Ctx *ctxFrom(const clap_plugin_t *p)
 
 // ---- state <-> layout -------------------------------------------------------
 
+void applyTrimDrag(Ctx &c, float lx)
+{   // main-thread: engine trim setters are POD writes, next note-on picks them up
+    int sc, of;
+    c.plugin->engine.voiceTrim(c.trimRow, &sc, &of);
+    const int v = p5ui::trim::valueAt(c.trimCol, lx);
+    c.plugin->engine.setVoiceTrim(c.trimRow, c.trimCol == 0 ? v : sc, c.trimCol == 1 ? v : of);
+}
+
 void fillState(Ctx &c, p5ui::State &st)
 {
-    c.plugin->adoptPendingIdentity();     // audio-thread PC applied bytes; pull identity here
+    c.plugin->adoptPendingIdentity();
+    st.trimOpen = (c.modal == 5);
+    for (int i = 0; i < 8; i++)
+    {   int sc, of; c.plugin->engine.voiceTrim(i, &sc, &of); st.trimS[i] = (short)sc; st.trimO[i] = (short)of; }     // audio-thread PC applied bytes; pull identity here
     for (int i = 0; i < p5ui::kNumKnobs; i++)
         st.knob[i] = p5::knobNorm(p5ui::kKnobs[i].pid, c.plugin->guiValue(p5ui::kKnobs[i].pid));
     const int program = c.plugin->program, bank = c.plugin->bank;
     for (int i = 0; i < p5ui::kNumBtns; i++)
     {
         const auto &b = p5ui::kBtns[i];
+        if (b.pid == -1)                              // EDIT button LED: lit while page open
+        {   st.led[i] = c.modal == 5 ? 2 : 0; continue; }
         if (b.ledmode == 1) st.led[i] = c.plugin->guiValue(b.pid) != 0.0 ? 2 : 0;
         else if (b.ledmode == 2)
         {   // light the quickload button whose SLOT this patch is bound to
@@ -267,6 +281,8 @@ void actuate(Ctx &c, int btnIdx, unsigned mods = 0)
         else c.plugin->presetRecall();                      // press again = re-float
         return;
     }
+    if (b.pid == -1)                                  // EDIT: voice V/OCT trim page
+    {   c.modal = (c.modal == 5) ? 0 : 5; c.trimDrag = 0; return; }
     if (b.pid < 0) return;                            // decorative
     if (b.ledmode == 2)                               // quickload buttons 1-8
     {
@@ -451,6 +467,25 @@ void pump(Ctx &c)
                     }
                     break;
                 }
+                if (c.modal == 5)
+                {
+                    float lx, ly;
+                    p5ui::pointToLayout((float)ev.xbutton.x, (float)ev.xbutton.y,
+                                        (float)c.w, (float)c.h, lx, ly);
+                    if (!p5ui::trim::inside(lx, ly)) { c.modal = 0; dirty = true; break; }
+                    int row, col;
+                    if (p5ui::trim::hitBar(lx, ly, &row, &col) && col >= 0)
+                    {
+                        c.trimDrag = 1; c.trimRow = row; c.trimCol = col;
+                        applyTrimDrag(c, lx);
+                        XGrabPointer(c.dpy, c.win, True,
+                                     ButtonReleaseMask | PointerMotionMask, GrabModeAsync, GrabModeAsync,
+                                     None, None, CurrentTime);
+                        c.pointerGrabbed = true;
+                        dirty = true;
+                    }
+                    break;                            // page is modal: swallow the press
+                }
                 c.dragKnob = p5ui::knobAt(p5ui::State{}, (float)ev.xbutton.x, (float)ev.xbutton.y,
                                           (float)c.w, (float)c.h);
                 if (c.dragKnob >= 0)
@@ -479,9 +514,17 @@ void pump(Ctx &c)
                 { actuate(c, c.pressBtn, ev.xkey.state); dirty = true; }  // LEDs flip NOW
                 if (c.dragKnob >= 0)                        // gesture ends: tell the host the FINAL value
                 { c.plugin->guiSync((clap_id)p5ui::kKnobs[c.dragKnob].pid); dirty = true; }
-                c.dragKnob = -1; c.pressBtn = -1;
+                c.dragKnob = -1; c.pressBtn = -1; c.trimDrag = 0;
                 break;
             case MotionNotify:
+                if (c.trimDrag)
+                {
+                    float lx, ly;
+                    p5ui::pointToLayout((float)ev.xmotion.x, (float)ev.xmotion.y,
+                                        (float)c.w, (float)c.h, lx, ly);
+                    applyTrimDrag(c, lx);
+                    dirty = true;
+                }
                 if (c.dragKnob >= 0)
                 {
                     const double dy = (double)(c.dragStartY - ev.xmotion.y);

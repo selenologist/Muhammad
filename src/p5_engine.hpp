@@ -126,6 +126,18 @@ public:
     void setVoiceModeOverride(int m) { voiceModeOverride_ = m; }
     uint32_t liveVoices() const { return live_; }
     const char *simdPath() const;                   // "avx2" | "sse2" | "neon" - which wide kernel is live
+    // Per-voice V/oct calibration pots (the EDIT page): scale ±63 steps of
+    // ~1/16 semitone slope error across the keyboard, offset ±63 steps of
+    // 1/16 semitone, both centred at 64. Applied at note-on; fixed per voice
+    // until retrimmed, like the real trimmers under the lid.
+    // DRIFT (the re-scoped VINTAGE): depth 0..127 of the per-voice OU walks.
+    // Byte 37 stays opaque — Sequential's wire files own it, we retired the
+    // firmware's reinterpretation. BRIGHTNESS (Rev4 CC74): added to cutoff.
+    void setDriftDepth(int d) { driftDepth_ = d < 0 ? 0 : d > 127 ? 127 : d; }
+    int  driftDepth() const { return driftDepth_; }
+    void setBrightness(int b) { brightness_ = b < 0 ? 0 : b > 127 ? 127 : b; }
+    void setVoiceTrim(int lane, int scale, int offset);
+    void voiceTrim(int lane, int *scale, int *offset) const;
     const int32_t *lastMix() const { return mixTap_; }   // pre-post block (debug)
     void setKernelMode(KernelMode m) { mode_ = m; }
 
@@ -171,6 +183,12 @@ private:
     Patch patch_;
     int16_t e_[8] = {0, 0, 0, 0, 0, 0, 0, 0}; // P_E0..P_E7 editor overlays
     uint8_t value_[55] = {0};                 // part->value: p5_value-clamped knobs
+    int driftDepth_ = 0, brightness_ = 0;
+    int16_t trimS_[MAXV];                     // V/oct slope trim, 64 = neutral
+    int16_t trimO_[MAXV];                     // V/oct offset trim, 64 = neutral
+    float wP_[MAXV], wF_[MAXV], wA_[MAXV];    // DRIFT thermal walks: pitch, cutoff, amp
+    uint32_t wSt_[MAXV];                      // walk LCGs (separate from the osc noise state)
+    int32_t applyTrim(int lane, int32_t p16) const;
     uint32_t lfoPhase_ = 0;
     int32_t lastPitch_ = 0, modNoise_ = 0;
     float wheel_[CTL_ * 2], wheelPitch_[CTL_ * 2];   // CTL * oversample entries

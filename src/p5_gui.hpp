@@ -27,6 +27,9 @@ struct State
     int  pickerSel = -1;             // row currently matching the loaded patch
     int  pickerBind = -1;            // row whose ASSIGN is armed
     char pickerRows[7][44] = {};
+    // voice trim page
+    bool trimOpen = false;
+    short trimS[8] = {}, trimO[8] = {};
     const char *modalTitle = nullptr;
     const char *modalPrompt = nullptr;
     const char *modalText = nullptr;
@@ -75,6 +78,25 @@ inline float assignW() { return 86.f; }
 int hitPage(float lx, float ly);     // -1 prev, +1 next, 0 none
 bool hitClose(float lx, float ly);
 bool inside(float lx, float ly);
+}
+
+// voice V/OCT trim page (EDIT): 8 rows x scale/offset bar-sliders
+namespace trim {
+constexpr float x = 300, y = 20, w = 960, h = 408;
+constexpr int rows = 8;
+inline float rowTop(int i) { return y + 56 + i * 42; }
+constexpr float scX = 410, scW = 350, ofX = 880, ofW = 330;
+bool inside(float lx, float ly);
+int hitBar(float lx, float ly, int *row, int *col);   // 1 hit, 0 miss (still inside)
+inline float barX(int col) { return col ? ofX : scX; }
+inline float barW(int col) { return col ? ofW : scW; }
+inline float handleX(int col, int v) { return barX(col) + (float)v * (barW(col) * (1.0f / 127.0f)); }
+inline int valueAt(int col, float lx)
+{
+    float t = (lx - barX(col)) / barW(col);
+    t = t < 0.f ? 0.f : t > 1.f ? 1.f : t;
+    return (int)(t * 127.0f + 0.5f);
+}
 }
 void pointToLayout(float px, float py, float w, float h, float &lx, float &ly);
 int knobAt(const State &s, float px, float py, float w, float h);

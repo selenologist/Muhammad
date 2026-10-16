@@ -40,7 +40,7 @@ static const char *kOverlayNames[8] = {
 static const double kOverlayMin[8] = { -63, -63, -24, -24, -63, -63, -63, -63 };
 static const double kOverlayMax[8] = {  63,  63,  24,  24,  63,  63,  63,  63 };
 
-constexpr uint32_t PARAM_COUNT = 57 + NUM_OVERLAYS + 6;   // + trim, os, tune, program, bank, pan width
+constexpr uint32_t PARAM_COUNT = 57 + NUM_OVERLAYS + 7;   // + trim, os, tune, program, bank, pan width, drift
 
 static bool isRawParam(clap_id id) { return id < 57; }
 
@@ -61,6 +61,7 @@ const char *Plugin::nameOf(clap_id id)
     if (id == PID_PROGRAM) return "PROGRAM";
     if (id == PID_BANK) return "BANK";
     if (id == PID_PAN_WIDTH) return "PAN WIDTH";
+    if (id == PID_DRIFT) return "DRIFT";
     return "?";
 }
 
@@ -82,7 +83,7 @@ const clap_plugin_descriptor_t kDescriptor = {
     "selenologist",
     "https://github.com/keremimo/melodee",
     nullptr, nullptr,
-    "1.10.1-ftzdaz",   // bump per shipped build: the version Bitwig shows proves which binary is loaded
+    "1.11.0-trimdrift",   // bump per shipped build: the version Bitwig shows proves which binary is loaded
     "P5 clone (PROPHET engine ported from the Melodee firmware)",
     kFeatures
 };
@@ -155,6 +156,12 @@ static void applyParam(Plugin *s, clap_id id, double value)
         if (v > 127) v = 127;
         s->engine.setPanWidth(v);
     }
+    else if (id == PID_DRIFT) {
+        int v = (int)(value + 0.5);
+        if (v < 0) v = 0;
+        if (v > 127) v = 127;
+        s->engine.setDriftDepth(v);
+    }
 }
 
 static void requestHostParamFlush(Plugin *s)
@@ -181,6 +188,7 @@ static double paramValue(Plugin *s, clap_id id)
     if (id == PID_PROGRAM) return s->program < 0 ? 0 : s->program;
     if (id == PID_BANK) return s->bank;
     if (id == PID_PAN_WIDTH) return s->engine.panWidth();
+    if (id == PID_DRIFT) return s->engine.driftDepth();
     return 0;
 }
 
@@ -442,6 +450,49 @@ static void dispatchNoteOn(Plugin *s, int key, int vel)
     s->engine.noteOn(key, vel);
 }
 
+// Sequential "Prophet-5 (Rev4 family) MIDI Implementation 1.4" received-CC
+// table -> raw wire parameter indices (the NRPN numbering equals our raw
+// enum: GLIDE 13, ENV-FLT-AMT 40, BEND RANGE 86, RETRIGGER 87 — verified
+// against the official PDF). Specials (1/7/13/32/64/74/85/120/121/123) are
+// handled around this table. -1 = unassigned.
+static int ccRawParam(int cc)
+{   // Sequential Rev4-family CC -> raw wire parameter (impl 1.4); -1 = none.
+    switch (cc)
+    {
+    case   3: return 0;   case   9: return 1;   case  14: return 2;   case  15: return 3;
+    case  20: return 4;   case  21: return 8;   case  22: return 9;   case  23: return 10;
+    case  24: return 11;  case  25: return 12;  case  26: return 13;  case  27: return 14;
+    case  28: return 15;  case  29: return 16;  case  30: return 5;   case  31: return 18;
+    case  35: return 19;  case  41: return 20;  case  46: return 21;  case  47: return 22;
+    case  52: return 6;   case  53: return 26;  case  54: return 27;  case  55: return 28;
+    case  56: return 29;  case  57: return 30;  case  58: return 31;  case  59: return 32;
+    case  60: return 33;  case  61: return 34;  case  62: return 35;  case  63: return 36;
+    case  70: return 86;  case  71: return 87;  case  73: return 17;  case  86: return 38;
+    case  87: return 39;  case  89: return 40;  case  90: return 41;  case 102: return 42;
+    case 103: return 43;  case 104: return 44;  case 105: return 45;  case 106: return 46;
+    case 107: return 47;  case 108: return 48;  case 109: return 49;  case 110: return 50;
+    case 111: return 51;  case 112: return 52;  case 113: return 53;  case 114: return 54;
+    case 116: return 7;   case 117: return 23;  case 118: return 24;  case 119: return 25;
+    default: return -1;
+    }
+}
+
+static void noteOffGated(Plugin *s, int key)
+{   // CC64 damper: notes RELEASED under the pedal keep holding until it lifts
+    if (key >= 0 && key < 128 && s->sustain_)
+    {
+        if (!s->heldFlag_[key]) { s->heldFlag_[key] = 1; s->heldNotes_[s->heldCnt_++] = (uint8_t)key; }
+    }
+    else if (key >= 0 && key < 128) s->engine.noteOff(key);
+}
+
+static void panicVoices(Plugin *s)
+{   // CC120/123: everything off, sustain memory cleared
+    for (int k = 0; k < 128; k++) s->engine.noteOff(k);
+    std::memset(s->heldFlag_, 0, sizeof s->heldFlag_);
+    s->heldCnt_ = 0;
+}
+
 static void dispatchEvent(Plugin *s, const clap_event_header_t *ev)
 {
     switch (ev->type) {
@@ -450,10 +501,14 @@ static void dispatchEvent(Plugin *s, const clap_event_header_t *ev)
         dispatchNoteOn(s, e->key, (int)(e->velocity * 127.0 + 0.5));
         break;
     }
-    case CLAP_EVENT_NOTE_OFF:
+    case CLAP_EVENT_NOTE_OFF: {
+        auto *e = reinterpret_cast<const clap_event_note *>(ev);
+        noteOffGated(s, e->key);
+        break;
+    }
     case CLAP_EVENT_NOTE_CHOKE: {
         auto *e = reinterpret_cast<const clap_event_note *>(ev);
-        s->engine.noteOff(e->key);
+        s->engine.noteOff(e->key);            // choke bypasses the damper
         break;
     }
     case CLAP_EVENT_PARAM_VALUE:
@@ -466,12 +521,30 @@ static void dispatchEvent(Plugin *s, const clap_event_header_t *ev)
         auto *e = reinterpret_cast<const clap_event_midi *>(ev);
         const uint8_t st = e->data[0] & 0xF0u, d1 = e->data[1], d2 = e->data[2];
         switch (st) {
-        case 0x90: if (d2) dispatchNoteOn(s, d1, d2); else s->engine.noteOff(d1); break;
-        case 0x80: s->engine.noteOff(d1); break;
+        case 0x90: if (d2) dispatchNoteOn(s, d1, d2); else noteOffGated(s, d1); break;
+        case 0x80: noteOffGated(s, d1); break;
         case 0xE0: s->bendRaw = (int)(((d2 << 7) | d1) - 8192); s->engine.setBend(s->bendRaw); break;
         case 0xB0:
             if (d1 == 1) s->engine.setModWheel(d2);
             else if (d1 == 0) applyParam(s, PID_BANK, d2 / 8);      // CC0: bank cursor
+            else if (d1 == 7) s->ccVol = d2 * (1.0f / 127.0f);
+            else if (d1 == 13) s->ccExp = d2 * (1.0f / 127.0f);
+            else if (d1 == 32) applyParam(s, PID_BANK, d2 % (int)(PW_FACTORY_N / 8));
+            else if (d1 == 64)
+            {   // CC64 damper
+                const bool on = d2 >= 64;
+                if (s->sustain_ && !on)
+                {   // pedal lifts: everything the pedal was holding goes off
+                    for (int i = 0; i < s->heldCnt_; i++) { s->engine.noteOff(s->heldNotes_[i]); s->heldFlag_[s->heldNotes_[i]] = 0; }
+                    s->heldCnt_ = 0;
+                }
+                s->sustain_ = on;
+            }
+            else if (d1 == 74) s->engine.setBrightness(d2);
+            else if (d1 == 85) applyParam(s, PID_DRIFT, d2);        // Rev4 CC85 "vintage" == our DRIFT
+            else if (d1 == 120 || d1 == 123) panicVoices(s);
+            else if (d1 == 121) { s->ccVol = s->ccExp = 1.0f; s->engine.setBrightness(0); }
+            else { const int r = ccRawParam(d1); if (r >= 0) applyParam(s, (clap_id)r, d2); }
             break;
         case 0xC0: applyPcFromCache(s, d1 < 8 ? s->bank * 8 + d1 : d1); break;  // audio-safe cache memcpy
         case 0xD0: s->engine.setAftertouch(d2); break;
@@ -546,7 +619,7 @@ static void renderChunk(Plugin *s, clap_audio_buffer_t *ab, uint32_t from, uint3
         uint32_t k = frames > 32 ? 32 : frames;
         s->engine.process(s->scratch, k);
         float *L = ab->data32[0] + from, *R = ab->data32[1] + from;
-        const float trim = s->trim * (1.0f / 32768.0f);
+        const float trim = s->trim * (1.0f / 32768.0f) * s->ccVol * s->ccExp;   // Rev4 CC7/CC13
         const bool pan = s->engine.panActive();
         const int32_t *rbuf = s->engine.mixR();
         for (uint32_t i = 0; i < k; i++) {
@@ -669,11 +742,12 @@ static bool par_get_info(const clap_plugin_t *, uint32_t index, clap_param_info_
     else if (index < 57 + NUM_OVERLAYS + 2) { id = PID_OS; info->min_value = 0; info->max_value = 1; }
     else if (index < 57 + NUM_OVERLAYS + 3) { id = PID_TUNE; info->min_value = -100; info->max_value = 100; }
     else if (index < 57 + NUM_OVERLAYS + 4) { id = PID_PROGRAM; info->min_value = 0; info->max_value = PW_FACTORY_N - 1; }
-    else if (index < 57 + NUM_OVERLAYS + 6 - 1) { id = PID_BANK; info->min_value = 0; info->max_value = PW_FACTORY_N / 8 - 1; }
-    else { id = PID_PAN_WIDTH; info->min_value = 0; info->max_value = 127; }
+    else if (index < 57 + NUM_OVERLAYS + 6) { id = PID_BANK; info->min_value = 0; info->max_value = PW_FACTORY_N / 8 - 1; }
+    else if (index < 57 + NUM_OVERLAYS + 7) { id = PID_PAN_WIDTH; info->min_value = 0; info->max_value = 127; }
+    else { id = PID_DRIFT; info->min_value = 0; info->max_value = 127; }
     info->id = id;
     const bool stepped = isRawParam(id) || id == PID_TUNE || id == PID_PROGRAM || id == PID_BANK ||
-                         id == PID_PAN_WIDTH;
+                         id == PID_PAN_WIDTH || id == PID_DRIFT;
     info->flags = CLAP_PARAM_IS_AUTOMATABLE | CLAP_PARAM_IS_MODULATABLE |
                   (stepped ? CLAP_PARAM_IS_STEPPED : 0);
     std::snprintf(info->name, sizeof info->name, "%s", Plugin::nameOf(id));
@@ -697,7 +771,7 @@ static bool par_value_to_text(const clap_plugin_t *, clap_id id, double v, char 
     if (id == 56) { static const char *const kPr[4] = {"LOW","LOW RET","LAST","LAST RET"};
                     std::snprintf(buf, cap, "%s", kPr[(int)v & 3]); return true; }
     if (id == PID_TUNE) { std::snprintf(buf, cap, "%+d cents", (int)(v < 0 ? v - 0.5 : v + 0.5)); return true; }
-    if (id == PID_PROGRAM || id == PID_BANK || id == PID_PAN_WIDTH) { std::snprintf(buf, cap, "%d", (int)(v + 0.5)); return true; }
+    if (id == PID_PROGRAM || id == PID_BANK || id == PID_PAN_WIDTH || id == PID_DRIFT) { std::snprintf(buf, cap, "%d", (int)(v + 0.5)); return true; }
     if (isOverlayParam(id)) std::snprintf(buf, cap, "%+g", v);
     else std::snprintf(buf, cap, "%g", v);
     return true;
@@ -748,7 +822,7 @@ const clap_plugin_params_t kParams = { par_count, par_get_info, par_get_value,
 
 // ---- state (versioned binary blob) --------------------------------------------
 #define PW_STATE_MAGIC 0x5035434Cu            // "P5CL"
-#define PW_STATE_VERSION 4u
+#define PW_STATE_VERSION 5u
 static bool wr(const clap_ostream_t *o, const void *b, size_t n)
 { return o->write(o, b, (uint64_t)n) == (int64_t)n; }
 static bool state_save(const clap_plugin_t *p, const clap_ostream_t *out)
@@ -762,9 +836,13 @@ static bool state_save(const clap_plugin_t *p, const clap_ostream_t *out)
     int32_t os = s->engine.oversample();
     int16_t gui[3] = { (int16_t)s->engine.tuneCents(), (int16_t)s->program, (int16_t)s->bank };
     int16_t pan = (int16_t)s->engine.panWidth();
+    int16_t dr = (int16_t)s->engine.driftDepth();
+    int16_t tr[16];
+    for (int i = 0; i < 8; i++) { int sc, of; s->engine.voiceTrim(i, &sc, &of); tr[2*i] = (int16_t)sc; tr[2*i+1] = (int16_t)of; }
     return wr(out, head, sizeof head) && wr(out, s->engine.patch().raw, 133) &&
            wr(out, ov, sizeof ov) && wr(out, &trim, sizeof trim) && wr(out, &os, sizeof os) &&
-           wr(out, gui, sizeof gui) && wr(out, &pan, sizeof pan);
+           wr(out, gui, sizeof gui) && wr(out, &pan, sizeof pan) &&
+           wr(out, &dr, sizeof dr) && wr(out, tr, sizeof tr);
 }
 static bool rd(const clap_istream_t *i, void *b, size_t n)
 { return i->read(i, b, (uint64_t)n) == (int64_t)n; }
@@ -792,6 +870,14 @@ static bool state_load(const clap_plugin_t *p, const clap_istream_t *in)
             s->program = gui[1];
             s->bank = gui[2];
             if (head[1] >= 4u) { int16_t pan = 0; if (rd(in, &pan, sizeof pan)) s->engine.setPanWidth(pan); }
+            if (head[1] >= 5u)
+            {
+                int16_t dr = 0, tr[16];
+                if (!rd(in, &dr, sizeof dr)) return false;
+                if (!rd(in, tr, sizeof tr)) return false;
+                s->engine.setDriftDepth(dr);
+                for (int i = 0; i < 8; i++) s->engine.setVoiceTrim(i, tr[2*i], tr[2*i+1]);
+            }
         }
     }
     p5::Patch patch;

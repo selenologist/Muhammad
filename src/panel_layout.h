@@ -77,7 +77,7 @@ inline constexpr Knob kKnobs[] = {
         {50, 1498.0f, 196.0f, false, 0, 10},
         {85, 1376.0f, 330.0f, false, 0, 10},
         {13, 1444.0f, 330.0f, false, 0, 10},
-        {37, 1510.0f, 330.0f, false, 0, 10},
+        {86, 1510.0f, 330.0f, false, 0, 10},
 };
 
 inline constexpr Btn kBtns[] = {
@@ -195,7 +195,7 @@ inline constexpr Text kTexts[] = {
         {1312.0f, 366.0f, T_LBL, "EDIT"},
         {1376.0f, 366.0f, T_LBL, "PAN WIDTH"},
         {1444.0f, 366.0f, T_LBL, "GLIDE"},
-        {1510.0f, 366.0f, T_LBL, "VINTAGE"},
+        {1510.0f, 366.0f, T_LBL, "DRIFT"},
 };
 
 inline constexpr Box kBoxes[] = {

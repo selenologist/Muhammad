@@ -164,6 +164,12 @@ void Engine::silenceReset()
     for (int i = 0; i < MAXV; i++) hbReset(hb_[i]);
     live_ = 0; monoNote_ = 0; nmono_ = 0;
     vage_ = 0;   // (the firmware's vage clock is process-global; the A/B harness resets it per scenario)
+    for (int i = 0; i < MAXV; i++)
+    {
+        trimS_[i] = trimO_[i] = 64;
+        wP_[i] = wF_[i] = wA_[i] = 0.0f;
+        wSt_[i] = (uint32_t)(0x9E3779B9u + i * 0x85EBCA6Bu);
+    }
 }
 
 // --------------------------------------------------------------- note-on ----
@@ -194,13 +200,15 @@ void Engine::synthNoteOn(int lane, int voiceWas)
     if (!voiceWas) l.glidePitch = lastPitch_ ? lastPitch_ : l.v.pitch16;
     lastPitch_ = l.v.pitch16;
     l.fenv.stage = l.aenv.stage = 1;
-    int32_t vintage = valueOf(P5_VINTAGE);
-    // Fixed mismatch for the life of the voice, deterministic per note/slot.
+    // VINTAGE now means DRIFT: the static per-note roulette is retired. The
+    // OU walks in process() are continuous across notes, like a hot board.
+    l.envDrift = 0;
     int32_t *st = (int32_t *)&noise_[lane];
-    l.drift       = ((int32_t)(fastNoise32(st) & 255u) - 128) * vintage / 1024;
-    l.filterDrift = ((int32_t)(fastNoise32(st) & 255u) - 128) * vintage / 32;
-    l.ampDrift    = ((int32_t)(fastNoise32(st) & 255u) - 128) * vintage / 16;
-    l.envDrift    = ((int32_t)(fastNoise32(st) & 255u) - 128) * vintage / 128;
+    // The firmware burned 4 LCG draws here for the vintage roulette. The
+    // draws are gone but the STREAM must not shift: the LOW_B phase seed and
+    // every voice-noise sample after it must stay phase-locked with the
+    // reference (port lesson: transcribe the quirk, then deviate on purpose).
+    for (int burn = 0; burn < 4; burn++) fastNoise32(st);
     // The oscillators free-run, so a key finds Lo Freq B anywhere in its cycle.
     if (!voiceWas && p[P5_LOW_B]) phaseB_[lane] = fastNoise32(st);
 }
@@ -216,7 +224,7 @@ void Engine::voiceStart(int lane, int note, int vel, uint8_t mvel, int *voiceWas
     l.v.active = 1;
     l.v.stage = 1;
     l.v.age = ++vage_;
-    l.v.pitch16 = note * 16 + tuneUnits_;
+    l.v.pitch16 = applyTrim(lane, note * 16 + tuneUnits_);
     l.v.pitchCur = l.v.pitch16;                   // glide_set: the track's glide is off
     l.v.mvel = mvel;                              // t->m_vel (mod.c: the note's VEL)
     if (!*sounding) { l.v.env = 0; l.v.envOut = 0; }
@@ -307,7 +315,7 @@ void Engine::monoNoteOn(int note, int vel)
             }
         } else {
             l.v.note = (uint8_t)want;                   // legato: new pitch, same envelope
-            l.v.pitch16 = want * 16 + tuneUnits_;
+            l.v.pitch16 = applyTrim(i, want * 16 + tuneUnits_);
             l.v.pitchCur = l.v.pitch16;
             l.v.mvel = (uint8_t)vel;
             if (vel > l.v.vel && nv == 1) l.v.vel = (uint8_t)vel;
@@ -397,6 +405,25 @@ void Engine::p5_update_bend()
 {
     const int32_t range = (i_clamp((int32_t)patch_.raw[P5_BEND], 0, 11) + 1) * 256;
     bendTarget_ = bendRaw_ * range / (bendRaw_ < 0 ? 8192 : 8191);
+}
+
+void Engine::setVoiceTrim(int lane, int scale, int offset)
+{
+    if (lane < 0 || lane >= MAXV) return;
+    trimS_[lane] = (int16_t)(scale < 0 ? 0 : scale > 127 ? 127 : scale);
+    trimO_[lane] = (int16_t)(offset < 0 ? 0 : offset > 127 ? 127 : offset);
+}
+void Engine::voiceTrim(int lane, int *scale, int *offset) const
+{
+    *scale = trimS_[lane]; *offset = trimO_[lane];
+}
+
+// V/oct calibration, 1/16-semitone domain, slope pivoted at C4 like a scope trim.
+int32_t Engine::applyTrim(int lane, int32_t p16) const
+{
+    const int32_t sc = trimS_[lane] - 64, of = trimO_[lane] - 64;
+    int32_t pt = p16 + of + (int32_t)(((int64_t)(p16 - 960) * sc) >> 10);
+    return pt < 0 ? 0 : pt > 2047 ? 2047 : pt;
 }
 
 // the shared wheel: LFO and noise with an exact power-of-two pitch ratio per entry
@@ -546,7 +573,7 @@ bool Engine::renderLane(Lane &l, int32_t mPitch16, int32_t mFine, int32_t mCutof
     const int32_t filterVelocity = p[P5_VEL_FILTER] ? (int32_t)v.mvel * 258 : 32767;
     const int32_t ampVelocity = p[P5_VEL_AMP] ? (int32_t)v.mvel * 258 : 32767;
     // Cutoff in Q8 steps of the coefficient table (14.02 per octave, 30 Hz at 0).
-    const int32_t c0 = q[P5_CUTOFF];
+    const int32_t c0 = q[P5_CUTOFF] + brightness_;   // Rev4 CC74 Brightness adds to cutoff
     int32_t cut = 1618 + c0 * 236 + (curtis ? 0 : (127 - c0 > 66 ? 66 : 127 - c0) * 38)
                 + mCutoff + (int32_t)e_[0] * 256 + l.filterDrift;
     // Keyboard tracking pivots on the lowest C: full tracks 2x per octave, half sqrt(2).
@@ -639,6 +666,22 @@ void Engine::process(int32_t *out, uint32_t n)
             Lane &l = lanes_[i];
             VoiceState &v = l.v;
             if (!v.active) continue;
+            {   // DRIFT: leaky (OU) walks at block rate = slow 1/f^2-ish wander;
+                // the VINTAGE byte (0..127) is the depth. A separate LCG keeps
+                // the oscillator noise stream — and every bit-exact scenario —
+                // untouched; at vintage 0 these produce exact zeros anyway.
+                float *w[3] = { &wP_[i], &wF_[i], &wA_[i] };
+                for (int k = 0; k < 3; k++)
+                {
+                    const uint32_t r = fastNoise32((int32_t *)&wSt_[i]);
+                    const float n01 = (float)(r >> 8) * (1.0f / 16777216.0f) - 1.0f;   // -1..1
+                    *w[k] = *w[k] * 0.9844f + n01 * 0.35f;
+                }
+                const float v = (float)driftDepth_ * (1.0f / 127.0f);
+                l.drift       = (int)(wP_[i] * v * 10.0f);
+                l.filterDrift = (int)(wF_[i] * v * 170.0f);
+                l.ampDrift    = (int)(wA_[i] * v * 340.0f);
+            }
             int32_t env = adsrTick(l);
             if (v.active) {                       // ownenv: the engine's envelopes end the voice
                 if (!v.gate && l.aenv.stage == 0u) {      // p5_done: its last block, faded out

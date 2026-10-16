@@ -20,6 +20,9 @@ static void runScenario(const Scenario &sc, p5::Engine &e, std::vector<int32_t> 
         e.setPatch(p);
     } else {
         e.loadFactory((uint32_t)(sc.preset - 1));
+        e.editRaw(p5::P5_VINTAGE, 0);   // byte 37 retired by design (Muhammad reads
+                                        // drift from param 86): zero it so A/B certifies
+                                        // every OTHER byte bit-exact against firmware
     }
     if (sc.patchRes > 0) {                    // self-oscillation: closed mixer, hot filter
         p5::Patch p = e.patch();

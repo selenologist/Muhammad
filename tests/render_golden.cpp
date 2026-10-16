@@ -32,7 +32,8 @@ static p5ui::State stateFor(const char *name, p5::Engine &e, int &programOut)
 {
     p5::Patch p;
     int program = -1;                 // -1 == INIT
-    if (!std::strcmp(name, "init")) { p5::patchInit(p); }
+    const bool trimMode = !std::strcmp(name, "trim");
+    if (!std::strcmp(name, "init") || trimMode) { p5::patchInit(p); }
     else if (!std::strcmp(name, "pad"))  program = 1;
     else if (!std::strcmp(name, "arp"))  program = 42;
     else if (!std::strcmp(name, "bass")) program = 91;
@@ -46,12 +47,19 @@ static p5ui::State stateFor(const char *name, p5::Engine &e, int &programOut)
     const p5::Patch &pp = e.patch();
 
     p5ui::State s;
+    if (trimMode)
+    {   // voice trim page, partly deflected, for the golden
+        s.trimOpen = true;
+        for (int i = 0; i < 8; i++) { s.trimS[i] = (short)(64 + (i % 3) * 6 - 6); s.trimO[i] = (short)(64 - i * 4); }
+    }
     for (int i = 0; i < p5ui::kNumKnobs; i++)
     {
         const int pid = p5ui::kKnobs[i].pid;
         double v;
         if (pid == 80) v = 0.5;                 // TRIM default (plugin-side, not patch)
         else if (pid == 82) v = 0.0;            // MASTER TUNE default
+        else if (pid == 85) v = 0.0;            // PAN WIDTH default (plugin-side)
+        else if (pid == 86) v = 0.0;            // DRIFT default (plugin-side)
         else v = pp.raw[pid];
         s.knob[i] = p5::knobNorm(pid, v);
     }

@@ -249,3 +249,35 @@ panel globals on the original, EDIT overlays ride params 64..71.
 - **KEYBD** (filter key tracking) is a 3-state button: LED off = OFF,
   amber = HALF (x sqrt2/oct), red = FULL (x2/oct) — matching the engine's
   quantisation exactly.
+
+## Voice trim, DRIFT, and Rev4 MIDI CC (v1.11)
+
+**EDIT -> V/OCT TRIM page.** The EDIT button opens a modal calibration page:
+two bar-sliders per voice (8 rows) — SCALE (slope error, pivoted at C4) and
+OFFSET (1/16-semitone shift) — exactly the trimmers under an analog lid.
+Values are fixed per voice until retrimmed, applied at note-on, persisted in
+the session state (blob v5). Neutral = 64 = bit-identical to a stock engine.
+
+**VINTAGE is now DRIFT** (param 86, depth 0..127): per-voice leaky random
+walks (OU processes at control-block rate) wander pitch (A and B oppositely),
+cutoff, and amplitude — continuous across notes, like a hot board. The
+firmware's old static per-note roulette is retired, and raw byte 37 is left
+opaque: Sequential's factory wire files own that slot (137 of 200 carry
+non-zero data), so Muhammad never reads it any more.
+
+**Rev4-compatible MIDI CC** (per Sequential's Prophet-5 MIDI Implementation
+1.4 — its parameter numbering is identical to the wire enum): CC1 mod wheel,
+CC7 volume * CC13 expression (multiply into output), CC32 bank, CC64 damper
+(notes released under the pedal hold until it lifts; choke bypasses), CC74
+brightness (added to cutoff), CC85 vintage->DRIFT, CC120/123 panic, CC121
+reset, and the full CC->parameter map from the chart (CC3 OSC A FREQ, CC26
+GLIDE, CC59/60/61/62/63 poly-mod, CC70 bend range, CC71 retrigger, CC73
+cutoff, CC103-110 envelopes, CC112-114 unison, CC116-119 wave switches,
+...). Unassigned CCs are ignored. NRPN uses the same numbers, if wanted.
+
+## Measurements log
+
+* v1.11: trim offset +16 measured +1.009 semitones; drift depth 127 walks
+  audibly (engine determinism preserved: same seed -> same render); A/B stays
+  bit-exact (reference regenerated with byte 37 excepted); damper hold/decay
+  asserted in clap_smoke (`held 0.1.. / lift < 0.001`).

@@ -442,6 +442,63 @@ void draw(const Gui &g, const State &s, float w, float h)
         nvgFontFaceId(g.vg, g.fontId);
     }
 
+    // ---- voice V/OCT trim page (EDIT) ----
+    if (s.trimOpen)
+    {
+        nvgBeginPath(g.vg);
+        nvgRect(g.vg, 0, 0, kPanelW, kPanelH);
+        nvgFillColor(g.vg, nvgRGBA(0, 0, 0, 150));
+        nvgFill(g.vg);
+        nvgBeginPath(g.vg);
+        nvgRoundedRect(g.vg, trim::x, trim::y, trim::w, trim::h, 6);
+        nvgFillColor(g.vg, col(kColPanel));
+        nvgFill(g.vg);
+        nvgStrokeColor(g.vg, col(kColBox));
+        nvgStrokeWidth(g.vg, 1.5f);
+        nvgStroke(g.vg);
+        nvgFontFaceId(g.vg, g.fontId);
+        nvgFontSize(g.vg, 17.f);
+        nvgTextAlign(g.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
+        nvgFillColor(g.vg, col(kColInk));
+        nvgText(g.vg, sxp(trim::x + trim::w / 2), syp(trim::y + 26),
+                "VOICE  V/OCT  TRIM        SCALE            OFFSET", nullptr);
+        nvgFontSize(g.vg, 11.f);
+        nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
+        nvgText(g.vg, sxp(trim::x + 14), syp(trim::y + trim::h - 8),
+                "calibration pots, fixed per voice - like under the lid. EDIT closes.", nullptr);
+        for (int i = 0; i < trim::rows; i++)
+        {
+            const float ry = trim::rowTop(i) + 12;
+            char lab[8];
+            std::snprintf(lab, sizeof lab, "V%d", i + 1);
+            nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
+            nvgText(g.vg, sxp(trim::x + 74), syp(ry), lab, nullptr);
+            for (int k = 0; k < 2; k++)
+            {
+                const int v = k ? s.trimO[i] : s.trimS[i];
+                const float bx = trim::barX(k), bw = trim::barW(k);
+                nvgBeginPath(g.vg);                       // rail
+                nvgRect(g.vg, bx, ry - 1.5f, bw, 3);
+                nvgFillColor(g.vg, nvgRGBA(70, 70, 78, 255));
+                nvgFill(g.vg);
+                nvgBeginPath(g.vg);                       // centre tick at neutral
+                nvgRect(g.vg, bx + bw * (64.0f / 127.0f) - 0.75f, ry - 9.f, 1.5f, 18.f);
+                nvgFillColor(g.vg, nvgRGBA(120, 120, 130, 255));
+                nvgFill(g.vg);
+                const float hx = trim::handleX(k, v);
+                nvgBeginPath(g.vg);                       // handle
+                nvgCircle(g.vg, hx, ry, 8);
+                nvgFillColor(g.vg, v == 64 ? nvgRGBA(150, 150, 158, 255) : nvgRGBA(240, 160, 30, 255));
+                nvgFill(g.vg);
+                char vt[8];
+                std::snprintf(vt, sizeof vt, "%3d", v);
+                nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
+                nvgText(g.vg, sxp(bx + bw + 10), syp(ry), vt, nullptr);
+            }
+        }
+        nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_BASELINE);
+    }
+
     // ---- text-entry modal over the programmer area (RECORD save / PRESET assign) ----
     if (s.modalTitle && s.modalTitle[0])
     {
@@ -563,5 +620,26 @@ bool hitClose(float lx, float ly)
 bool inside(float lx, float ly)
 { return lx >= x && lx <= x + w && ly >= y && ly <= y + h; }
 } // namespace pick
+
+namespace trim {
+bool inside(float lx, float ly)
+{   return lx >= x && lx <= x + w && ly >= y && ly <= y + h; }
+int hitBar(float lx, float ly, int *row, int *col)
+{
+    if (!inside(lx, ly)) return 0;
+    for (int i = 0; i < rows; i++)
+    {
+        const float t = rowTop(i);
+        if (ly >= t - 10.f && ly <= t + 34.f)
+        {
+            *row = i;
+            for (int k = 0; k < 2; k++)
+                if (lx >= barX(k) - 12.f && lx <= barX(k) + barW(k) + 12.f) { *col = k; return 1; }
+            *col = -1; return 1;
+        }
+    }
+    return 0;
+}
+} // namespace trim
 
 } // namespace p5ui

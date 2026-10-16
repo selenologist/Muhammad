@@ -24,6 +24,9 @@ int main(void)
         host_preset(&trk[0], ENGI_PROPHET, (uint32_t)sc.preset);
         trk[0].p[P_VOICE] = V_POLY;
         trk[0].p[P_RESERVED34] = trk[0].p[P_RESERVED35] = trk[0].p[P_RESERVED36] = 0;
+        p5_patch[0].raw[P5_VINTAGE] = 0;   /* Muhammad retires byte-37 vintage: excluded
+                                            from the reference so A/B certifies every
+                                            other byte against the firmware's own draw */
         if (sc.patchRes > 0) {                    /* closed mixer, hot filter */
             p5_patch[0].raw[P5_RESONANCE] = (uint8_t)sc.patchRes;
             p5_patch[0].raw[P5_CUTOFF] = (uint8_t)sc.patchCut;

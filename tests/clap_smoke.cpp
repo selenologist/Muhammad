@@ -182,6 +182,73 @@ int main(int argc, char **argv)
                    !std::memcmp(blob9.data() + 8 + 65, "After Ringer", 12);
         check("audio MIDI PC applied from cache (no I/O)", ok9);
     }
+    {   // Rev4 MIDI CC surface: raw-param CC, DRIFT CC, and CC64 damper
+        auto sendMidi = [&](uint8_t a, uint8_t b, uint8_t cc) {
+            clap_event_midi_t m{};
+            m.header.type = CLAP_EVENT_MIDI; m.header.size = sizeof m; m.header.time = 0;
+            m.data[0] = 0xB0; m.data[1] = a; m.data[2] = b; m.port_index = 0;
+            EventList el{ { &m.header } };
+            clap_input_events_t in{ &el, EL_size, EL_get };
+            float L[64], R[64]; float *ch[2] = { L, R };
+            clap_audio_buffer_t ab{}; ab.channel_count = 2; ab.data32 = ch;
+            clap_process_t pr{};
+            pr.in_events = &in; pr.out_events = &out; pr.audio_outputs = &ab; pr.frames_count = 64;
+            plugin->start_processing(plugin);
+            plugin->process(plugin, &pr);
+            plugin->stop_processing(plugin);
+        };
+        sendMidi(3, 64, 0);      // Rev4 CC3 -> OSC A FREQUENCY (raw 0)
+        sendMidi(85, 50, 0);     // Rev4 CC85 -> DRIFT (param 86)
+        const clap_plugin_params_t *pcc = (const clap_plugin_params_t *)plugin->get_extension(plugin, CLAP_EXT_PARAMS);
+        double v0 = -1, v86 = -1;
+        pcc->get_value(plugin, 0, &v0); pcc->get_value(plugin, 86, &v86);
+        check("Rev4 CC3 maps to OSC A FREQ", v0 == 64.0);
+        check("Rev4 CC85 (vintage) drives DRIFT", v86 == 50.0);
+        sendMidi(85, 0, 0);      // leave drift off for the tests downstream
+        {   // CC64 damper: a note released under the pedal must keep sounding
+            sendMidi(123, 0, 0);        // CC123: wipe voices left ringing by earlier tests
+            sendMidi(110, 6, 0);        // CC110 RELEASE VCA: force a fast release for the test
+            plugin->start_processing(plugin);
+            clap_event_midi_t on{};  on.header.type = CLAP_EVENT_MIDI; on.header.size = sizeof on;
+            on.data[0] = 0x90; on.data[1] = 60; on.data[2] = 100;
+            clap_event_midi_t pd{};  pd.header.type = CLAP_EVENT_MIDI; pd.header.size = sizeof pd;
+            pd.data[0] = 0xB0; pd.data[1] = 64; pd.data[2] = 127;
+            clap_event_midi_t off{}; off.header.type = CLAP_EVENT_MIDI; off.header.size = sizeof off;
+            off.data[0] = 0x80; off.data[1] = 60; off.data[2] = 0;
+            EventList seq{ { &on.header, &pd.header, &off.header } };
+            clap_input_events_t in{ &seq, EL_size, EL_get };
+            float L[512], R[512]; float *ch[2] = { L, R };
+            clap_audio_buffer_t ab{}; ab.channel_count = 2; ab.data32 = ch;
+            clap_process_t pr{};
+            pr.in_events = &in; pr.out_events = &out; pr.audio_outputs = &ab; pr.frames_count = 512;
+            plugin->process(plugin, &pr);
+            double held = 0;
+            for (int b = 0; b < 30; b++)      // 1.5 s after the note-off, pedal still down
+            {
+                pr.in_events = nullptr;
+                plugin->process(plugin, &pr);
+                for (int i = 0; i < 512; i++) { double a = std::fabs(L[i]); if (a > held) held = a; }
+            }
+            clap_event_midi_t lift{}; lift.header.type = CLAP_EVENT_MIDI; lift.header.size = sizeof lift;
+            lift.data[0] = 0xB0; lift.data[1] = 64; lift.data[2] = 0;
+            EventList rel{ { &lift.header } };
+            clap_input_events_t inr{ &rel, EL_size, EL_get };
+            pr.in_events = &inr;
+            plugin->process(plugin, &pr);
+            pr.in_events = nullptr;
+            double dead = 0;
+            for (int b = 0; b < 120; b++)     // 4 s after pedal lifts
+            {
+                plugin->process(plugin, &pr);
+                for (int i = 0; i < 512; i++) { double a = std::fabs(L[i]); if (a > dead) dead = a; }
+            }
+            sendMidi(123, 0, 0);        // leave no ringers for the tests downstream
+            plugin->stop_processing(plugin);
+            std::printf("clap: damper held %.4f, after lift %.6f\n", held, dead);
+            check("CC64 holds notes, lift releases", held > 0.05 && dead < 0.01 * held);   // >20 dB decay boundary
+        }
+    }
+
     {   // PAN WIDTH: readback, then a real per-voice stereo spread on the SIMD path
         const clap_plugin_params_t *pa2 = (const clap_plugin_params_t *)plugin->get_extension(plugin, CLAP_EXT_PARAMS);
         clap_event_param_value pv2{};
@@ -286,7 +353,7 @@ int main(int argc, char **argv)
 
         // programmer params + gui surface
         uint32_t cnt = params->count(plugin);
-        check("param count 71 (57 raw + 8 ov + trim + os + tune + program + bank)", cnt == 71);
+        check("param count 72 (57 raw + 8 ov + trim + os + tune + program + bank + pan + drift)", cnt == 72);
         bool tuneInfo = false;
         for (uint32_t i = 0; i < cnt; i++) {
             clap_param_info_t inf{};
