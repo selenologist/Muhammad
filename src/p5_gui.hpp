@@ -34,6 +34,7 @@ struct State
     char tuneName[40] = "12-TET";
     short tuneDev[128] = {};
     float tuneUp = 2.f, tuneDn = 2.f;           // editor default ranges, semitones
+    int tuneFocus = 0;                          // which bend-range rail the arrows adjust
     const char *tuneRows[8] = {};               // "standard" + Tunings files
     int tuneRowCount = 0, tunePage = 0, tunePages = 1, tuneSel = -1;
     short trimV[32] = {};

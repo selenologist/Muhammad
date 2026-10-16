@@ -579,6 +579,13 @@ void draw(const Gui &g, const State &s, float w, float h)
             nvgCircle(g.vg, tune::railHandleX(k, rval[k]), tune::railY, 7);
             nvgFillColor(g.vg, nvgRGBA(240, 160, 30, 255));
             nvgFill(g.vg);
+            if (k == s.tuneFocus)
+            {   nvgBeginPath(g.vg);
+                nvgCircle(g.vg, tune::railHandleX(k, rval[k]), tune::railY, 10.5f);
+                nvgStrokeColor(g.vg, nvgRGBA(240, 240, 246, 220));
+                nvgStrokeWidth(g.vg, 1.5f);
+                nvgStroke(g.vg);
+            }
             char vt[10];
             std::snprintf(vt, sizeof vt, "%.1f", rval[k]);
             nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
@@ -590,7 +597,8 @@ void draw(const Gui &g, const State &s, float w, float h)
         nvgFontSize(g.vg, 11.f);
         nvgFillColor(g.vg, col(kColInk));
         nvgText(g.vg, sxp(tune::x + 14), syp(tune::y + tune::h - 24),
-                "tunings load from Documents/Muhammad Synth/Tunings (.scl / .kbm)", nullptr);
+                "tunings load from Documents/Muhammad Synth/Tunings (.scl / .kbm)  -  "
+                "arrows adjust the ringed rail, shift snaps to whole steps", nullptr);
         for (int k = 0; k < 2; k++)
         {
             const float bx = k ? tune::resetX : tune::loadX;

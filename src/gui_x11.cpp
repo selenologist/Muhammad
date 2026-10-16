@@ -57,6 +57,7 @@ struct Ctx
     std::vector<std::string> userRows;   // cached dir listing for the picker
     std::vector<std::string> tuneFiles;  // Tunings dir listing (TUNING page)
     int tuneDrag = 0, tunePage = 0;      // 3/4 = which bend-range rail
+    int tuneFocus = 0;                   // arrow-adjusted rail (0 up, 1 down)
     char tuneRowBuf[8][64] = {};
     bool bindPending = false;            // ASSIGN armed: next program 1-8 binds
     p5store::Source bindSrc;
@@ -106,9 +107,10 @@ void applyTrimDrag(Ctx &c, float lx)
 {   applyTrimSet(c, c.trimRow, c.trimCol, p5ui::trim::valueAt(c.trimCol, lx));
 }
 
-void applyTuneDrag(Ctx &c, float lx)
+void applyTuneDrag(Ctx &c, float lx, unsigned mods)
 {   const int k = c.tuneDrag - 3;
-    const float v = p5ui::tune::railValAt(k, lx);
+    float v = p5ui::tune::railValAt(k, lx);
+    if (mods & ShiftMask) v = (float)(int)(v + 0.5f);   // Shift: snap to integer semitones
     const float up = k == 0 ? v : (float)c.plugin->engine.bendRangeUpDefault();
     const float dn = k == 1 ? v : (float)c.plugin->engine.bendRangeDownDefault();
     c.plugin->engine.setBendRangeDefault(up, dn);   // resolved pair stored (WYSIWYG)
@@ -128,6 +130,7 @@ void fillState(Ctx &c, p5ui::State &st)
     for (int k = 0; k < 128; k++) st.tuneDev[k] = c.plugin->engine.tuningDeviation()[k];
     st.tuneUp = (float)c.plugin->engine.bendRangeUpDefault();
     st.tuneDn = (float)c.plugin->engine.bendRangeDownDefault();
+    st.tuneFocus = c.tuneFocus;
     {
         const int per = p5ui::pick::rows;
         const int total = 1 + (int)c.tuneFiles.size();
@@ -344,7 +347,8 @@ void actuate(Ctx &c, int btnIdx, unsigned mods = 0)
     if (b.pid == -6)                                  // TUNING: microtuning editor
     {   std::fprintf(stderr, "[p5gui] TUNING actuate: modal %d -> %d\n", c.modal, c.modal == 6 ? 0 : 6);
         if (c.modal == 6) c.modal = 0;
-        else { c.modal = 6; c.tuneFiles = p5store::listTunings(); }
+        else { c.modal = 6; c.tuneFiles = p5store::listTunings(); c.tuneFocus = 0;
+               XSetInputFocus(c.dpy, c.win, RevertToParent, CurrentTime); }   // arrow keys land here
         c.tuneDrag = 0; return; }
     if (b.pid < 0) return;                            // decorative
     if (b.ledmode == 2)                               // quickload buttons 1-8
@@ -607,7 +611,7 @@ void pump(Ctx &c)
                         std::fprintf(stderr, "[p5gui] tuning RESET to 12-TET\n");
                         dirty = true; }
                     else if (ctl >= 3)
-                    {   c.tuneDrag = ctl; applyTuneDrag(c, lx);
+                    {   c.tuneDrag = ctl; c.tuneFocus = ctl - 3; applyTuneDrag(c, lx, ev.xbutton.state);
                         XGrabPointer(c.dpy, c.win, True,
                                      ButtonReleaseMask | PointerMotionMask, GrabModeAsync, GrabModeAsync,
                                      None, None, CurrentTime);
@@ -650,7 +654,7 @@ void pump(Ctx &c)
                     float lx, ly;
                     p5ui::pointToLayout((float)ev.xmotion.x, (float)ev.xmotion.y,
                                         (float)c.w, (float)c.h, lx, ly);
-                    applyTuneDrag(c, lx);
+                    applyTuneDrag(c, lx, ev.xmotion.state);
                     dirty = true;
                     break;
                 }
@@ -702,6 +706,24 @@ void pump(Ctx &c)
                     else if (c.modal == 2) { c.plugin->assignSlotFromText(c.modalSlot, c.modalBuf); c.modal = 0; c.modalLen = 0; }
                     else if (c.modal == 3) { c.plugin->savePatchNamed(c.modalBuf); c.modal = 0; c.modalLen = 0; }
                     dirty = true; break;
+                }
+                if (c.modal == 6)                     // tuning page: arrows adjust the focused range rail
+                {
+                    float up = (float)c.plugin->engine.bendRangeUpDefault();
+                    float dn = (float)c.plugin->engine.bendRangeDownDefault();
+                    const float d = (ev.xkey.state & ShiftMask) ? 1.0f : 0.1f;  // Shift = integer step
+                    bool used = true;
+                    if (ks == XK_Left) c.tuneFocus = 0;
+                    else if (ks == XK_Right) c.tuneFocus = 1;
+                    else if (ks == XK_Up || ks == XK_KP_Up)   { if (c.tuneFocus) dn += d; else up += d; }
+                    else if (ks == XK_Down || ks == XK_KP_Down) { if (c.tuneFocus) dn -= d; else up -= d; }
+                    else used = false;
+                    if (used)
+                    {   auto clampQ = [](float v) { v = v < 0.f ? 0.f : v > 24.f ? 24.f : v;
+                                                    return (float)((int)(v * 10.0f + 0.5f)) / 10.0f; };
+                        c.plugin->engine.setBendRangeDefault(clampQ(up), clampQ(dn));
+                        dirty = true; break;
+                    }
                 }
                 if (n > 0)
                 {
