@@ -202,7 +202,7 @@ for x, p, lab in ((182, "pm_freq1", "FREQ 1"), (228, "pm_pw1", "PW 1"), (276, "p
 subhead(229, 106, "DESTINATION", 8)
 
 # --- LFO (A, r2) ---
-btn(30, 198, "lfo_preset", color="btnGray", label="PRESET", label_dy=34)
+btn(26, 190, "lfo_preset", color="btnGray", label="PRESET", label_dy=34)
 box(52, 138, 248, 120, "VIBRATO")
 knob(110, 196, "lfo_freq", label="FREQUENCY", label_dy=48)
 for x, g, p in ((180, "gSaw", "lfo_saw"), (214, "gTri", "lfo_tri"), (248, "gSq", "lfo_sq")):
@@ -211,73 +211,73 @@ subhead(214, 240, "SHAPE", 10)
 
 # --- WHEEL-MOD (A, r3) ---
 box(8, 266, 290, 138, "WHEEL-MOD")
-knob(62, 330, "wm_mix", angle=0,
+knob(56, 330, "wm_mix", angle=0,
      extra=('<text class="lbl" x="-24" y="40">LFO</text>'
             '<text class="lbl" x="26" y="40">NOISE</text>'
             '<text class="lbl" y="56">SOURCE MIX</text>'))
-for x, lab, p in ((128, "FREQ 1", "wm_freq1"), (166, "FREQ 2", "wm_freq2"),
-                  (204, "PW 1", "wm_pw1"), (242, "PW 2", "wm_pw2"), (280, "FILTER", "wm_filter")):
+for x, lab, p in ((122, "FREQ 1", "wm_freq1"), (160, "FREQ 2", "wm_freq2"),
+                  (198, "PW 1", "wm_pw1"), (236, "PW 2", "wm_pw2"), (274, "FILTER", "wm_filter")):
     btn(x, 330, p, label=lab, label_above=-24)
 subhead(204, 380, "DESTINATION", 10)
 
 # absolute positions of the wm_mix in-group labels (mirror the SVG offsets)
-texts.append(dict(x=62 - 24, y=330 + 40, style="lbl", text="LFO"))
-texts.append(dict(x=62 + 26, y=330 + 40, style="lbl", text="NOISE"))
-texts.append(dict(x=62, y=330 + 56, style="lbl", text="SOURCE MIX"))
+texts.append(dict(x=56 - 24, y=330 + 40, style="lbl", text="LFO"))
+texts.append(dict(x=56 + 26, y=330 + 40, style="lbl", text="NOISE"))
+texts.append(dict(x=56, y=330 + 56, style="lbl", text="SOURCE MIX"))
 
 # --- OSCILLATOR 1 (B, r1) ---
 box(306, 14, 398, 116, "OSCILLATOR 1")
-knob(352, 60, "osc1_freq", label="FREQUENCY")
-btn(436, 60, "osc1_saw", glyph="gSaw")
-btn(472, 60, "osc1_sq", glyph="gSq")
+knob(374, 68, "osc1_freq", label="FREQUENCY")
+btn(458, 68, "osc1_saw", glyph="gSaw")
+btn(494, 68, "osc1_sq", glyph="gSq")
 subhead(454, 96, "SHAPE", 8)
-knob(540, 60, "osc1_pw", label="PULSE WIDTH")
-btn(620, 60, "osc1_sync", label="SYNC")
+knob(562, 68, "osc1_pw", label="PULSE WIDTH")
+btn(642, 68, "osc1_sync", label="SYNC")
 
 # --- OSCILLATOR 2 (B, r2) ---
 box(306, 138, 398, 118, "OSCILLATOR 2")
-knob(344, 196, "osc2_freq", label="FREQUENCY", label_dy=48)
-knob(402, 196, "osc2_fine", label="FINE", label_dy=48)
-for x, g, p in ((456, "gSaw", "osc2_saw"), (484, "gTri", "osc2_tri"), (512, "gSq", "osc2_sq")):
-    btn(x, 196, p, glyph=g)
+knob(344, 190, "osc2_freq", label="FREQUENCY", label_dy=48)
+knob(402, 190, "osc2_fine", label="FINE", label_dy=48)
+for x, g, p in ((452, "gSaw", "osc2_saw"), (480, "gTri", "osc2_tri"), (508, "gSq", "osc2_sq")):
+    btn(x, 190, p, glyph=g)
 subhead(484, 240, "SHAPE", 8)
-knob(562, 196, "osc2_pw", label="PULSE WIDTH", label_dy=48)
-btn(614, 196, "osc2_lofreq", label="LO FREQ", label_dy=48)
-btn(666, 196, "osc2_keyboard", label="KEYBOARD", label_dy=48)
+knob(562, 190, "osc2_pw", label="PULSE WIDTH", label_dy=48)
+btn(620, 190, "osc2_lofreq", label="LO FREQ", label_dy=48)
+btn(672, 190, "osc2_keyboard", label="KEYBOARD", label_dy=48)
 
 # --- UNISON group (B, r3, unbordered): DETUNE / UNISON / COUNT ---
-knob(372, 332, "unison_det", label="UNISON DET.", label_dy=38, ticks=(0, 7))
-btn(442, 332, "unison", label="UNISON", label_dy=38)
-knob(512, 332, "unison_cnt", label="COUNT", label_dy=38, ticks=(1, 8))
+knob(360, 332, "unison_det", label="UNISON DET.", label_dy=38, ticks=(0, 7))
+btn(430, 332, "unison", label="UNISON", label_dy=38)
+knob(498, 332, "unison_cnt", label="COUNT", label_dy=38, ticks=(1, 8))
 
 # --- MIXER (r1) ---
 box(712, 14, 182, 116, "MIXER")
-knob(756, 64, "mix_osc1", label="OSC 1")
-knob(804, 64, "mix_osc2", label="OSC 2")
-knob(852, 64, "mix_noise", label="NOISE")
+knob(744, 68, "mix_osc1", label="OSC 1")
+knob(802, 68, "mix_osc2", label="OSC 2")
+knob(860, 68, "mix_noise", label="NOISE")
 
 # --- GLIDE + OVERSAMPLE (PC-side feature; the strip under MIXER) ---
-knob(756, 196, "glide", label="GLIDE", label_dy=38)
-btn(850, 196, "os", color="btnDark", label="OVERSAMPLE", label_dy=38)
+knob(756, 192, "glide", label="GLIDE", label_dy=38)
+btn(848, 192, "os", color="btnDark", label="OVERSAMPLE", label_dy=38)
 
 # --- FILTER (tall r1+r2) ---
 box(902, 14, 332, 244, "FILTER")
-btn(928, 62, "flt_model", color="btnGray", label="MODEL")   # real-P5 filter PRESET slot -> SSI/Curtis toggle
-knob(996, 58, "flt_cutoff", label="CUTOFF")
-knob(1064, 58, "flt_reso", label="RESONANCE")
-knob(1132, 58, "flt_envamt", label="ENVELOPE")
+btn(928, 78, "flt_model", color="btnGray", label="MODEL")   # real-P5 filter PRESET slot -> SSI/Curtis toggle
+knob(996, 74, "flt_cutoff", label="CUTOFF")
+knob(1064, 74, "flt_reso", label="RESONANCE")
+knob(1132, 74, "flt_envamt", label="ENVELOPE")
 notes((1132, 100, "AMOUNT"))
-knob(1200, 58, "vel_flt", label="VEL>FLT")
-knob(956, 196, "flt_a", label="ATTACK", label_dy=42)
-knob(1020, 196, "flt_d", label="DECAY", label_dy=42)
-knob(1084, 196, "flt_s", label="SUSTAIN", label_dy=42)
-knob(1148, 196, "flt_r", label="RELEASE", label_dy=42)
-btn(1212, 196, "flt_keyboard", label="KEYBD", label_dy=42)
+knob(1200, 74, "vel_flt", label="VEL>FLT")
+knob(946, 196, "flt_a", label="ATTACK", label_dy=42)
+knob(1010, 196, "flt_d", label="DECAY", label_dy=42)
+knob(1074, 196, "flt_s", label="SUSTAIN", label_dy=42)
+knob(1138, 196, "flt_r", label="RELEASE", label_dy=42)
+btn(1196, 196, "flt_keyboard", label="KEYBD", label_dy=42)
 
 # --- MASTER TUNE / VOLUME (white knobs, unbordered, right) ---
-knob(1330, 66, "master_tune", label="MASTER TUNE", white=True, label_dy=40)
+knob(1320, 66, "master_tune", label="MASTER TUNE", white=True, label_dy=40)
 knob(1396, 66, "vel_amp", label="VEL>AMP", label_dy=40)
-knob(1462, 66, "volume", label="VOLUME", white=True, label_dy=40)
+knob(1472, 66, "volume", label="VOLUME", white=True, label_dy=40)
 
 # --- AMPLIFIER (right, r2) ---
 box(1240, 14, 312, 116, "MASTER")
@@ -302,10 +302,10 @@ for i in range(8):
 subhead(1047, 376, "PROGRAM SELECT", 14)
 
 # --- RELEASE / EDIT / TUNE (r3 right, unbordered) ---
-btn(1288, 330, "release_btn", color="btnDark", label="RELEASE", label_dy=36)
-btn(1366, 330, "edit_btn", color="btnGray", led=False, label="EDIT", label_dy=36)
+btn(1270, 330, "release_btn", color="btnDark", label="RELEASE", label_dy=36)
+btn(1312, 330, "edit_btn", color="btnGray", led=False, label="EDIT", label_dy=36)
 # VINTAGE replaces the hardware TUNE button (0 = stable Rev4 .. 127 = loose Rev1)
-knob(1444, 330, "vintage", label="VINTAGE", label_dy=36)
+knob(1510, 330, "vintage", label="VINTAGE", label_dy=36)
 
 # ================= assemble SVG =================
 svg = f'''<?xml version="1.0" encoding="UTF-8"?>
