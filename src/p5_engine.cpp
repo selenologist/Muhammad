@@ -239,8 +239,8 @@ void Engine::polyNoteOn(int note, int vel)
     // voice_alloc with P_ALLOC = 1 (REUSE: the free voice whose last pitch is closest)
     const int np = slotCount();
     int lane = -1;
-    for (int i = 0; i < np; i++)
-        if (lanes_[i].v.active && lanes_[i].v.note == note) { lane = i; break; }
+    for (int i = 0; i < np; i++)                       // MPE: reuse only within one channel
+        if (lanes_[i].v.active && lanes_[i].v.note == note && lanes_[i].ch == curCh_) { lane = i; break; }
     if (lane < 0) {
         int32_t target = note * 16, bd = 0x7FFFFFFF;
         for (int i = 0; i < np; i++) {                  // the nearest last pitch, never played: last

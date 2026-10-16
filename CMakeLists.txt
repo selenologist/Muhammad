@@ -158,6 +158,12 @@ if(X11_LIBRARY)
     target_link_libraries(gui_probe PRIVATE ${X11_LIBRARY} ${CMAKE_DL_LIBS} m)
 endif()
 
+add_executable(test_mpe tests/test_mpe.cpp ${ENGINE_SOURCES})
+target_include_directories(test_mpe PRIVATE src external)
+if(TARGET m)
+    target_link_libraries(test_mpe PRIVATE m)
+endif()
+
 add_executable(test_trimdrift tests/test_trimdrift.cpp ${ENGINE_SOURCES})
 target_include_directories(test_trimdrift PRIVATE src external)
 if(TARGET m)
