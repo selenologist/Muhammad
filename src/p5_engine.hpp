@@ -101,6 +101,9 @@ public:
     // design; the filter cutoff table and every rate table rebuild for the
     // internal rate, so pitch, cutoff Hz and envelope times stay exact.
     void setOverSample(int os);               // 1 or 2
+    // Voice kill level (linear amplitude): firmware cuts releases at 2^-10
+    // (-60 dBFS). Muhammad cuts ~24 dB later for an imperceptible tail.
+    void setReleaseCut(float lin);
 
     // GUI-side global tune in cents (-100..100): applied as fixed-point units on
     // the note's pitch16 (16 = one semitone). 0 == the firmware's exact behaviour.
@@ -165,6 +168,8 @@ private:
     int32_t lastPitch_ = 0, modNoise_ = 0;
     float wheel_[CTL_ * 2], wheelPitch_[CTL_ * 2];   // CTL * oversample entries
     uint32_t wheelLen_ = CTL_;
+    float envCut_ = 1.0f / 1024.0f;         // ownenv release kill (tickEnvelopes)
+    int32_t trackKill_ = 1 << 12;           // track ADSR kill, Q24 (adsrTick)
     int32_t dcX1_ = 0, dcY1_ = 0;
     int32_t dcX1r_ = 0, dcY1r_ = 0;           // the R-side coupling cap, same law
     int panWidth_ = 0;                        // 0..127

@@ -73,6 +73,14 @@ void Engine::setTuneCents(int cents)
     tuneUnits_ = (int)std::lround(cents * 16.0 / 100.0);   // 16 pitch units = 1 semitone
 }
 
+void Engine::setReleaseCut(float lin)
+{
+    if (lin < 1.0e-9f) lin = 1.0e-9f;
+    envCut_ = lin;
+    const long q = (long)(lin * 16777216.0f);
+    trackKill_ = q < 1 ? 1 : (int32_t)q;
+}
+
 void Engine::setOverSample(int os)
 {
     const int os2 = (os == 2) ? 2 : 1;
@@ -414,7 +422,7 @@ float Engine::envTickEngine(Env &e, int gate, int a, int d, int s, int r, int32_
     } else if (e.stage == 3u) {
         e.value -= e.value * f_min(PW_P5_ENV_EXP[rel] * scale, 1.0f);
     }
-    if (e.stage == 3u && e.value < 1.0f / 1024.0f) { e.value = 0.0f; e.stage = 0; }
+    if (e.stage == 3u && e.value < envCut_) { e.value = 0.0f; e.stage = 0; }
     return e.value;
 }
 
@@ -433,7 +441,7 @@ int32_t Engine::adsrTick(Lane &l)
         break;
     case 3:
         v.env -= mulq16(v.env, PW_ENV_EXP16[adsrR_ & 127]);
-        if (v.env < (1 << 12)) { v.env = 0; v.stage = 0; v.active = 0; }
+        if (v.env < trackKill_) { v.env = 0; v.stage = 0; v.active = 0; }
         break;
     case 4:
         v.env = 0; v.stage = 0; v.active = 0;

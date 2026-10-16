@@ -98,6 +98,12 @@ if(MATH_LIBRARY)
 endif()
 
 # ---- benchmark -----------------------------------------------------------------
+add_executable(test_quantnoise tests/test_quantnoise.cpp ${ENGINE_SOURCES})
+target_include_directories(test_quantnoise PRIVATE src external)
+if(TARGET m)
+    target_link_libraries(test_quantnoise PRIVATE m)
+endif()
+
 add_executable(bench_engine tests/bench_engine.cpp ${ENGINE_SOURCES})
 target_include_directories(bench_engine PRIVATE src external)
 if(MATH_LIBRARY)

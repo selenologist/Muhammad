@@ -506,6 +506,7 @@ static bool plugin_activate(const clap_plugin_t *p, double sample_rate, uint32_t
     s->engine.activate(sample_rate);
     s->engine.setSmoothing(true);   // PC playability; the A/B harness keeps it off
     s->engine.setPcMode(true);      // LFO INITIAL = wheel state at patch load
+    engine.setReleaseCut(1.0f / 16384.0f);   // cut tails -24 dB deeper than firmware (-84 dBFS)
     p5store::loadMap();             // bank/program retrieval map
     s->rebuildSlotCache();
     s->active = true;
