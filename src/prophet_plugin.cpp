@@ -6,6 +6,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#if defined(__SSE__) || defined(__SSE2__)
+#include <xmmintrin.h>          // MXCSR FTZ/DAZ: denormals must never tax the audio thread
+#endif
 
 namespace pw {
 
@@ -79,7 +82,7 @@ const clap_plugin_descriptor_t kDescriptor = {
     "selenologist",
     "https://github.com/keremimo/melodee",
     nullptr, nullptr,
-    "1.10.0-avx2",   // bump per shipped build: the version Bitwig shows proves which binary is loaded
+    "1.10.1-ftzdaz",   // bump per shipped build: the version Bitwig shows proves which binary is loaded
     "P5 clone (PROPHET engine ported from the Melodee firmware)",
     kFeatures
 };
@@ -558,6 +561,18 @@ static void renderChunk(Plugin *s, clap_audio_buffer_t *ab, uint32_t from, uint3
 
 static clap_process_status plugin_process(const clap_plugin_t *p, const clap_process_t *pr)
 {
+#if defined(__SSE__) || defined(__SSE2__)
+    {   // Denormal audit (Oct 2026): the only state that can creep sub-normal
+        // is the triangle voice's x32767/32768 tail (tens of minutes held
+        // silent inside one note); filter z is flushed at 1e-20 by the
+        // firmware's own quirk guard, halfband state resets per note, and the
+        // DC caps idle at exact zero on voiceless blocks. FTZ|DAZ costs
+        // nothing while denormals are absent, and ~100x per op when they hit.
+        // Idempotent; leaves the host's own MXCSR alone if already set.
+        const unsigned csr = _mm_getcsr();
+        if ((csr & (0x8000u | 0x40u)) != (0x8000u | 0x40u)) _mm_setcsr(csr | 0x8000u | 0x40u);
+    }
+#endif
     auto *s = fromPlugin(p);
     if (!s->active) return CLAP_PROCESS_ERROR;
     const uint32_t count = pr->frames_count;
