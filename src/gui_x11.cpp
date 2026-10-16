@@ -559,6 +559,7 @@ void teardown(Ctx &c)
 
 bool setupEmbedded(Ctx &c, Window parent)
 {
+    c.parent = parent;                       // pump/mirror/grow all key off this
     c.dpy = XOpenDisplay(nullptr);
     if (!c.dpy) return false;
     const int screen = DefaultScreen(c.dpy);

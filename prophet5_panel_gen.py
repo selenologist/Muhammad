@@ -166,7 +166,7 @@ def subhead(x, y, text, tail=26):
     texts.append(dict(x=x, y=y, style="sub", text=text))
 
 def box(x, y, w, h, header=None):
-    s = [f'<rect class="box" rx="8" x="{f(x)}" y="{f(y)}" width="{f(w)}" height="{f(h)}"/>']
+    s = [f'<rect class="box" data-box="{header or (str(x) + "-" + str(y))}" rx="8" x="{f(x)}" y="{f(y)}" width="{f(w)}" height="{f(h)}"/>']
     if header:
         tw = len(header) * 7.4
         s.append(f'<rect class="hdrbg" x="{f(x+w/2-tw/2-4)}" y="{f(y-6)}" width="{f(tw+8)}" height="12"/>')
