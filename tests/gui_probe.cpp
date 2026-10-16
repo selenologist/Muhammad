@@ -54,7 +54,8 @@ int main(int argc, char **argv)
     FILE *ready = fopen("/tmp/probe_ready", "w");
     if (ready) { std::fprintf(ready, "%lu\n", (unsigned long)parent); fclose(ready); }
 
-    for (int f = 0; f < 4000; f++)        // ~64 s of pumping
+    const int frames = argc > 2 ? atoi(argv[2]) : 20000;   // default ~5 min
+    for (int f = 0; f < frames; f++)
     {
         if (timer) timer->on_timer(plugin, 0);
         usleep(16000);

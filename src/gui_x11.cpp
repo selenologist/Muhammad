@@ -86,18 +86,21 @@ Ctx *ctxFrom(const clap_plugin_t *p)
 
 // ---- state <-> layout -------------------------------------------------------
 
-void applyTrimDrag(Ctx &c, float lx)
+void applyTrimSet(Ctx &c, int row, int col, int v)
 {   // main-thread: engine trim setters are POD writes; trims apply at the
     // oscillator increment read, so held notes keep re-trimming live
-    const int osc = c.trimCol / 2, which = c.trimCol % 2;
+    const int osc = col / 2, which = col % 2;
     int sa, oa, sb, ob;
-    c.plugin->engine.voiceTrim(c.trimRow, 0, &sa, &oa);
-    c.plugin->engine.voiceTrim(c.trimRow, 1, &sb, &ob);
-    const int v = p5ui::trim::valueAt(c.trimCol, lx);
+    c.plugin->engine.voiceTrim(row, 0, &sa, &oa);
+    c.plugin->engine.voiceTrim(row, 1, &sb, &ob);
     if (which == 0) { if (osc == 0) sa = v; else sb = v; }
     else            { if (osc == 0) oa = v; else ob = v; }
-    c.plugin->engine.setVoiceTrim(c.trimRow, 0, sa, oa);
-    c.plugin->engine.setVoiceTrim(c.trimRow, 1, sb, ob);
+    c.plugin->engine.setVoiceTrim(row, 0, sa, oa);
+    c.plugin->engine.setVoiceTrim(row, 1, sb, ob);
+}
+
+void applyTrimDrag(Ctx &c, float lx)
+{   applyTrimSet(c, c.trimRow, c.trimCol, p5ui::trim::valueAt(c.trimCol, lx));
 }
 
 void fillState(Ctx &c, p5ui::State &st)
@@ -417,6 +420,16 @@ void pump(Ctx &c)
                         c.plugin->guiSet((clap_id)pid, normToValue(pid, p5::knobNorm(pid, v)));
                         dirty = true;
                     }
+                    break;
+                }
+                if (ev.xbutton.button == Button3 && c.modal == 5)
+                {   // right-click on a trimmer rail = centre it (in tune)
+                    float lx, ly;
+                    p5ui::pointToLayout((float)ev.xbutton.x, (float)ev.xbutton.y,
+                                        (float)c.w, (float)c.h, lx, ly);
+                    int row, col;
+                    if (p5ui::trim::hitBar(lx, ly, &row, &col) && col >= 0)
+                    { applyTrimSet(c, row, col, 64); dirty = true; }
                     break;
                 }
                 if (ev.xbutton.button == Button3)

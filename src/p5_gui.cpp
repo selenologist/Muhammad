@@ -469,7 +469,7 @@ void draw(const Gui &g, const State &s, float w, float h)
         nvgFontSize(g.vg, 11.f);
         nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
         nvgText(g.vg, sxp(trim::x + 14), syp(trim::y + trim::h - 10),
-                "trimmers fixed per oscillator - like under the lid. EDIT closes.", nullptr);
+                "trimmers fixed per oscillator - like under the lid.  right-click centres.", nullptr);
         for (int i = 0; i < trim::rows; i++)
         {
             const float ry = trim::rowTop(i) + 10;
