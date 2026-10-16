@@ -26,7 +26,14 @@ bool ensureDir();
 
 std::string sanitize(const std::string &name);
 std::string patchPath(const std::string &name);         // baseDir/<NAME>.muhammad
-std::vector<std::string> listPatches();                 // sorted, name without extension
+std::vector<std::string> listPatches();
+
+// Tunings (microtonal scale/keyboard files, Surge tuning-library formats).
+// Files live in <base>/Tunings; a .scl paired with a same-stem .kbm is loaded
+// together. dev16 is per-MIDI-key deviation from 12-TET in 1/16-semitone.
+std::string tuningsDir();
+std::vector<std::string> listTunings();
+bool loadTuningDev(const std::string &fileName, int16_t *dev16, char *nameOut, int nameCap);                 // sorted, name without extension
 
 bool savePatch(const std::string &name, const uint8_t raw[133]);
 // Case-insensitive collision on purpose: filenames stay faithful to the typed

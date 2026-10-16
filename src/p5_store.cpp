@@ -180,3 +180,82 @@ bool saveMap()
 }
 
 } // namespace p5store
+
+// ---- tunings (Surge tuning-library) ----------------------------------------
+#include <dirent.h>
+#include <Tunings.h>
+#include <TuningsImpl.h>
+#include <cmath>
+#include <fstream>
+#include <sstream>
+#include <algorithm>
+
+namespace p5store {
+
+std::string tuningsDir() { return baseDir() + "/Tunings"; }
+
+std::vector<std::string> listTunings()
+{
+    std::vector<std::string> out;
+    DIR *d = opendir(tuningsDir().c_str());
+    if (!d) return out;
+    while (struct dirent *de = readdir(d))
+    {
+        const std::string n = de->d_name;
+        const size_t dot = n.rfind('.');
+        if (dot == std::string::npos) continue;
+        std::string ext = n.substr(dot);
+        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+        if (ext == ".scl" || ext == ".kbm") out.push_back(n);
+    }
+    closedir(d);
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
+}
+
+static std::string slurp(const std::string &path)
+{
+    std::ifstream f(path);
+    std::ostringstream ss;
+    ss << f.rdbuf();
+    return ss.str();
+}
+
+bool loadTuningDev(const std::string &fileName, int16_t *dev16, char *nameOut, int nameCap)
+{
+    const std::string path = tuningsDir() + "/" + fileName;
+    const size_t dot = path.rfind('.');
+    const std::string stem = dot == std::string::npos ? path : path.substr(0, dot);
+    const std::string ext = dot == std::string::npos ? "" : path.substr(dot);
+    std::string sclT, kbmT;
+    if (ext == ".kbm") { kbmT = slurp(path); if (FILE *alt = fopen((stem + ".scl").c_str(), "r")) { fclose(alt); sclT = slurp(stem + ".scl"); } }
+    else { sclT = slurp(path); if (FILE *alt = fopen((stem + ".kbm").c_str(), "r")) { fclose(alt); kbmT = slurp(stem + ".kbm"); } }
+    if (sclT.empty() && kbmT.empty()) return false;
+    try
+    {
+        using namespace Tunings;
+        Tuning t = sclT.empty()
+            ? Tuning(parseKBMData(kbmT))
+            : (kbmT.empty() ? Tuning(parseSCLData(sclT)) : Tuning(parseSCLData(sclT), parseKBMData(kbmT)));
+        for (int k = 0; k < 128; k++)
+        {
+            const double semis = t.retuningFromEqualInSemitonesForMidiNote(k);
+            long d = lround(semis * 16.0);
+            if (d < -512) d = -512; if (d > 512) d = 512;
+            dev16[k] = (int16_t)d;
+        }
+        // display name: SCL/KBM first comment line, else the file stem
+        const std::string &src = !sclT.empty() ? sclT : kbmT;
+        std::string first = src.substr(0, src.find('\n'));
+        size_t b = first.find_first_not_of(" \t");
+        if (b != std::string::npos) first = first.substr(b);
+        if (first.empty()) { size_t sl = stem.rfind('/'); first = sl == std::string::npos ? stem : stem.substr(sl + 1); }
+        std::strncpy(nameOut, first.c_str(), nameCap - 1);
+        nameOut[nameCap - 1] = 0;
+        return true;
+    }
+    catch (...) { return false; }
+}
+
+} // namespace p5store

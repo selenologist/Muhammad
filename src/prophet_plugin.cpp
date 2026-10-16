@@ -83,7 +83,7 @@ const clap_plugin_descriptor_t kDescriptor = {
     "selenologist",
     "https://github.com/keremimo/melodee",
     nullptr, nullptr,
-    "1.11.1-osctrims",   // bump per shipped build: the version Bitwig shows proves which binary is loaded
+    "1.12.0-tunebend",   // bump per shipped build: the version Bitwig shows proves which binary is loaded
     "P5 clone (PROPHET engine ported from the Melodee firmware)",
     kFeatures
 };
@@ -442,12 +442,12 @@ void Plugin::presetRecall()
 }
 
 // ---- events ------------------------------------------------------------------
-static void dispatchNoteOn(Plugin *s, int key, int vel)
+static void dispatchNoteOn(Plugin *s, int key, int vel, int ch = 0)
 {
     if (key < 0 || key > 127) return;
     if (vel <= 0) vel = 1;
     if (vel > 127) vel = 127;
-    s->engine.noteOn(key, vel);
+    s->engine.noteOn(key, vel, ch);
 }
 
 // Sequential "Prophet-5 (Rev4 family) MIDI Implementation 1.4" received-CC
@@ -477,13 +477,13 @@ static int ccRawParam(int cc)
     }
 }
 
-static void noteOffGated(Plugin *s, int key)
+static void noteOffGated(Plugin *s, int key, int ch = -1)
 {   // CC64 damper: notes RELEASED under the pedal keep holding until it lifts
     if (key >= 0 && key < 128 && s->sustain_)
     {
         if (!s->heldFlag_[key]) { s->heldFlag_[key] = 1; s->heldNotes_[s->heldCnt_++] = (uint8_t)key; }
     }
-    else if (key >= 0 && key < 128) s->engine.noteOff(key);
+    else if (key >= 0 && key < 128) s->engine.noteOff(key, ch);
 }
 
 static void panicVoices(Plugin *s)
@@ -498,12 +498,12 @@ static void dispatchEvent(Plugin *s, const clap_event_header_t *ev)
     switch (ev->type) {
     case CLAP_EVENT_NOTE_ON: {
         auto *e = reinterpret_cast<const clap_event_note *>(ev);
-        dispatchNoteOn(s, e->key, (int)(e->velocity * 127.0 + 0.5));
+        dispatchNoteOn(s, e->key, (int)(e->velocity * 127.0 + 0.5), e->channel & 15);
         break;
     }
     case CLAP_EVENT_NOTE_OFF: {
         auto *e = reinterpret_cast<const clap_event_note *>(ev);
-        noteOffGated(s, e->key);
+        noteOffGated(s, e->key, e->channel & 15);   // MPE: same key, other channels survive
         break;
     }
     case CLAP_EVENT_NOTE_CHOKE: {
@@ -519,13 +519,27 @@ static void dispatchEvent(Plugin *s, const clap_event_header_t *ev)
     }
     case CLAP_EVENT_MIDI: {
         auto *e = reinterpret_cast<const clap_event_midi *>(ev);
-        const uint8_t st = e->data[0] & 0xF0u, d1 = e->data[1], d2 = e->data[2];
+        const uint8_t st = e->data[0] & 0xF0u, ch = e->data[0] & 15u, d1 = e->data[1], d2 = e->data[2];
         switch (st) {
-        case 0x90: if (d2) dispatchNoteOn(s, d1, d2); else noteOffGated(s, d1); break;
-        case 0x80: noteOffGated(s, d1); break;
-        case 0xE0: s->bendRaw = (int)(((d2 << 7) | d1) - 8192); s->engine.setBend(s->bendRaw); break;
+        case 0x90: if (d2) dispatchNoteOn(s, d1, d2, ch); else noteOffGated(s, d1, ch); break;
+        case 0x80: noteOffGated(s, d1, ch); break;
+        case 0xE0: s->engine.setBendChannel(ch, (int)(((d2 << 7) | d1) - 8192)); break;
         case 0xB0:
             if (d1 == 1) s->engine.setModWheel(d2);
+            else if (d1 == 101) s->rpnM_[ch] = d2;          // RPN select: MSB 101, LSB 100
+            else if (d1 == 100) s->rpnL_[ch] = d2;
+            else if (d1 == 6 || d1 == 38)
+            {   // Data Entry after RPN 0,0 = pitch bend sensitivity: MSB semitones, LSB cents
+                if (s->rpnM_[ch] == 0 && s->rpnL_[ch] == 0)
+                {
+                    if (d1 == 6) s->rpnV_[ch] = (s->rpnV_[ch] & 127) | (d2 << 7);
+                    else         s->rpnV_[ch] = (s->rpnV_[ch] & ~127) | d2;
+                    const double semis = (double)(s->rpnV_[ch] >> 7) + (double)(s->rpnV_[ch] & 127) / 128.0;
+                    s->engine.setBendRangeSemitones(ch, semis, semis);   // RPN is symmetric
+                }
+                else { const int r = ccRawParam(d1); if (r >= 0) applyParam(s, (clap_id)r, d2); }
+            }
+            else if (d1 == 2) s->engine.setBendRangeSemitones(ch, d2, d2);   // MPE absolute RCS
             else if (d1 == 0) applyParam(s, PID_BANK, d2 / 8);      // CC0: bank cursor
             else if (d1 == 7) s->ccVol = d2 * (1.0f / 127.0f);
             else if (d1 == 13) s->ccExp = d2 * (1.0f / 127.0f);
@@ -547,7 +561,7 @@ static void dispatchEvent(Plugin *s, const clap_event_header_t *ev)
             else { const int r = ccRawParam(d1); if (r >= 0) applyParam(s, (clap_id)r, d2); }
             break;
         case 0xC0: applyPcFromCache(s, d1 < 8 ? s->bank * 8 + d1 : d1); break;  // audio-safe cache memcpy
-        case 0xD0: s->engine.setAftertouch(d2); break;
+        case 0xD0: s->engine.setAftertouch(d2); break;   // channel pressure: part-level (AT->flt)
         default: break;
         }
         break;
@@ -822,7 +836,7 @@ const clap_plugin_params_t kParams = { par_count, par_get_info, par_get_value,
 
 // ---- state (versioned binary blob) --------------------------------------------
 #define PW_STATE_MAGIC 0x5035434Cu            // "P5CL"
-#define PW_STATE_VERSION 6u
+#define PW_STATE_VERSION 7u
 static bool wr(const clap_ostream_t *o, const void *b, size_t n)
 { return o->write(o, b, (uint64_t)n) == (int64_t)n; }
 static bool state_save(const clap_plugin_t *p, const clap_ostream_t *out)
@@ -841,10 +855,15 @@ static bool state_save(const clap_plugin_t *p, const clap_ostream_t *out)
     for (int i = 0; i < 8; i++)
         for (int k = 0; k < 2; k++)
         { int sc, of; s->engine.voiceTrim(i, k, &sc, &of); tr[4*i+2*k] = (int16_t)sc; tr[4*i+2*k+1] = (int16_t)of; }
+    int16_t dev[128];
+    for (int k = 0; k < 128; k++) dev[k] = s->engine.tuningDeviation()[k];
+    int16_t br[2] = { (int16_t)s->engine.rawBendRangeUpDefault(), (int16_t)s->engine.rawBendRangeDownDefault() };
     return wr(out, head, sizeof head) && wr(out, s->engine.patch().raw, 133) &&
            wr(out, ov, sizeof ov) && wr(out, &trim, sizeof trim) && wr(out, &os, sizeof os) &&
            wr(out, gui, sizeof gui) && wr(out, &pan, sizeof pan) &&
-           wr(out, &dr, sizeof dr) && wr(out, tr, sizeof tr);
+           wr(out, &dr, sizeof dr) && wr(out, tr, sizeof tr) &&
+           wr(out, dev, sizeof dev) && wr(out, br, sizeof br) &&
+           wr(out, s->tuneName_, sizeof s->tuneName_);
 }
 static bool rd(const clap_istream_t *i, void *b, size_t n)
 { return i->read(i, b, (uint64_t)n) == (int64_t)n; }
@@ -885,6 +904,18 @@ static bool state_load(const clap_plugin_t *p, const clap_istream_t *in)
                         for (int k = 0; k < 2; k++) s->engine.setVoiceTrim(i, k, tr[4*i+2*k], tr[4*i+2*k+1]);
                     else  /* v5: one trim per voice, apply to both oscillators */
                         for (int k = 0; k < 2; k++) s->engine.setVoiceTrim(i, k, tr[2*i], tr[2*i+1]);
+                }
+                if (head[1] >= 7u)
+                {
+                    static int16_t dev[128];
+                    int16_t br[2];
+                    if (!rd(in, dev, sizeof dev)) return false;
+                    if (!rd(in, br, sizeof br)) return false;
+                    if (!rd(in, s->tuneName_, sizeof s->tuneName_)) return false;
+                    s->tuneName_[sizeof s->tuneName_ - 1] = 0;
+                    s->engine.setTuningDeviation(dev);
+                    if (br[0] >= 0 && br[1] >= 0)
+                        s->engine.setBendRangeDefault(br[0] / 256.0, br[1] / 256.0);
                 }
             }
         }

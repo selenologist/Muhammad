@@ -11,6 +11,9 @@ endif()
 
 # SIMD width is chosen by SIMDe for the target; the SIMD kernel must not let the
 # compiler fuse mul+add, or the scalar reference and the vector kernel drift.
+include_directories(vendor/tuning-library/include)   # header-only, MIT: tuning-library
+# the library needs C++20 concepts; grant them to the one TU that includes it
+set_source_files_properties(src/p5_store.cpp PROPERTIES COMPILE_OPTIONS "-std=gnu++20")
 set(PP_CXX_FLAGS "-O3 -ffp-contract=off")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${PP_CXX_FLAGS}")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${PP_CXX_FLAGS}")
@@ -23,7 +26,7 @@ find_program(GIT_EXE git)
 execute_process(COMMAND ${GIT_EXE} rev-parse --short HEAD OUTPUT_VARIABLE P5_GIT OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
 execute_process(COMMAND ${GIT_EXE} status --porcelain OUTPUT_VARIABLE P5_DIRTY OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
 string(TIMESTAMP P5_BUILDDATE "%Y-%m-%d %H:%M")
-set(P5_VERSION "1.11.1-osctrims")
+set(P5_VERSION "1.12.0-tunebend")
 set(P5_DIRTY_MARK "")
 if(P5_DIRTY)
     set(P5_DIRTY_MARK "-d")

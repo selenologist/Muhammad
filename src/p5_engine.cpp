@@ -50,7 +50,10 @@ void Engine::activate(double sampleRate)
         dcK_ = (uint32_t)(k > 0.0 ? k : 0.0);
     }
     dcX1_ = dcY1_ = 0;
-    bendQ8_ = bendTarget_ = 0;
+    for (int i = 0; i < 16; i++) { bendRaw_[i] = bendQ8_[i] = 0; rUp_[i] = rDn_[i] = -1; }
+    rUpDef_ = rDnDef_ = -1;
+    std::memset(tuneDev_, 0, sizeof tuneDev_);
+    tuningActive_ = false;
     for (int i = 0; i < MAXV; i++) hbReset(hb_[i]);
 }
 
@@ -224,7 +227,8 @@ void Engine::voiceStart(int lane, int note, int vel, uint8_t mvel, int *voiceWas
     l.v.active = 1;
     l.v.stage = 1;
     l.v.age = ++vage_;
-    l.v.pitch16 = note * 16 + tuneUnits_;
+    l.ch = curCh_;
+    l.v.pitch16 = note * 16 + tuneUnits_ + (tuningActive_ ? tuneDev_[i_clamp(note, 0, 127)] : 0);
     l.v.pitchCur = l.v.pitch16;                   // glide_set: the track's glide is off
     l.v.mvel = mvel;                              // t->m_vel (mod.c: the note's VEL)
     if (!*sounding) { l.v.env = 0; l.v.envOut = 0; }
@@ -315,7 +319,7 @@ void Engine::monoNoteOn(int note, int vel)
             }
         } else {
             l.v.note = (uint8_t)want;                   // legato: new pitch, same envelope
-            l.v.pitch16 = want * 16 + tuneUnits_;
+            l.v.pitch16 = want * 16 + tuneUnits_ + (tuningActive_ ? tuneDev_[i_clamp(want, 0, 127)] : 0);
             l.v.pitchCur = l.v.pitch16;
             l.v.mvel = (uint8_t)vel;
             if (vel > l.v.vel && nv == 1) l.v.vel = (uint8_t)vel;
@@ -325,8 +329,9 @@ void Engine::monoNoteOn(int note, int vel)
     monoNote_ = want;
 }
 
-void Engine::noteOn(int note, int vel)
+void Engine::noteOn(int note, int vel, int ch)
 {
+    curCh_ = ch & 15;
     if (note < 0 || note > 127) return;
     vel = i_clamp(vel, 1, 127);
     const int mode = voiceModeOverride_ >= 0 ? voiceModeOverride_ : voiceMode_;
@@ -334,7 +339,7 @@ void Engine::noteOn(int note, int vel)
     else monoNoteOn(note, vel);
 }
 
-void Engine::noteOff(int note)
+void Engine::noteOff(int note, int ch)
 {
     const int mode = voiceModeOverride_ >= 0 ? voiceModeOverride_ : voiceMode_;
     const int np = slotCount();
@@ -359,7 +364,8 @@ void Engine::noteOff(int note)
         }
     }
     for (int i = 0; i < MAXV; i++)                      // a fallback already has its new pitch
-        if (lanes_[i].v.note == note && lanes_[i].v.gate) {
+        if (lanes_[i].v.note == note && lanes_[i].v.gate &&
+            (ch < 0 || lanes_[i].ch == ch)) {           // MPE: same key, other channel survives
             lanes_[i].v.gate = 0;
             lanes_[i].v.stage = 3;
         }
@@ -394,7 +400,6 @@ void Engine::block()
             value_[k] = (uint8_t)(v < 0 ? 0 : v > 255 ? 255 : v + 0.5f);
         }
     }
-    p5_update_bend();
     uint32_t inc = PW_P5_LFO_INC[value_[P5_LFO_RATE]] / (uint32_t)os_;  // per sub-sample
     if (srScale_ != 1.0) inc = (uint32_t)((double)inc * srScale_);
     const int amt = i_clamp((pcMode_ ? 0 : valueOf(P5_LFO_INITIAL)) + mw_ + (p[P5_PRESS_LFO] ? at_ : 0), 0, 127);
@@ -403,8 +408,40 @@ void Engine::block()
 
 void Engine::p5_update_bend()
 {
-    const int32_t range = (i_clamp((int32_t)patch_.raw[P5_BEND], 0, 11) + 1) * 256;
-    bendTarget_ = bendRaw_ * range / (bendRaw_ < 0 ? 8192 : 8191);
+    // one smoothing lane per MIDI channel (~6 ms, exact landing, same law)
+    for (int ch = 0; ch < 16; ch++)
+    {
+        const int32_t range = bendRaw_[ch] < 0 ? rangeDnQ8(ch) : rangeUpQ8(ch);
+        const int32_t tgt = bendRaw_[ch] * range / (bendRaw_[ch] < 0 ? 8192 : 8191);
+        const int32_t d = tgt - bendQ8_[ch];
+        bendQ8_[ch] += d > 0 ? (d < 4 ? d : (d + 3) / 4) : (d > -4 ? d : (d - 3) / 4);
+    }
+}
+
+void Engine::setBendRangeSemitones(int ch, double up, double down)
+{
+    const int q = (int)(up * 256.0 + (up >= 0 ? 0.5 : -0.5));
+    const int r = (int)(down * 256.0 + (down >= 0 ? 0.5 : -0.5));
+    for (int i = 0; i < 16; i++)
+        if (ch < 0 || i == ch) { rUp_[i] = (int16_t)(q < 0 ? 0 : q > 24 * 256 ? 24 * 256 : q);
+                                 rDn_[i] = (int16_t)(r < 0 ? 0 : r > 24 * 256 ? 24 * 256 : r); }
+}
+void Engine::setBendRangeDefault(double up, double down)
+{
+    rUpDef_ = (int16_t)(up * 256.0 + 0.5);
+    rDnDef_ = (int16_t)(down * 256.0 + 0.5);
+}
+
+void Engine::setTuningDeviation(const int16_t *dev16)
+{
+    bool any = false;
+    for (int k = 0; k < 128; k++)
+    {
+        const int v = dev16 ? dev16[k] : 0;
+        tuneDev_[k] = (int16_t)(v < -512 ? -512 : v > 512 ? 512 : v);
+        if (tuneDev_[k]) any = true;
+    }
+    tuningActive_ = any;
 }
 
 void Engine::setVoiceTrim(int lane, int osc, int scale, int offset)
@@ -654,14 +691,7 @@ void Engine::process(int32_t *out, uint32_t n)
     for (int i = 0; i < MAXV; i++) live |= lanes_[i].v.active ? 1u << i : 0;
 
     block();                                      // the part's wheel runs even on a silent track
-
-    {   // bend smoothing (~6 ms, exact landing), then this block's bend split
-        int32_t d = bendTarget_ - bendQ8_;
-        bendQ8_ += d > 0 ? (d < 4 ? d : (d + 3) / 4) : (d > -4 ? d : (d - 3) / 4);
-    }
-    const int32_t bend = bendQ8_;
-    const int32_t bend16 = bend >= 0 ? bend / 16 : -((-bend + 15) / 16);
-    const int32_t bendFine = (bend - bend16 * 16) * 2367 / 2560;
+    p5_update_bend();                             // per-MIDI-channel bend lanes
 
     uint32_t mask = 0;
     uint32_t nr = 0;
@@ -688,6 +718,10 @@ void Engine::process(int32_t *out, uint32_t n)
                 l.filterDrift = (int)(wF_[i] * v * 110.0f);
                 l.ampDrift    = (int)(wA_[i] * v * 260.0f);
             }
+            // this lane's bend, from its own channel (MPE)
+            const int32_t bend = bendQ8_[l.ch & 15];
+            const int32_t bend16 = bend >= 0 ? bend / 16 : -((-bend + 15) / 16);
+            const int32_t bendFine = (bend - bend16 * 16) * 2367 / 2560;
             int32_t env = adsrTick(l);
             if (v.active) {                       // ownenv: the engine's envelopes end the voice
                 if (!v.gate && l.aenv.stage == 0u) {      // p5_done: its last block, faded out

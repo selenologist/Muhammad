@@ -82,11 +82,25 @@ public:
         }
     }
     int rawValue(int idx) const { return idx >= 0 && idx < (int)RAW_MAX ? patch_.raw[idx] : 0; }
-    void noteOn(int note, int vel);
-    void noteOff(int note);
+    void noteOn(int note, int vel, int ch = 0);
+    void noteOff(int note, int ch = -1);   // -1: any channel (firmware semantics)
     void allNotesOff();                       // trk_all_off
     void silenceReset();                      // every voice and part state, as at boot
-    void setBend(int raw) { bendRaw_ = i_clamp(raw, -8192, 8191); }
+    void setBend(int raw) { bendRaw_[0] = i_clamp(raw, -8192, 8191); }
+    // MPE: bend state is per MIDI channel; ranges resolve per channel as
+    // host-set (RPN0 / MPE absolute RCS) > tuning-editor default > wire byte.
+    void setBendChannel(int ch, int raw)
+    { if (ch >= 0 && ch < 16) bendRaw_[ch] = i_clamp(raw, -8192, 8191); }
+    int rawBendRangeUpDefault() const { return rUpDef_; }
+    int rawBendRangeDownDefault() const { return rDnDef_; }
+    void setBendRangeSemitones(int ch, double up, double down);       // ch<0 = all 16
+    void setBendRangeDefault(double up, double down);                 // editor
+    double bendRangeUpDefault() const { return rUpDef_ < 0 ? wireRangeQ8() / 256.0 : rUpDef_ / 256.0; }
+    double bendRangeDownDefault() const { return rDnDef_ < 0 ? wireRangeQ8() / 256.0 : rDnDef_ / 256.0; }
+    // per-MIDI-key deviation from 12-TET in 1/16-semitone units (microtuning)
+    void setTuningDeviation(const int16_t *dev16);
+    const int16_t *tuningDeviation() const { return tuneDev_; }
+    bool tuningActive() const { return tuningActive_; }
     // PC playability mode (the plugin turns it on; the bit-exact harness keeps
     // the firmware's literal maths). LFO INITIAL is the WHEEL STATE at patch
     // load — real P5 keyboards have a reporting wheel, so the patch value is
@@ -159,6 +173,7 @@ private:
         int32_t drift, filterDrift, ampDrift, envDrift;   // vintage mismatch, fixed per note
         float filterPrev, ampPrev;            // f0/a0 carried across blocks
         int32_t glidePitch;                   // s->glide_pitch (engine glide)
+        int ch = 0;                           // MIDI channel of the sounding note (MPE)
         int16_t trimS[2] = {64, 64};          // per-OSC V/oct slope trim, 64 = neutral
         int16_t trimO[2] = {64, 64};          // per-OSC V/oct offset trim
         int32_t lastPcm;                      // for the one-block release fade
@@ -219,7 +234,15 @@ private:
     // the track ADSR the presets leave at their defaults (preset_t: env 0,0,127,0)
     int adsrA_ = 0, adsrD_ = 0, adsrS_ = 127, adsrR_ = 0;
 
-    int32_t bendRaw_ = 0, bendQ8_ = 0, bendTarget_ = 0;
+    int32_t bendRaw_[16] = {}, bendQ8_[16] = {};
+    int16_t rUp_[16], rDn_[16];        // per-channel host range, Q8 cents, -1 = unset
+    int16_t rUpDef_ = -1, rDnDef_ = -1;  // editor default, Q8, -1 = fall back to wire
+    int16_t tuneDev_[128] = {};          // microtuning table, 1/16 semitone
+    bool tuningActive_ = false;
+    int curCh_ = 0;                      // channel of the noteOn being serviced
+    int32_t wireRangeQ8() const { return (i_clamp((int32_t)patch_.raw[P5_BEND], 0, 11) + 1) * 256; }
+    int16_t rangeUpQ8(int ch) const { return rUp_[ch] >= 0 ? rUp_[ch] : (rUpDef_ >= 0 ? rUpDef_ : wireRangeQ8()); }
+    int16_t rangeDnQ8(int ch) const { return rDn_[ch] >= 0 ? rDn_[ch] : (rDnDef_ >= 0 ? rDnDef_ : wireRangeQ8()); }
     int mw_ = 0, at_ = 0;
     double srScale_ = 1.0;                    // 44100 / host sr
     double hostSr_ = 44100.0;
