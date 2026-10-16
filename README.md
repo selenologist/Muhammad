@@ -311,6 +311,24 @@ from the status nibble.
 State blob v7 persists the 128-key deviation table, tuning name, and the
 editor range defaults; v6 blobs still load (standard tuning, wire ranges).
 
+## Filter cutoff headroom & rail UX (v1.12.1-cut21k)
+
+The firmware's cutoff->g table spans 30 Hz..16 kHz over 128 indices and both
+kernels clamped modulation there: with the knob high, envelope, poly-mod and
+keyboard tracking all pinned at 16 kHz - half and full tracking sounded
+identical at the top of the keyboard (measured: 19 kHz energy frozen at
+-25.8 dB for both). The port keeps the firmware values verbatim for indices
+0..127 and continues the generator law (30*(16000/30)^(u/127)) to index 159,
+flattening at min(21 kHz, 98% of the internal Nyquist rate). Same probe after
+the fix: -11.1 dB at note 84. Everything below the old ceiling is
+bit-identical (A/B: only scenario 3 - self-osc, which rides past 16 kHz -
+diverges from the firmware; that IS the feature).
+
+TUNING page rails: Shift while dragging snaps BEND UP/DOWN to whole semitones;
+arrow keys adjust the ringed (focused) rail by 0.1 st, Shift+arrows by 1.0 st;
+Left/Right move focus. Live-verified on Xvfb: 7.0 -> 7.1 -> 8.1 -> focus to
+DOWN -> 2.0.
+
 ## Measurements log
 
 * v1.11: trim offset +16 measured +1.009 semitones; drift depth 127 walks

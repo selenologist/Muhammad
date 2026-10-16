@@ -7,6 +7,13 @@
 #define PW_FS 44100
 #define PW_CTL 32
 #define PW_KEYTRACK_HALF_Q7 1196
+
+/* cutoff->g table extent: firmware's 128 indices stop at 16 kHz, which capped
+ * every positive modulation (env, poly-mod, key track) hard. The port extends
+ * the same geometric law to index 159; entries past the cap are flat at
+ * min(21 kHz, 98% of the internal Nyquist) — ultrasonic headroom without
+ * sitting on Nyquist. */
+#define PW_TPT_TOP 159
 #define PW_FACTORY_N 200
 
 static const uint32_t PW_PITCH_OCT[192] = {

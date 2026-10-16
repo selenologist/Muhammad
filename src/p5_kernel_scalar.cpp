@@ -30,10 +30,10 @@ struct Hot {
 inline float filterCore(Hot &s, float input, float cutoff, float k, float gain, int curtis,
                         const float *tab)
 {
-    cutoff = f_clamp(cutoff, 0.0f, 127.0f);
+    cutoff = f_clamp(cutoff, 0.0f, (float)PW_TPT_TOP);
     uint32_t i = (uint32_t)cutoff;
     float g = tab[i];
-    if (i < 127u) g += (tab[i + 1u] - g) * (cutoff - (float)i);
+    if (i < (uint32_t)PW_TPT_TOP) g += (tab[i + 1u] - g) * (cutoff - (float)i);
     const float g2 = g * g, g3 = g2 * g, g4 = g3 * g;
     const float reciprocal = 1.0f / (1.0f + k * g4);
     const float sigma = (1.0f - g) * (g3 * s.z[0] + g2 * s.z[1] + g * s.z[2] + s.z[3]);

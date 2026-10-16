@@ -162,11 +162,11 @@ inline VI pwOfV(V value)                                       // p5_pw
 // Curtis saturates only the input and output; SSI saturates every stage.
 inline V filterCoreV(HotV &h, V input, V cutoff, V k, V gain, int curtis, const float *tab)
 {
-    V cc = minv(maxv(cutoff, spl(0.0f)), spl(127.0f));
+    V cc = minv(maxv(cutoff, spl(0.0f)), spl((float)PW_TPT_TOP));
     VI i = cvtf2u(cc);
     V g0 = gather(tab, i);
-    V g1 = gather(tab, iand(iadd(i, spli(1)), spli(127)));
-    V g = sel(castsi(cmt(spli(127), i)), g0, add(g0, mul(sub(g1, g0), sub(cc, cvti2f(i)))));  // interp when i < 127
+    V g1 = gather(tab, cvtf2u(minv(cc + spl(1.0f), spl((float)PW_TPT_TOP))));   // clamp, not iand: 160-entry table
+    V g = sel(castsi(cmt(spli(PW_TPT_TOP), i)), g0, add(g0, mul(sub(g1, g0), sub(cc, cvti2f(i)))));  // interp when i < TOP
     V g2 = mul(g, g), g3 = mul(g2, g), g4 = mul(g3, g);
     V recip = div(spl(1.0f), add(spl(1.0f), mul(k, g4)));
     V sigma = mul(sub(spl(1.0f), g), add(add(add(mul(g3, h.z0), mul(g2, h.z1)), mul(g, h.z2)), h.z3));

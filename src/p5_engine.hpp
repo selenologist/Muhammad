@@ -251,7 +251,7 @@ private:
     // A/B never sees a recomputed value; rebuilt for the internal rate
     // (oversample * host sr) otherwise, keeping every index's cutoff Hz.
     const float *tpt_ = PW_P5_TPT_G;
-    float tptGen_[128];
+    float tptGen_[PW_TPT_TOP + 1];
     void buildTpt();
     HbState hb_[MAXV];                        // per-voice 2x decimators
     uint32_t vage_ = 0;                       // voice ages: one clock for every part

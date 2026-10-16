@@ -65,14 +65,30 @@ void Engine::activate(double sampleRate)
 // index's cutoff in exact Hertz at any host sample rate.)
 void Engine::buildTpt()
 {
-    if (os_ == 1 && hostSr_ == 44100.0) { tpt_ = PW_P5_TPT_G; return; }
-    const double scale = 44100.0 / ((double)os_ * hostSr_);
-    for (int i = 0; i < 128; i++) {
-        const double g0 = PW_P5_TPT_G[i];
-        const double t = g0 / (1.0 - g0);                 // tan(pi fc_i / 44100)
-        double tn = std::tan(std::atan(t) * scale);
-        if (!(tn < 1.0e6)) tn = 1.0e6;                    // never at/past Nyquist in practice
-        tptGen_[i] = (float)(tn / (1.0 + tn));
+    if (os_ == 1 && hostSr_ == 44100.0)
+        for (int i = 0; i < 128; i++) tptGen_[i] = PW_P5_TPT_G[i];  // verbatim firmware values
+    else
+    {
+        const double scale = 44100.0 / ((double)os_ * hostSr_);
+        for (int i = 0; i < 128; i++) {
+            const double g0 = PW_P5_TPT_G[i];
+            const double t = g0 / (1.0 - g0);                 // tan(pi fc_i / 44100)
+            double tn = std::tan(std::atan(t) * scale);
+            if (!(tn < 1.0e6)) tn = 1.0e6;                    // never at/past Nyquist in practice
+            tptGen_[i] = (float)(tn / (1.0 + tn));
+        }
+    }
+    // Ultrasonic headroom: the generator's law is fc(u) = 30 * (16000/30)^(u/127) Hz;
+    // continue it past 127, flattening at min(21 kHz, 98% internal Nyquist).
+    const double srInt = (double)os_ * hostSr_;
+    const double fcap = srInt * 0.49 < 21000.0 ? srInt * 0.49 : 21000.0;
+    for (int u = 128; u <= PW_TPT_TOP; u++)
+    {
+        double f = 30.0 * std::pow(16000.0 / 30.0, (double)u / 127.0);
+        if (f > fcap) f = fcap;
+        double t = std::tan(3.14159265358979318 * f / srInt);
+        if (!(t < 1.0e6)) t = 1.0e6;
+        tptGen_[u] = (float)(t / (1.0 + t));
     }
     tpt_ = tptGen_;
 }
