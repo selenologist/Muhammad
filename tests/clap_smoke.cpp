@@ -233,10 +233,10 @@ int main(int argc, char **argv)
             uint32_t gw = 0, gh = 0;
             check("gui: get_size sane", gui->get_size(plugin, &gw, &gh) && gw > 400 && gh > 100);
             clap_gui_resize_hints_t hints{};
-            check("gui: resize hints preserve 1560x416 aspect", gui->get_resize_hints(plugin, &hints) &&
-                  hints.preserve_aspect_ratio && hints.aspect_ratio_width == 1560 && hints.aspect_ratio_height == 416);
+            check("gui: resize hints preserve 1560x430 aspect", gui->get_resize_hints(plugin, &hints) &&
+                  hints.preserve_aspect_ratio && hints.aspect_ratio_width == 1560 && hints.aspect_ratio_height == 430);
             uint32_t aw = 900, ah = 900;
-            check("gui: adjust_size fixes aspect", gui->adjust_size(plugin, &aw, &ah) && aw == 900 && ah == 240);
+            check("gui: adjust_size fixes aspect", gui->adjust_size(plugin, &aw, &ah) && aw == 900 && ah == 248);
             gui->destroy(plugin);
         }
 

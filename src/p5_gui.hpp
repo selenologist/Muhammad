@@ -53,7 +53,10 @@ inline void fitWindow(float w, float h, float &sc, float &xoff, float &yoff)
     const float sx = w / kPanelW, sy = h / kPanelH;
     sc = sx < sy ? sx : sy;
     xoff = (w - sc * kPanelW) / 2;
-    yoff = (h - sc * kPanelH) / 2;
+    // A window taller than the panel is OURS: the panel pins to the top and
+    // the remainder is drawn chassis, not a letterbox. Centre only when the
+    // height is the binding constraint (short-and-wide containers).
+    yoff = (sy >= sx) ? 0.f : (h - sc * kPanelH) / 2;
 }
 
 // Draw the panel filling w x h pixels; scales layout (1560x416) uniformly.

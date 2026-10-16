@@ -10,13 +10,17 @@ bin="$build/render_golden"
 command -v compare >/dev/null || { echo "ImageMagick 'compare' required"; exit 2; }
 
 fail=0
-for spec in "init 1560" "pad 936" "bass 1560"; do
+for spec in "init 1560" "pad 936" "bass 1560" "init 1052 1016 tall"; do
     set -- $spec
     state=$1; w=$2
-    h=$(( w * 416 / 1560 ))
+    h=$(( w * 430 / 1560 )); tag=$w
+    if [ "$#" -ge 3 ]; then
+        case "$3" in (*[!0-9]*) tag=$3 ;; (*) h=$3 ;; esac
+        if [ "$#" -ge 4 ]; then tag=$4; fi
+    fi
     out=$(mktemp --suffix=.png)
-    "$bin" "$out" "$state" "$w" 2>/dev/null
-    golden="$root/tests/golden/panel-$state-$w.png"
+    "$bin" "$out" "$state" "$w" "$h" 2>/dev/null
+    golden="$root/tests/golden/panel-$state-$tag.png"
     if [ ! -f "$golden" ]; then
         echo "GOLDEN-MISSING $golden (baseline run: cp $out $golden)"; fail=1
     else

@@ -264,21 +264,65 @@ void draw(const Gui &g, const State &s, float w, float h)
     for (int i = 0; i < kNumBtns; i++)
         button(g, kBtns[i], s.led[i]);
 
-    // build stamp, bottom-right of the panel — the only way to prove which
-    // binary a host actually mapped when its stderr is unreachable
+    // extra container height below the panel is OURS (the embedder pins the
+    // panel to the top and hands us the whole window): chassis + wordmark.
+    const float winBot = (h - yoff) / sc, winRight = (w - xoff) / sc;
+    const float chassisH = winBot - kPanelH;
+    const bool chassis = chassisH > 40.f;
+    if (chassis)
+    {
+        const float wl = -xoff / sc, ww = winRight - wl;      // well with depth, not a hole
+        NVGpaint grad = nvgLinearGradient(g.vg, 0, kPanelH, 0, winBot,
+                                         nvgRGBA(0, 0, 0, 60), nvgRGBA(0, 0, 0, 22));
+        nvgBeginPath(g.vg);
+        nvgRect(g.vg, wl, kPanelH, ww, chassisH);
+        nvgFillPaint(g.vg, grad);
+        nvgFill(g.vg);
+        nvgBeginPath(g.vg);                                   // seam under the panel
+        nvgMoveTo(g.vg, wl, kPanelH + 0.5f);
+        nvgLineTo(g.vg, wl + ww, kPanelH + 0.5f);
+        nvgStrokeColor(g.vg, nvgRGBA(0, 0, 0, 140));
+        nvgStrokeWidth(g.vg, 1.f);
+        nvgStroke(g.vg);
+        nvgBeginPath(g.vg);
+        nvgMoveTo(g.vg, wl, kPanelH + 1.5f);
+        nvgLineTo(g.vg, wl + ww, kPanelH + 1.5f);
+        nvgStrokeColor(g.vg, nvgRGBA(255, 255, 255, 12));
+        nvgStrokeWidth(g.vg, 1.f);
+        nvgStroke(g.vg);
+        const float cy = kPanelH + chassisH * 0.42f;
+        const float fs = chassisH < 160.f ? 34.f : chassisH < 320.f ? 52.f : 76.f;
+        nvgFontFaceId(g.vg, g.fontId);
+        nvgTextAlign(g.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
+        nvgFontSize(g.vg, fs);
+        nvgTextLetterSpacing(g.vg, fs * 0.22f);
+        const float wx = (winRight - xoff / sc) / 2.f + fs * 0.11f;   // undo trailing-space bias
+        nvgFillColor(g.vg, nvgRGBA(0, 0, 0, 150));                     // raised mark: shadow then face
+        nvgText(g.vg, wx, cy + fs * 0.05f, "MUHAMMAD", nullptr);
+        nvgFillColor(g.vg, nvgRGBA(255, 255, 255, 46));
+        nvgText(g.vg, wx, cy, "MUHAMMAD", nullptr);
+        nvgTextLetterSpacing(g.vg, 0.f);
+        nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_BASELINE);
+        nvgFontFaceId(g.vg, g.fontId);
+    }
+
+    // build stamp (+ diag), bottom-right of the WINDOW — the only way to prove
+    // which binary a host actually mapped when its stderr is unreachable
     if (s.build && s.build[0])
     {
+        const float right = chassis ? winRight - 10.f : kPanelW - 8.f;
+        const float base  = chassis ? winBot - 12.f : kPanelH - 8.f;
         nvgFontSize(g.vg, 11.5f);
-        float x = kPanelW - 8;
+        float x = right;
         const float adv = nvgTextBounds(g.vg, 0, 0, s.build, nullptr, nullptr);
         nvgFillColor(g.vg, nvgRGBA(206, 206, 216, 255));
-        nvgText(g.vg, x - adv, kPanelH - 12, s.build, nullptr);
+        nvgText(g.vg, x - adv, base, s.build, nullptr);
         x -= adv + 14;
         if (s.diag && s.diag[0])
         {
             const float dadv = nvgTextBounds(g.vg, 0, 0, s.diag, nullptr, nullptr);
             nvgFillColor(g.vg, nvgRGBA(150, 176, 206, 255));   // cool grey-blue, quieter than the stamp
-            nvgText(g.vg, x - dadv, kPanelH - 12, s.diag, nullptr);
+            nvgText(g.vg, x - dadv, base, s.diag, nullptr);
         }
     }
 

@@ -9,7 +9,7 @@ import pathlib
 HERE = pathlib.Path(__file__).resolve().parent
 OUT_SVG = str(HERE / "prophet5_panel.svg")
 OUT_HDR = str(HERE / "src" / "panel_layout.h")
-PW, PH = 1560, 416
+PW, PH = 1560, 430   # +14 footer strip: stamp/diag live below the chassis boxes
 PANEL_BG = "#101010"
 TXT = {"hdr": 12.0, "lbl": 8.4, "sub": 8.0, "num": 9.2, "scale": 6.6}
 TRK = {"hdr": 1.6, "lbl": 0.8, "sub": 1.4, "num": 0.5, "scale": 0.0}
@@ -192,7 +192,7 @@ def line(x1, y1, x2, y2):
 # Rows: r1 y10..130 | r2 y138..258 | r3 y266..404. FILTER box spans r1+r2.
 
 # --- POLY-MOD (A, r1) ---
-box(8, 10, 292, 120, "POLY-MOD")
+box(8, 14, 292, 116, "POLY-MOD")
 knob(60, 60, "fil_env")
 knob(124, 60, "osc2")
 notes((60, 94, "FIL. ENV."), (124, 94, "OSC 2"))
@@ -226,7 +226,7 @@ texts.append(dict(x=62 + 26, y=330 + 40, style="lbl", text="NOISE"))
 texts.append(dict(x=62, y=330 + 56, style="lbl", text="SOURCE MIX"))
 
 # --- OSCILLATOR 1 (B, r1) ---
-box(306, 10, 400, 120, "OSCILLATOR 1")
+box(306, 14, 400, 116, "OSCILLATOR 1")
 knob(352, 60, "osc1_freq", label="FREQUENCY")
 btn(436, 60, "osc1_saw", glyph="gSaw")
 btn(472, 60, "osc1_sq", glyph="gSq")
@@ -251,7 +251,7 @@ btn(442, 332, "unison", label="UNISON", label_dy=38)
 knob(512, 332, "unison_cnt", label="COUNT", label_dy=38, ticks=(1, 8))
 
 # --- MIXER (r1) ---
-box(712, 10, 184, 120, "MIXER")
+box(712, 14, 184, 116, "MIXER")
 knob(756, 64, "mix_osc1", label="OSC 1")
 knob(804, 64, "mix_osc2", label="OSC 2")
 knob(852, 64, "mix_noise", label="NOISE")
@@ -261,7 +261,7 @@ knob(756, 196, "glide", label="GLIDE", label_dy=38)
 btn(850, 196, "os", color="btnDark", label="OVERSAMPLE", label_dy=38)
 
 # --- FILTER (tall r1+r2) ---
-box(902, 10, 334, 248, "FILTER")
+box(902, 14, 334, 244, "FILTER")
 btn(928, 62, "flt_model", color="btnGray", label="MODEL")   # real-P5 filter PRESET slot -> SSI/Curtis toggle
 knob(996, 58, "flt_cutoff", label="CUTOFF")
 knob(1064, 58, "flt_reso", label="RESONANCE")
@@ -280,6 +280,7 @@ knob(1396, 66, "vel_amp", label="VEL>AMP", label_dy=40)
 knob(1462, 66, "volume", label="VOLUME", white=True, label_dy=40)
 
 # --- AMPLIFIER (right, r2) ---
+box(1242, 14, 310, 116, "MASTER")
 box(1242, 138, 310, 120, "AMPLIFIER")
 knob(1296, 196, "amp_a", label="ATTACK", label_dy=44)
 knob(1364, 196, "amp_d", label="DECAY", label_dy=44)

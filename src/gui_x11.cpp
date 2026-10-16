@@ -338,6 +338,31 @@ void pump(Ctx &c)
             dirty = true;
         }
     }
+    // Bitwig sizes our immediate container to the aspect we report; the waste
+    // lives one level up in the device panel. If an ancestor is markedly taller
+    // than our wrapper, ask the host (request_resize) to hand us that space —
+    // the renderer turns it into chassis. Two polite tries, then we stop pestering.
+    if (c.parent && c.hostGui && c.hostGui->request_resize && c.resizeRequests < 2 && c.w > 40)
+    {
+        XWindowAttributes pa{};
+        if (XGetWindowAttributes(c.dpy, c.parent, &pa))
+        {
+            Window r, pp, *kids = nullptr; unsigned nk = 0;
+            if (XQueryTree(c.dpy, c.parent, &r, &pp, &kids, &nk) && kids) XFree(kids);
+            XWindowAttributes ga{};
+            if (pp && XGetWindowAttributes(c.dpy, pp, &ga) &&
+                ga.height > pa.height + 60 && pa.height > 1)
+            {
+                const long t = nowMs();
+                if (t - c.lastAskMs >= 1000)
+                {
+                    c.lastAskMs = t;
+                    c.resizeRequests++;
+                    c.hostGui->request_resize(c.plugin->host, (uint32_t)pa.width, (uint32_t)ga.height);
+                }
+            }
+        }
+    }
     XEvent ev;
     while (XPending(c.dpy))
     {

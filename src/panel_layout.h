@@ -5,7 +5,7 @@
 
 namespace p5ui {
 
-inline constexpr float kPanelW = 1560.0f, kPanelH = 416.0f;
+inline constexpr float kPanelW = 1560.0f, kPanelH = 430.0f;
 inline constexpr float kKnobR = 15.0f, kKnobLoDeg = -140.0f, kKnobHiDeg = 140.0f;
 inline constexpr float kBtnW = 24.0f, kBtnH = 34.0f;
 inline constexpr uint32_t kColPanel = 0x101010u;
@@ -44,7 +44,7 @@ struct Box   { float x, y, w, h; const char *header; };
 struct Rule  { float x1, y1, x2, y2; };
 struct Disp  { float x, y, w, h; };
 
-inline constexpr int kNumKnobs = 31, kNumBtns = 37, kNumTexts = 73, kNumBoxes = 9, kNumRules = 14, kNumDisplays = 1;
+inline constexpr int kNumKnobs = 31, kNumBtns = 37, kNumTexts = 73, kNumBoxes = 10, kNumRules = 14, kNumDisplays = 1;
 inline constexpr Knob kKnobs[] = {
         {32, 60.0f, 60.0f, false, 0, 10},
         {33, 124.0f, 60.0f, false, 0, 10},
@@ -196,13 +196,14 @@ inline constexpr Text kTexts[] = {
 };
 
 inline constexpr Box kBoxes[] = {
-        {8.0f, 10.0f, 292.0f, 120.0f, "POLY-MOD"},
+        {8.0f, 14.0f, 292.0f, 116.0f, "POLY-MOD"},
         {52.0f, 138.0f, 248.0f, 120.0f, "VIBRATO"},
         {8.0f, 266.0f, 292.0f, 138.0f, "WHEEL-MOD"},
-        {306.0f, 10.0f, 400.0f, 120.0f, "OSCILLATOR 1"},
+        {306.0f, 14.0f, 400.0f, 116.0f, "OSCILLATOR 1"},
         {306.0f, 138.0f, 400.0f, 120.0f, "OSCILLATOR 2"},
-        {712.0f, 10.0f, 184.0f, 120.0f, "MIXER"},
-        {902.0f, 10.0f, 334.0f, 248.0f, "FILTER"},
+        {712.0f, 14.0f, 184.0f, 116.0f, "MIXER"},
+        {902.0f, 14.0f, 334.0f, 244.0f, "FILTER"},
+        {1242.0f, 14.0f, 310.0f, 116.0f, "MASTER"},
         {1242.0f, 138.0f, 310.0f, 120.0f, "AMPLIFIER"},
         {560.0f, 266.0f, 676.0f, 138.0f, "PROGRAMMER"},
 };
