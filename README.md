@@ -2,6 +2,8 @@
 
 **Version: 0.1-alpha**
 
+![Muhammad booting its recorded default patch, "Peace Be Upon Him"](docs/muhammad-panel.png)
+
 *Muhammad — a polyphonic subtractive synth; its engine is ported from the Melodee firmware to CLAP.*
 
 A port of the **PROPHET** engine from [Melodee](https://keremimo.github.io/melodee/)
