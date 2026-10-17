@@ -51,6 +51,9 @@ if(MUHAMMAD_GUI)
         find_package(OpenGL REQUIRED)
         set(MUHAMMAD_GL_LIBS opengl32 gdi32 user32 dwmapi)
     elseif(APPLE)
+        add_compile_definitions(GL_SILENCE_DEPRECATION)   # NSOpenGL deprecated-but-
+                                                           # exactly-what-we-use; 19
+                                                           # warning scroll in CI
         # macOS: desktop GL and Cocoa arrive as FRAMEWORKS. A plain
         # find_library(EGL/GL) resolves NOTFOUND there and poisons the link
         # line - the CI generate step failed exactly on that (the shared

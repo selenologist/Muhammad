@@ -15,6 +15,7 @@
 #include <OpenGL/gl.h>
 
 #include <nanovg.h>
+#include <nanovg_gl.h>
 
 #include "gui_core.hpp"
 #include "muhammad_plugin.hpp"
@@ -26,6 +27,7 @@ namespace pw { struct Ctx; }            // fwd (an @interface cannot live in a n
 {
     @public
     pw::Ctx *core_;                      // set on attach; nil-safe everywhere
+    NSTrackingArea *tracking_;           // MRC-retained; nil before first update
 }
 - (void)mouseMovedLike:(NSEvent *)e;
 @end
@@ -226,14 +228,18 @@ struct Ctx : GuiCore
     }
 };
 
+} // namespace pw
+
 // ---------------------------------------------------------------------------
-// the view: translate Cocoa events into the neutral core API
+// the view: translate Cocoa events into the neutral core API.
+// Objective-C declarations may only appear at global scope - the namespace
+// closes here and reopens after @end; a file-scope using-directive keeps
+// every method body byte-identical (eventPx, onPointerPress, renderFrame,
+// GuiKey... all live in pw).
 // ---------------------------------------------------------------------------
+using namespace pw;
 
 @implementation P5PanelView
-{
-    NSTrackingArea *tracking_;
-}
 
 - (instancetype)initWithFrame:(NSRect)f
 {
@@ -244,7 +250,7 @@ struct Ctx : GuiCore
 
 - (BOOL)isFlipped { return YES; }                   // top-left origin, like X11
 - (BOOL)acceptsFirstResponder { return YES; }
-- (BOOL)acceptsFirstMouse:(NSEvent *) { return YES; }
+- (BOOL)acceptsFirstMouse:(NSEvent *)e { (void)e; return YES; }
 
 - (void)updateTrackingAreas
 {
@@ -262,8 +268,9 @@ struct Ctx : GuiCore
     if (core_ && self.window) [self.window makeFirstResponder:self];
 }
 
-- (void)drawRect:(NSRect)
+- (void)drawRect:(NSRect)rect
 {
+    (void)rect;
     if (!core_ || !core_->vg) return;
     core_->syncPixels();
     [core_->glctx setView:self];
@@ -279,10 +286,10 @@ struct Ctx : GuiCore
     core_->consumeFocus();
 }
 
-- (void)viewDidLayout
+- (void)setFrameSize:(NSSize)newSize
 {
-    [super viewDidLayout];
-    if (core_) core_->syncPixels();
+    [super setFrameSize:newSize];        // NSView never calls viewDidLayout -
+    if (core_) core_->syncPixels();      // setFrameSize is the geometry hook
 }
 
 - (void)mouseDown:(NSEvent *)e
@@ -370,6 +377,9 @@ struct Ctx : GuiCore
     [super dealloc];
 }
 @end
+
+namespace pw {   // reopen: Ctx methods and the clap_plugin_gui surface below
+                 // (kGui stays inside pw - muhammad_plugin.hpp declares it so)
 
 // ---------------------------------------------------------------------------
 // clap_plugin_gui surface (cocoa)

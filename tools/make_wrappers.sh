@@ -54,7 +54,10 @@ case "$(uname -s)" in
         # - pulled in by WIL for the standalone host - into a hard C2338. The
         # compiler's own message prescribes this opt-out define; it silences a
         # deprecation gate, nothing else.
-        EXTRA+=(-DCMAKE_CXX_FLAGS="/D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS")
+                # -D, NOT /D: git-bash's MSYS layer rewrites arguments that begin with a
+        # slash into C:/Program Files/Git/... - the previous /D form arrived at
+        # cl.exe as a (nonexistent) SOURCE FILE and broke the compiler check.
+        EXTRA+=(-DCMAKE_CXX_FLAGS="-D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS")
         ;;
 esac
 if [ "$(uname)" = "Darwin" ]; then
@@ -88,15 +91,7 @@ for cand in muhammad muhammad.exe Release/muhammad Release/muhammad.exe \
              Release/muhammad.app muhammad.app Debug/muhammad; do
     [ -x "$cand" ] && [ ! -d "$cand" ] && cp "$cand" "$DIST/" && say "collected standalone $cand"
 done
-# the vst3 bundle dir vs the standalone exe can share a name on some builds;
-# keep whatever arrived, then zip for a single upload artifact
-cd "$DIST"
-case "$(uname -s)" in
-    Linux)                  PLAT=linux ;;
-    Darwin)                 PLAT=macos ;;
-    MINGW*|MSYS*|CYGWIN*)   PLAT=win ;;
-    *)                      PLAT="$(uname -s | tr A-Z a-z)" ;;
-esac
-zip -qr "muhammad-$VER-$PLAT-wrappers.zip" \
-    muhammad.vst3 muhammad.component muhammad muhammad.exe muhammad.app 2>/dev/null || true
+# Keep dist/wrappers LOOSE: actions/upload-artifact always wraps artifacts in
+# one zip of its own - a self-made zip inside produced a zip-of-a-zip (user-
+# observed). The release job stages explicit per-platform zips instead.
 say "done: $(ls -1 "$DIST")"

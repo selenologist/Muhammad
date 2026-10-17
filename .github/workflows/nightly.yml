@@ -78,7 +78,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: muhammad-${{ needs.version.outputs.ver }}-linux-x64-wrappers
-          path: dist/wrappers/*.zip
+          path: dist/wrappers
 
   windows:
     needs: version
@@ -110,7 +110,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: muhammad-${{ needs.version.outputs.ver }}-win-x64-wrappers
-          path: dist/wrappers/*.zip
+          path: dist/wrappers
 
   macos:
     needs: version
@@ -137,7 +137,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: muhammad-${{ needs.version.outputs.ver }}-macos-wrappers
-          path: dist/wrappers/*.zip
+          path: dist/wrappers
           # keep the bundle directory structure in the zip
 
   release:
@@ -150,11 +150,17 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: assets
+      - name: stage wrapper zips
+        run: |
+          for d in assets/*-wrappers; do
+            [ -d "$d" ] || continue
+            (cd "$d" && zip -qr "$OLDPWD/$(basename "$d").zip" .)
+          done
       - uses: softprops/action-gh-release@v2
         with:
           files: |
             assets/**/*.clap
-            assets/**/*.zip
+            *-wrappers.zip
           body: >
             Muhammad ${{ needs.version.outputs.ver }} — CLAP for linux-x64,
             win-x64 and macos-universal, plus wrapper bundles (VST3 on all
