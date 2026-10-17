@@ -184,7 +184,11 @@ set_target_properties(allocwatch PROPERTIES PREFIX "")
 endif()
 
 find_library(X11_LIBRARY X11)
-if(X11_LIBRARY)
+find_path(X11_PROBE_HEADER X11/Xlib.h)
+if(X11_LIBRARY AND X11_PROBE_HEADER AND NOT APPLE)
+    # gui_probe is the Linux X11 dev harness. The mac runners have an X11
+    # dylib lying around (Homebrew/XQuartz) that fools find_library alone
+    # while the headers stay invisible - CI arm64 died exactly there.
     add_executable(gui_probe tests/gui_probe.cpp)
     target_include_directories(gui_probe PRIVATE src vendor/clap)
     target_link_libraries(gui_probe PRIVATE ${X11_LIBRARY} ${CMAKE_DL_LIBS} m)
