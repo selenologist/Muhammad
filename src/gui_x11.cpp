@@ -230,14 +230,15 @@ void pump(Ctx &c)
                 {
                     c.w = (uint32_t)ev.xconfigure.width;
                     c.h = (uint32_t)ev.xconfigure.height;
-                    // Re-arm negotiation ONLY when the window actually landed
-                    // at (or near) the panel aspect - a host that "accepted"
-                    // and then re-asserts the same oversized slot must not
-                    // reset our ask budget forever (Bitwig's flicker loop).
+                    // Landed at (or near) the panel aspect - the goal state.
+                    // Re-arm only the TRIM side; the ask cap is lifetime (a
+                    // host may only touch aspect transiently during setup and
+                    // wiping totalAsks here produced the dead "asks 0/3
+                    // ACCEPTED" state in Bitwig: stale throttle, no re-ask,
+                    // no give-up, no trim).
                     const long wantH2 = (long)ev.xconfigure.width * p5ui::kPanelH / p5ui::kPanelW;
                     if (labs((long)ev.xconfigure.height - wantH2) <= 40)
-                    {   c.resizeRequests = 0; c.topTries = 0; c.totalAsks = 0;
-                        c.acceptedAtMs = 0; c.giveUpOnHost = false; }
+                    {   c.topTries = 0; c.askNextMs = 0; c.giveUpOnHost = false; }
                     dirty = true;
                 }
                 break;

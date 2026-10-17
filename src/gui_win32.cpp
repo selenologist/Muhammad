@@ -250,7 +250,9 @@ LRESULT CALLBACK panelWndProc(HWND h, UINT msg, WPARAM wParam, LPARAM lParam)
             const uint32_t nh = (uint32_t)(unsigned)HIWORD(lParam);
             if (nw > 0 && nh > 0 && (nw != c.w || nh != c.h))
             {   c.w = nw; c.h = nh;
-                c.resizeRequests = 0;     // host answered (or user dragged): renegotiate
+                const long wantH2 = (long)nw * p5ui::kPanelH / p5ui::kPanelW;
+                if (labs((long)nh - wantH2) <= 40)
+                {   c.topTries = 0; c.askNextMs = 0; c.giveUpOnHost = false; }
                 paintNow(c);
             }
             return 0;

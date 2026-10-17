@@ -848,7 +848,7 @@ void draw(const Gui &g, const State &s, float w, float h)
         // body text: screen font, pre-wrapped lines
         nvgFontFaceId(g.vg, g.screenId);
         nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_TOP);
-        nvgFontSize(g.vg, 12.5f);
+        nvgFontSize(g.vg, 15.5f);
         nvgFillColor(g.vg, col(kColInk));
         {   const char *p = s.debugText;
             float ty = dbgpg::y + 48;
@@ -859,7 +859,7 @@ void draw(const Gui &g, const State &s, float w, float h)
                 if (len > 0 && len < (int)sizeof rowl)
                 {   std::memcpy(rowl, p, (size_t)len); rowl[len] = 0;
                     nvgText(g.vg, sxp(dbgpg::x + 18), syp(ty), rowl, nullptr); }
-                ty += 19.f;
+                ty += 22.f;
                 if (!e) break;
                 p = e + 1;
             }
