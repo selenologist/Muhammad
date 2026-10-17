@@ -88,7 +88,8 @@ struct Ctx : GuiCore
     Atom xembed = None, xembedInfo = None;
     GLXContext gl = nullptr;
     Atom wmDelete = None;
-    bool floating = false;                    // clap gui floating mode: we own the window
+    bool floating = false;
+    bool wantFloat = false;                   // deferred DETACH (see pump tail)                    // clap gui floating mode: we own the window
     NVGcontext *vg = nullptr;
     p5ui::Gui gui{};
     bool hasGui = false;
@@ -137,6 +138,7 @@ void afterPress(Ctx &c)
 
 static const char *gModeSource = "default";
 static bool gLearnedFloat = false;   // one-shot per process
+static bool gExplicitEmbed = false;  // gui.conf said mode=embed: beats policy
 static bool modeFloat()
 {
     // Persistent user control: <store>/gui.conf containing a line
@@ -154,6 +156,7 @@ static bool modeFloat()
         while (std::fgets(ln, sizeof ln, f))
             if (!std::strncmp(ln, "mode=float", 10)) { fl = true; break; }
         std::fclose(f);
+        if (!fl) gExplicitEmbed = true;
         gModeSource = fl ? "config" : "config(embed)";
         return fl;
     }
@@ -177,6 +180,8 @@ static void autoLearnFloat()
         std::fprintf(stderr, "[p5gui] host proved it owns the embedded slot; wrote %s -> next session floats\n", conf.c_str());
     }
 }
+
+void switchToFloat(Ctx &c);
 
 void pump(Ctx &c)
 {
@@ -210,7 +215,7 @@ void pump(Ctx &c)
             const bool trimmedOut = c.topTries >= 10 || c.trimIneffective >= 2;
             if (trimmedOut && pa.height > wantH + 40 && !c.getSizeCalls &&
                 !gLearnedFloat)
-            {   gLearnedFloat = true; autoLearnFloat(); }
+            {   gLearnedFloat = true; autoLearnFloat(); switchToFloat(c); }
             if (pa.height > wantH + 40 && c.topTries < 10 &&
                 c.trimIneffective < 2 && coreShouldTrimNow(c, t))
             {
@@ -388,6 +393,12 @@ void pump(Ctx &c)
     // stale backlog kept replaying positions (and their blocking swaps) long
     // after release — that was the audible "trail", ours, not the host's.
     if (dirty) render(c);
+    if (c.wantFloat && !c.floating)
+    {   c.wantFloat = false;
+        gLearnedFloat = true;      // user chose; suppress redundant auto-learn
+        autoLearnFloat();          // persist: next session floats from tick one
+        switchToFloat(c);          // AND escape this session right now
+    }
     // (shrink-negotiation removed: surplus height is now DRAWN chassis, so
     // asking the host to shrink it would fight the ancestor-grow request)
 }
@@ -477,6 +488,29 @@ bool setupFloating(Ctx &c)
     std::fprintf(stderr, "[p5gui] FLOATING window 0x%lx %ux%u, panel aspect WM-locked, vg %s\n",
                  (unsigned long)c.win, c.w, c.h, c.hasGui ? "ok" : "FONT FAIL");
     return c.hasGui;
+}
+
+void switchToFloat(Ctx &c)
+{
+    // Mid-session escape from a host that just proved it owns the embedded
+    // slot: tear our child window down and rebuild as our OWN top-level.
+    // The host timer stays registered (same Ctx, same pump); clip:: rebinds
+    // inside setupFloating. The host keeps thinking it embedded us - it is
+    // wrong, visibly, and that is the point.
+    std::fprintf(stderr, "[p5gui] switching to FLOATING mid-session\n");
+    const Window anchor = c.parent;
+    const uint32_t rw = c.w, rh = c.h;
+    teardown(c);
+    c.parent = anchor;
+    c.floating = true;
+    c.reqW = rw; c.reqH = rh;
+    if (setupFloating(c))
+    {   XMapWindow(c.dpy, c.win);
+        XMapRaised(c.dpy, c.win);
+        c.mapped = true;
+        render(c);
+    }
+    else std::fprintf(stderr, "[p5gui] mid-session float setup FAILED (blank slot)\n");
 }
 
 bool setupEmbedded(Ctx &c, Window parent)
@@ -604,6 +638,7 @@ bool gui_create(const clap_plugin_t *p, const char *api, bool is_floating)
         s->gui = new Ctx(s);
         Ctx &c = *static_cast<Ctx *>(s->gui);
         c.copyText = x11CopyText;
+        c.requestFloat = [](GuiCore &g) { static_cast<Ctx &>(g).wantFloat = true; };
         if (s->host && s->host->get_extension)
             c.hostGui = (const clap_host_gui_t *)s->host->get_extension(s->host, CLAP_EXT_GUI);
         std::fprintf(stderr, "[p5gui] host clap.gui service %s\n", c.hostGui ? "present" : "absent");
@@ -611,6 +646,20 @@ bool gui_create(const clap_plugin_t *p, const char *api, bool is_floating)
     if (auto *cc = ctxFrom(p))
     {   if (api) std::strncpy(cc->guiApi, api, sizeof cc->guiApi - 1);
         cc->floating = is_floating || modeFloat();  // env can FORCE float
+        auto *pl = static_cast<Plugin *>(p->plugin_data);
+        if (!cc->floating && !gExplicitEmbed && pl && pl->host && pl->host->name)
+        {   // HOST POLICY: Bitwig Studio (measured via its own clap_host_t:
+            // name="Bitwig Studio", vendor="Bitwig GmbH") never consults
+            // get_size and owns the embedded slot's size absolutely - float
+            // from the FIRST session instead of losing one to the inference
+            // chain (which still runs for any other host).
+            char low[64]; size_t li = 0;
+            for (const char *q = pl->host->name; *q && li + 1 < sizeof low; q++, li++)
+                low[li] = (char)(*q >= 'A' && *q <= 'Z' ? *q + 32 : *q);
+            low[li] = 0;
+            if (std::strstr(low, "bitwig"))
+            {   cc->floating = true; gModeSource = "host policy (Bitwig)"; }
+        }
         cc->modeSource = cc->floating ? gModeSource : "embedded";
             cc->modeSource = cc->floating ? gModeSource : "embedded";
         gActiveCtx = static_cast<Ctx *>(cc);

@@ -41,6 +41,7 @@ int main(int argc, char **argv)
     };
     host.get_extension = [](const clap_host_t *, const char *id) -> const void *
     {   return (!strcmp(id, CLAP_EXT_GUI)) ? (const void *)&probeHostGui : nullptr; };
+    if (const char *hn = getenv("P5_PROBE_HOSTNAME")) host.name = hn;
     const clap_plugin_t *plugin = factory->create_plugin(factory, &host, desc->id);
     if (!plugin->init(plugin)) { std::printf("init fail\n"); return 2; }
     plugin->activate(plugin, 44100.0, 512.0, 1u /* steady */);

@@ -305,6 +305,27 @@ void draw(const Gui &g, const State &s, float w, float h)
         nvgTextLetterSpacing(g.vg, 0.f);
         nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_BASELINE);
         nvgFontFaceId(g.vg, g.fontId);
+
+        // the escape hatch, drawn where users can see it and click it
+        const DetachRect dr = detachRect(winBot);
+        if (dr.visible && s.canDetach)
+        {   nvgBeginPath(g.vg);
+            nvgRoundedRect(g.vg, dr.x, dr.y, dr.w, dr.h, 5.f);
+            nvgFillColor(g.vg, nvgRGBA(24, 22, 20, 200));
+            nvgFill(g.vg);
+            nvgStrokeColor(g.vg, nvgRGBA(214, 168, 96, 200));    // warm hardware edge
+            nvgStrokeWidth(g.vg, 1.4f);
+            nvgStroke(g.vg);
+            nvgFontFaceId(g.vg, g.fontId);
+            nvgTextAlign(g.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
+            nvgFontSize(g.vg, 14.f);
+            nvgTextLetterSpacing(g.vg, 2.6f);
+            nvgFillColor(g.vg, nvgRGBA(236, 232, 224, 235));
+            nvgText(g.vg, dr.x + dr.w / 2.f + 1.3f, dr.y + dr.h / 2.f + 1.f,
+                    "DETACH WINDOW", nullptr);
+            nvgTextLetterSpacing(g.vg, 0.f);
+            nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_BASELINE);
+        }
     }
 
     // build stamp (+ diag), bottom-right of the WINDOW — the only way to prove

@@ -98,6 +98,7 @@ struct GuiCore
     // owner on X11, CF_UNICODETEXT on win32, NSPasteboard on cocoa) and
     // record the api the host asked for.
     bool (*copyText)(const char *text) = nullptr;
+    void (*requestFloat)(GuiCore &) = nullptr;  // DETACH WINDOW button click
     char guiApi[8] = "none";
     const char *modeSource = "embedded";      // who chose embed/float
     char hostName[72] = "unknown host";       // WM_CLASS / window title / frontmost app

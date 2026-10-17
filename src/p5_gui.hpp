@@ -13,6 +13,18 @@ namespace p5ui {
 // Fully resolved view state. The host layer (plugin or test) fills this from
 // CLAP params + engine; the renderer stays dumb, so the same struct drives
 // Bitwig and the golden PNG.
+// "DETACH WINDOW": offered wherever chassis exists (a host that owns an
+// oversized embedded slot). One geometry law, used by the renderer (draw)
+// and gui_core (hit-test) alike.
+struct DetachRect { bool visible = false; float x = 0, y = 0, w = 0, h = 0; };
+inline DetachRect detachRect(float winBot)
+{
+    const float ch = winBot - kPanelH;
+    if (ch <= 40.f) return {};
+    const float bw = 236.f, bh = 28.f;
+    return { true, (kPanelW - bw) * 0.5f, kPanelH + ch * 0.78f - bh * 0.5f, bw, bh };
+}
+
 struct State
 {
     double knob[kNumKnobs] = {};   // 0..1 normalized position
@@ -21,6 +33,7 @@ struct State
     int bank = 1, program = 1;     // shown on the programmer display
     const char *build = nullptr;   // version+hash, drawn dim in the panel corner
     const char *diag = nullptr;    // live gui diagnostics (host service, negotiation, size)
+    bool canDetach = false;        // chassis + a platform that can float
     bool debugOpen = false;        // modal 10: full debug info page (click status strip)
     const char *debugText = nullptr;   // pre-wrapped lines, '\n' separated
     // text-entry modal over the programmer (RECORD save / PRESET assign)

@@ -201,6 +201,7 @@ void fillState(GuiCore &c, p5ui::State &st)
             st.led[i] = v > 1.5 ? 2 : v > 0.5 ? 1 : 0;                     // red / amber / off
         }
     }
+    st.canDetach = c.requestFloat != nullptr;
     st.debugOpen = (c.modal == 10);
     st.debugText = c.modal == 10 ? c.dbg : nullptr;
 #ifdef P5_BUILD_INFO
@@ -442,6 +443,15 @@ bool onPointerPress(GuiCore &c, float px, float py, unsigned mods, unsigned time
         const bool strip = (lx >= winRight - 640.f) &&
             ((overPanel && ly >= p5ui::kPanelH - 20.f && ly <= p5ui::kPanelH + 2.f) ||
              (!overPanel && ly >= winBot - 24.f && ly <= winBot));
+        const p5ui::DetachRect dr = p5ui::detachRect(winBot);
+        const float pad = 10.f;   // generous border: a real button affordance
+        if (dr.visible && c.requestFloat && !overPanel &&
+            lx >= dr.x - pad && lx <= dr.x + dr.w + pad &&
+            ly >= dr.y - pad && ly <= dr.y + dr.h + pad)
+        {   std::fprintf(stderr, "[p5gui] DETACH WINDOW clicked\n");
+            c.requestFloat(c);
+            return true;
+        }
         if (strip)
         {   buildDebugText(c);
             c.modal = 10;
