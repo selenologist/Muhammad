@@ -15,7 +15,10 @@ set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 WORK="${MUH_WRAPPER_WORK:-${RUNNER_TEMP:-/tmp}/muhammad-wrappers}"
 DIST="$REPO/dist/wrappers"
-mkdir -p "$WORK" "$DIST"
+mkdir -p "$WORK"
+rm -rf "$DIST"; mkdir -p "$DIST"   # never trust leftovers: a stale (or
+                                   # committed-by-accident!) dist here was
+                                   # silently uploaded as a Windows artifact
 
 say() { echo "[wrappers] $*"; }
 
@@ -105,15 +108,19 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release \
       -DCLAP_WRAPPER_DOWNLOAD_DEPENDENCIES=ON \
       -DCLAP_WRAPPER_BUILD_STANDALONE=ON \
       "${EXTRA[@]}"
-cmake --build build -j"$( (nproc 2>/dev/null || sysctl -n hw.ncpu) | head -1 )"
+# --config Release matters on the VS generator (windows): it is
+# multi-config, ignores CMAKE_BUILD_TYPE, and DEFAULTS TO DEBUG.
+cmake --build build --config Release -j"$( (nproc 2>/dev/null || sysctl -n hw.ncpu) | head -1 )"
 
 # ---- collect -------------------------------------------------------------
 cd "$WORK/clap-wrapper/build"
-for cand in Release/muhammad.vst3 muhammad.vst3 Release/muhammad.component muhammad.component; do
+for cand in Release/muhammad.vst3 Debug/muhammad.vst3 muhammad.vst3 \
+             Release/muhammad.component Debug/muhammad.component muhammad.component; do
     [ -e "$cand" ] && cp -R "$cand" "$DIST/" && say "collected $cand"
 done
 for cand in muhammad muhammad.exe Release/muhammad Release/muhammad.exe \
-             Release/muhammad.app muhammad.app Debug/muhammad; do
+             Debug/muhammad Debug/muhammad.exe Release/muhammad.app \
+             Debug/muhammad.app muhammad.app; do
     [ -x "$cand" ] && [ ! -d "$cand" ] && cp "$cand" "$DIST/" && say "collected standalone $cand"
 done
 # Keep dist/wrappers LOOSE: actions/upload-artifact always wraps artifacts in
