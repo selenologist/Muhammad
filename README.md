@@ -381,24 +381,30 @@ exported. POSIX-only dev tools (hostsim ref_dump, LD_PRELOAD allocwatch,
 dlopen smoke, bench clock_gettime) are gated to Linux; test_mpe / test_engine_ab
 / test_store / clap_smoke also compile and run on macOS.
 
-VST3 (for hosts without CLAP, e.g. Ardour's VST3 scan): build the dynamic-load
-wrapper from https://github.com/free-audio/clap-wrapper —
+Wrappers — VST3, AUv2 (macOS), standalone (for hosts without CLAP, e.g.
+Ardour's VST3 scan, or for running Muhammad with no host at all):
 
 ```sh
-git clone --depth 1 https://github.com/free-audio/clap-wrapper && cd clap-wrapper
-git clone --depth 1 https://github.com/free-audio/clap
-git clone https://github.com/steinbergmedia/vst3sdk   # then:
-cd vst3sdk && git checkout v3.8.0_build_66 && git submodule update --init --depth 1 && cd ..
-cmake -B build -DCMAKE_BUILD_TYPE=Release \
-  -DCLAP_SDK_ROOT=$PWD/../clap -DVST3_SDK_ROOT=$PWD/vst3sdk \
-  -DCLAP_WRAPPER_OUTPUT_NAME=muhammad -DCLAP_VST3_TUID_STRING="$(cat tools/muhammad_vst3_tuid.txt)"
-cmake --build build -j
+bash tools/make_wrappers.sh      # native build; CI runs this on all three platforms
 ```
 
-The wrapper loads `muhammad.clap` by name from `~/.clap` at runtime, so the
-VST3 is only ever as current as the installed CLAP. The component TUID is
-pinned in `tools/muhammad_vst3_tuid.txt` — keep it stable or
-hosts forget the plugin identity between builds.
+The script clones [free-audio/clap-wrapper](https://github.com/free-audio/clap-wrapper)
+and the Steinberg `vst3sdk` (pinned `v3.8.0_build_66` + submodules; Apple's
+`AudioUnitSDK` on macOS), stages this repo's vendored CLAP 1.2.10 headers in
+the layout the wrapper expects, and builds the **dynamic-load** wrapper with
+the component TUID pinned in `tools/muhammad_vst3_tuid.txt` (keep that file
+stable or hosts forget the plugin identity between builds). Output lands in
+`dist/wrappers/`: `muhammad.vst3` everywhere, `muhammad.component` (AUv2) on
+macOS, and the simple `muhammad` standalone host executable everywhere.
+
+Because the wrappers host `muhammad.clap` **by name at runtime**, a wrapper
+is only ever as current as the installed CLAP: drop `muhammad.clap` in the
+CLAP directory (`~/.clap`, the Bitwig/VST3-adjacent path, or
+`~/Library/Application Support/CLAP`), the `.vst3`/`.component` in the
+matching host folder. CI publishes these as zip artifacts per platform, and
+`v*` tags ship them in the GitHub Release alongside the `.clap`s. AAX is not
+built (the Avid SDK is not redistributable to CI); AUv3 needs Xcode
+signing and is likewise out of the nightly scope.
 
 macOS: build universal with `-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"`,
 then `tools/make_mac_bundle.sh build/muhammad.clap muhammad.clap` wraps the dylib
