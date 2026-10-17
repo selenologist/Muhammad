@@ -46,26 +46,28 @@ add_library(clap::clap ALIAS clap)
 target_include_directories(clap INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 EOF
 
-# ---- macOS: AUv2 needs Apple's AudioUnitSDK (BSD-3) ----------------------
+# ---- platform extras -------------------------------------------------------
 EXTRA=()
 case "$(uname -s)" in
     MINGW*|MSYS*|CYGWIN*)
-        # VS "18"-era MSVC (14.5x) turned the deprecated <experimental/coroutine>
-        # - pulled in by WIL for the standalone host - into a hard C2338. The
-        # compiler's own message prescribes this opt-out define; it silences a
-        # deprecation gate, nothing else.
-                # -D, NOT /D: git-bash's MSYS layer rewrites arguments that begin with a
-        # slash into C:/Program Files/Git/... - the previous /D form arrived at
-        # VS "18"-era MSVC (14.5x) hard-errors (C2338) on the deprecated
-        # <experimental/coroutine> WIL pulls in for the standalone. The compiler's
-        # own message names the opt-out. Delivered via cl.exe's _CL_ ENVIRONMENT
-        # variable, deliberately NOT via -DCMAKE_CXX_FLAGS: seeding that cache
-        # variable destroys CMake's MSVC default flags (/EHsc /GR /D_WINDOWS
-        # ...) - the last CI run proved it (a C4530 wall + WIL's
-        # exception-dependent com_ptr/err_exception_policy failing to compile).
-        # _CL_ reaches every cl.exe invocation through MSBuild, MSYS cannot
-        # mangle environment *contents*, and the defaults stay intact.
+        # VS 18-era MSVC (14.5x) hard-errors (C2338) on the deprecated
+        # <experimental/coroutine> WIL pulls in for the standalone host; the
+        # compiler message itself names the opt-out define. Delivered through
+        # cl.exe's _CL_ ENVIRONMENT variable, deliberately NOT via
+        # -DCMAKE_CXX_FLAGS: seeding that cache variable REPLACES CMake's MSVC
+        # default flagset (/EHsc /GR /D_WINDOWS...), which is exactly what
+        # produced last run's C4530 wall and WIL's exception-dependent
+        # com_ptr/err_exception_policy failures. _CL_ reaches every cl.exe
+        # through MSBuild; MSYS rewrites argv, not environment contents.
         export _CL_="/D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS"
+        ;;
+esac
+if [ "$(uname)" = "Darwin" ]; then
+    # AUv2 wrapper: Apple's AudioUnitSDK (BSD-3), cloned next to the others
+    if [ ! -d "$WORK/AudioUnitSDK" ]; then
+        git clone -q --depth 1 https://github.com/apple/AudioUnitSDK "$WORK/AudioUnitSDK"
+    fi
+    EXTRA+=(-DCLAP_WRAPPER_BUILD_AUV2=ON -DAUDIOUNIT_SDK_ROOT="$WORK/AudioUnitSDK")
 fi
 
 VER="$(grep -m1 'set(P5_VERSION' "$REPO/CMakeLists.txt" | sed 's/.*"\(.*\)".*/\1/')"

@@ -539,12 +539,27 @@ auto rd7 = [](const clap_istream_t *s, void *b, uint64_t n) -> int64_t {
         check("clap-gui extension present", gp != nullptr);
         if (gp) {
             auto *gui = (const clap_plugin_gui_t *)gp;
-            check("gui: x11 embedded supported", gui->is_api_supported(plugin, CLAP_WINDOW_API_X11, false));
-            check("gui: cocoa not claimed", !gui->is_api_supported(plugin, CLAP_WINDOW_API_COCOA, false));
-            const char *api = nullptr; bool floating = true;
-            check("gui: preferred is x11 non-floating", gui->get_preferred_api(plugin, &api, &floating) &&
-                  !std::strcmp(api, CLAP_WINDOW_API_X11) && !floating);
-            check("gui: create", gui->create(plugin, CLAP_WINDOW_API_X11, false));
+            // The shim per platform claims its own window API - assert the
+            // contract, not one platform's spelling (mac CI legitimately
+            // failed four x11-hardcoded checks that pass here).
+#if defined(__APPLE__)
+            const char *nativeApi = CLAP_WINDOW_API_COCOA, *foreignApi = CLAP_WINDOW_API_X11;
+            const char *NATIVE = "cocoa", *FOREIGN = "x11";
+#else
+            const char *nativeApi = CLAP_WINDOW_API_X11, *foreignApi = CLAP_WINDOW_API_COCOA;
+            const char *NATIVE = "x11", *FOREIGN = "cocoa";
+#endif
+            {   char nm[64];
+                std::snprintf(nm, sizeof nm, "gui: %s embedded supported", NATIVE);
+                check(nm, gui->is_api_supported(plugin, nativeApi, false));
+                std::snprintf(nm, sizeof nm, "gui: %s not claimed", FOREIGN);
+                check(nm, !gui->is_api_supported(plugin, foreignApi, false));
+                const char *api = nullptr; bool floating = true;
+                std::snprintf(nm, sizeof nm, "gui: preferred is %s non-floating", NATIVE);
+                check(nm, gui->get_preferred_api(plugin, &api, &floating) &&
+                          !std::strcmp(api, nativeApi) && !floating);
+                check("gui: create", gui->create(plugin, nativeApi, false));
+            }
             uint32_t gw = 0, gh = 0;
             check("gui: get_size sane", gui->get_size(plugin, &gw, &gh) && gw > 400 && gh > 100);
             clap_gui_resize_hints_t hints{};
