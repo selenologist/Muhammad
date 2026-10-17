@@ -14,7 +14,7 @@ on:
     - cron: '15 4 * * *'          # daily ~05:15 AEDT / 14:15 UTC+AEDT-ish; UTC 04:15
   workflow_dispatch:
   push:
-    branches: [master]
+    branches: [main]
     tags: ['v*']
   pull_request:
 
