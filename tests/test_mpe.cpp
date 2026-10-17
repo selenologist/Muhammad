@@ -255,6 +255,25 @@ int main()
         en.setModWheel(90); en.commitWheelToPatch();
         return en.rawValue(p5::P5_LFO_INITIAL) == 40; }());
 
+    // ---- drift now rides wire byte 37 (saved patches carry the knob) ----
+    check("drift: setter writes byte 37", [&]{
+        p5::Engine en; en.setDriftDepth(80);
+        return en.rawValue(p5::P5_VINTAGE) == 80 && en.driftDepth() == 80; }());
+    check("drift: patch load delivers depth", [&]{
+        uint8_t raw[133]; std::memset(raw, 0, sizeof raw); raw[p5::P5_VINTAGE] = 66;
+        p5::Patch p{}; std::memcpy(p.raw, raw, 133);
+        p5::Engine en; en.setPatch(p);
+        return en.driftDepth() == 66; }());
+    check("drift: file round-trip keeps it", [&]{
+        uint8_t raw[133]; std::memset(raw, 0, sizeof raw); raw[p5::P5_VINTAGE] = 100;
+        p5::Patch p{}; std::memcpy(p.raw, raw, 133);
+        p5::Engine en; en.setPatch(p);
+        if (!p5store::savePatch("DRIFT RT", en.patch().raw)) return false;
+        uint8_t back[133] = {}; if (!p5store::loadPatch("DRIFT RT", back)) return false;
+        p5::Patch q{}; std::memcpy(q.raw, back, 133);
+        p5::Engine e2; e2.setPatch(q);
+        return e2.driftDepth() == 100; }());
+
     std::printf("%s\n", fails ? "MPE/TUNING: FAILED" : "mpe/tuning: all ok");
     return fails ? 1 : 0;
 }

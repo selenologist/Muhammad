@@ -727,7 +727,7 @@ void Engine::process(int32_t *out, uint32_t n)
                     const float n01 = ((float)(r >> 8) * (1.0f / 8388608.0f)) - 1.0f;   // -1..1 SYM
                     *w[k] = *w[k] * 0.9995f + n01 * 0.11f;
                 }
-                const float v = (float)driftDepth_ * (1.0f / 127.0f);
+                const float v = (float)driftDepth() * (1.0f / 127.0f);
                 // slow corner (~1.5 s tau): drift, not flutter. Scales are the
                 // firmware's old static-draw magnitudes so max depth feels familiar.
                 l.drift       = (int)(wP_[i] * v * 4.0f);     // cents, A up as B down

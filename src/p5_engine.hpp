@@ -153,10 +153,16 @@ public:
     // 1/16 semitone, both centred at 64. Applied at note-on; fixed per voice
     // until retrimmed, like the real trimmers under the lid.
     // DRIFT (the re-scoped VINTAGE): depth 0..127 of the per-voice OU walks.
-    // Byte 37 stays opaque — Sequential's wire files own it, we retired the
-    // firmware's reinterpretation. BRIGHTNESS (Rev4 CC74): added to cutoff.
-    void setDriftDepth(int d) { driftDepth_ = d < 0 ? 0 : d > 127 ? 127 : d; }
-    int  driftDepth() const { return driftDepth_; }
+    // It rides wire byte 37 (P5_VINTAGE) — the firmware's own 0..127 "looseness"
+    // slot: our use covers basically the same range, so saved patches carry the
+    // knob like every other control and no side-channel trailer is needed.
+    // Factory wire files carry real values here (0..127 across the bank,
+    // mode 42) - "loose" presets drift at their recorded depth; that is
+    // the byte's own looseness axis, used faithfully. Bit-exact harness
+    // unaffected: ref dumps zero byte 37 already.
+    // BRIGHTNESS (Rev4 CC74): added to cutoff.
+    void setDriftDepth(int d) { editRaw(P5_VINTAGE, d < 0 ? 0 : d > 127 ? 127 : d); }
+    int  driftDepth() const { return valueOf(P5_VINTAGE); }
     void setBrightness(int b) { brightness_ = b < 0 ? 0 : b > 127 ? 127 : b; }
     void setVoiceTrim(int lane, int osc, int scale, int offset);
     void voiceTrim(int lane, int osc, int *scale, int *offset) const;
@@ -208,7 +214,7 @@ private:
     Patch patch_;
     int16_t e_[8] = {0, 0, 0, 0, 0, 0, 0, 0}; // P_E0..P_E7 editor overlays
     uint8_t value_[55] = {0};                 // part->value: p5_value-clamped knobs
-    int driftDepth_ = 0, brightness_ = 0;
+    int brightness_ = 0;
     static int32_t applyTrim(const Lane &l, int32_t p16, int osc);
 
     float wP_[MAXV], wF_[MAXV], wA_[MAXV];    // DRIFT thermal walks: pitch, cutoff, amp

@@ -271,9 +271,14 @@ Drift and trim are live: held notes keep re-shaping, no retrigger needed.
 **VINTAGE is now DRIFT** (param 86, depth 0..127): per-voice leaky random
 walks (OU processes, ~1.5 s tau) wander pitch (A and B oppositely), cutoff,
 and amplitude — continuous across notes, like a hot board. The firmware's old
-static per-note roulette is retired, and raw byte 37 is left opaque:
-Sequential's factory wire files own that slot (137 of 200 carry non-zero
-data), so Muhammad never reads it any more. Measured cost of max drift:
+static per-note roulette is retired, but the CONTROL rides wire byte 37
+(P5_VINTAGE): the firmware's own scale was 0..127 looseness ("stable Rev 4
+.. Rev 1") — basically the same axis our depth uses — so saved patches and
+the DAW session carry the knob like every other control (blob v10+ retired
+its side-channel int16; older blobs migrate on load). Factory wire files
+set that byte across the full scale (63/200 at 0, a mode at 42, twelve at
+127): Sequential's "loose" presets genuinely drift on this engine, at the
+depth their own data records. Measured cost of max drift:
 +1.1% (wide 8 voices), within noise (1 v) — block-rate arithmetic, ~0.15
 ops/sample. (First cut had a DC-biased noise draw that parked the walk at
 about -110 cents — a "fixed detune", caught by the unit suite; the drift

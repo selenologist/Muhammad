@@ -326,21 +326,41 @@ int main(int argc, char **argv)
         bool ok7 = st7->save(plugin, &os7);
         uint32_t ver = 0;
         if (ok7 && blob7.size() >= 8) std::memcpy(&ver, blob7.data() + 4, 4);
-        check("state blob version 9", ok7 && ver == 9);
-        std::vector<char> blob6 = blob7;
+auto rd7 = [](const clap_istream_t *s, void *b, uint64_t n) -> int64_t {
+            auto *st = (std::pair<std::vector<char>*, size_t> *)s->ctx;
+            if (st->second + n > st->first->size()) return 0;
+            std::memcpy(b, st->first->data() + st->second, n); st->second += n; return (int64_t)n; };
+        // v10 retired the side-channel int16 drift (it now rides patch byte 37).
+        // Rebuild a v9 blob by re-inserting that field at its historical offset
+        // (after pan), load it, and prove the MIGRATION lands the depth in the
+        // param - then trim to v6 (16-value trim pairs, no dev/br/tuning tail).
+        const size_t off9 = 8 + 133 + 16 + 4 + 4 + 6 + 2;   // hdr raw ov trim os gui pan
+        std::vector<char> blob9 = blob7;
+        {   const int16_t dr = 55;
+            blob9.insert(blob9.begin() + (long)off9,
+                         reinterpret_cast<const char*>(&dr),
+                         reinterpret_cast<const char*>(&dr) + sizeof dr);
+            const uint32_t v9 = 9; std::memcpy(blob9.data() + 4, &v9, 4); }
+        bool ok9 = false;
+        {   std::pair<std::vector<char>*, size_t> cur9{ &blob9, 0 };
+            clap_istream_t is9{ &cur9, rd7 };
+            ok9 = st7->load(plugin, &is9); }
+        const clap_plugin_params_t *pr9 = (const clap_plugin_params_t *)
+            plugin->get_extension(plugin, CLAP_EXT_PARAMS);
+        double dv = -1; if (pr9 && pr9->get_value) pr9->get_value(plugin, 86, &dv);
+        check("state blob version 10", ok7 && ver == 10);
+        check("v9 blob loads; drift migrates into byte 37", ok9 && (int)dv == 55);
+        std::vector<char> blob6 = blob9;
         const size_t tail = 2 * 128 + 2 * 2 + 40 + 4 + 8 * 64 + 3 * 4;   // + tones meta (root/mask/walk)
         bool sizes = blob6.size() > tail;
         if (sizes)
         {   blob6.resize(blob6.size() - tail);
             const uint32_t v6 = 6; std::memcpy(blob6.data() + 4, &v6, 4); }
-        auto rd7 = [](const clap_istream_t *s, void *b, uint64_t n) -> int64_t {
-            auto *st = (std::pair<std::vector<char>*, size_t> *)s->ctx;
-            if (st->second + n > st->first->size()) return 0;
-            std::memcpy(b, st->first->data() + st->second, n); st->second += n; return (int64_t)n; };
-        std::pair<std::vector<char>*, size_t> cur6{ &blob6, 0 };
-        clap_istream_t is6{ &cur6, rd7 };
-        bool ok6 = sizes && st7->load(plugin, &is6);
-        check("v6 blob loads with tail stripped (compat)", ok6 && blob6.size() == blob7.size() - tail);
+        bool ok6 = false;
+        {   std::pair<std::vector<char>*, size_t> cur6{ &blob6, 0 };
+            clap_istream_t is6{ &cur6, rd7 };
+            ok6 = sizes && st7->load(plugin, &is6); }
+        check("v6 blob loads with tail stripped (compat)", ok6 && blob6.size() == blob9.size() - tail);
     }
 
     {   // PAN WIDTH: readback, then a real per-voice stereo spread on the SIMD path

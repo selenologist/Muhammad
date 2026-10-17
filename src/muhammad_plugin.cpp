@@ -900,7 +900,7 @@ const clap_plugin_params_t kParams = { par_count, par_get_info, par_get_value,
 
 // ---- state (versioned binary blob) --------------------------------------------
 #define PW_STATE_MAGIC 0x5035434Cu            // "P5CL"
-#define PW_STATE_VERSION 9u
+#define PW_STATE_VERSION 10u   // v10: drift moved into patch byte 37 (dr field retired)
 static bool wr(const clap_ostream_t *o, const void *b, size_t n)
 { return o->write(o, b, (uint64_t)n) == (int64_t)n; }
 static bool state_save(const clap_plugin_t *p, const clap_ostream_t *out)
@@ -914,7 +914,6 @@ static bool state_save(const clap_plugin_t *p, const clap_ostream_t *out)
     int32_t os = s->engine.oversample();
     int16_t gui[3] = { (int16_t)s->engine.tuneCents(), (int16_t)s->program, (int16_t)s->bank };
     int16_t pan = (int16_t)s->engine.panWidth();
-    int16_t dr = (int16_t)s->engine.driftDepth();
     int16_t tr[32];   // per-voice, per-oscillator: [lane][osc][scale,offset]
     for (int i = 0; i < 8; i++)
         for (int k = 0; k < 2; k++)
@@ -929,7 +928,7 @@ static bool state_save(const clap_plugin_t *p, const clap_ostream_t *out)
     return wr(out, head, sizeof head) && wr(out, s->engine.patch().raw, 133) &&
            wr(out, ov, sizeof ov) && wr(out, &trim, sizeof trim) && wr(out, &os, sizeof os) &&
            wr(out, gui, sizeof gui) && wr(out, &pan, sizeof pan) &&
-           wr(out, &dr, sizeof dr) && wr(out, tr, sizeof tr) &&
+           wr(out, tr, sizeof tr) &&
            wr(out, dev, sizeof dev) && wr(out, br, sizeof br) &&
            wr(out, s->tuneName_, sizeof s->tuneName_) &&
            wr(out, &tn, sizeof tn) && wr(out, tt, sizeof tt) && wr(out, tmeta, sizeof tmeta);
@@ -942,6 +941,7 @@ static bool state_load(const clap_plugin_t *p, const clap_istream_t *in)
     uint32_t head[2];
     if (!rd(in, head, sizeof head)) return false;
     if (head[0] != PW_STATE_MAGIC || head[1] == 0u || head[1] > PW_STATE_VERSION) return false;
+    int16_t migDr = -1;                 // v5..v9 side-channel drift (see below)
     uint8_t raw[133]; int16_t ov[8]; float trim; int32_t os = 1;
     if (head[1] == 1u) {
         struct StateBlobV1 { uint32_t magic, version; uint8_t raw[133]; int16_t overlay[8]; float trim; } b;
@@ -962,11 +962,17 @@ static bool state_load(const clap_plugin_t *p, const clap_istream_t *in)
             if (head[1] >= 4u) { int16_t pan = 0; if (rd(in, &pan, sizeof pan)) s->engine.setPanWidth(pan); }
             if (head[1] >= 5u)
             {
-                int16_t dr = 0, tr[32];
-                if (!rd(in, &dr, sizeof dr)) return false;
+                int16_t tr[32];
+                // v5..v9 stored drift in a side int16; v10+ carries it in patch
+                // byte 37 (already read above). Old sessions migrate by having
+                // the stored depth overwrite the byte - exactly once, here.
+                if (head[1] <= 9u)
+                {   if (!rd(in, &migDr, sizeof migDr)) return false; }
+                // (applied AFTER setPatch below: v10+ takes depth from patch
+                // byte 37; for v5..v9 blobs the stored side-value must win,
+                // because their byte 37 predates the re-scope and is opaque)
                 const int nvals = head[1] >= 6u ? 32 : 16;
                 if (!rd(in, tr, (size_t)nvals * sizeof tr[0])) return false;
-                s->engine.setDriftDepth(dr);
                 for (int i = 0; i < 8; i++)
                 {
                     if (head[1] >= 6u)
@@ -1004,11 +1010,15 @@ static bool state_load(const clap_plugin_t *p, const clap_istream_t *in)
             }
         }
     }
+    // migDr (declared above): v5..v9 blobs stored drift in a side int16.
+    // Applied AFTER setPatch - those blobs predate the byte-37 re-scope, so
+    // their stored depth beats whatever opaque value their byte 37 carries.
     p5::Patch patch;
     std::memset(&patch, 0, sizeof patch);
     std::memcpy(patch.raw, raw, 133);
     patch.size = 133; patch.model = 0x32; patch.command = 3;
     s->engine.setPatch(patch);
+    if (migDr >= 0) s->engine.setDriftDepth(migDr);   // v5..v9 blob migration
     s->markSource(0, s->program, s->srcFile_);   // restored session floats as saved
     if (s->program >= 0 && !std::memcmp(patch.raw, PW_FACTORY_RAW[s->program], 133))
     { s->curSrc_.kind = p5store::SourceKind::Factory; s->curSrc_.factory = s->program; }
