@@ -787,6 +787,7 @@ bool gui_hide(const clap_plugin_t *p)
     if (auto *s0 = static_cast<Plugin *>(p->plugin_data)) s0->trail("gui_hide");
     auto *c = ctxFrom(p);
     if (!c || !c->win) return false;
+    if (!c->mapped && c->plugin) { c->plugin->trail("gui_hide: already hidden"); return true; }
     if (c->keepVisible)
     {   std::fprintf(stderr, "[p5gui] host hide ignored: window is DETACHED\n");
         return true;                          // float window stays on screen

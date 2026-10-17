@@ -381,9 +381,13 @@ void Plugin::trail(const char *ev)
     if (FILE *f = std::fopen((dir + "/gui_trail.log").c_str(), "ae"))
     {   timespec ts{}; clock_gettime(CLOCK_REALTIME, &ts);
         std::tm bt{}; localtime_r(&ts.tv_sec, &bt);
-        std::fprintf(f, "%02d:%02d:%02d.%03ld pid %ld  %s\n",
+        // TID is the point: if Bitwig's delete-crash trail ends with
+        // plugin_destroy/gui_destroy on a DIFFERENT tid than gui_create/
+        // show, the host tears down on its audio thread - and every
+        // fopen/X11/mutex there is a realtime violation worth of a crash.
+        std::fprintf(f, "%02d:%02d:%02d.%03ld pid %ld tid %ld  %s\n",
                      bt.tm_hour, bt.tm_min, bt.tm_sec, ts.tv_nsec / 1000000,
-                     (long)getpid(), ev);
+                     (long)getpid(), (long)gettid(), ev);
         std::fclose(f);
     }
 #else
@@ -629,7 +633,9 @@ static void plugin_destroy(const clap_plugin_t *p)
     // Ctx and its REGISTERED HOST TIMER would outlive the plugin - the
     // next timer dispatch would hit freed memory. kGui.destroy is safe to
     // call here: it early-outs once (and only once) a live Ctx exists.
-    s->trail("plugin_destroy");
+    {   char b[64]; std::snprintf(b, sizeof b, "plugin_destroy gui %s",
+                                 s->gui ? "LIVE" : "gone");
+        s->trail(b); }
     if (s->gui && kGui.destroy) kGui.destroy(p);
     delete s->self;
     delete s;
