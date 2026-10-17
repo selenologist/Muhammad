@@ -30,8 +30,11 @@ int main(int argc, char **argv)
     static const clap_host_gui_t probeHostGui = {
         [](const clap_host_t *) {},                                            // resize_hints_changed
         [](const clap_host_t *, uint32_t w, uint32_t h) -> bool
-        {   std::fprintf(stderr, "[probe] host request_resize(%u,%u) -> refuse\n", w, h);
-            return false; },                                                  // request_resize
+        {   const char *mode = getenv("P5_PROBE_RESIZE");   // refuse|accept(=Bitwig-class lie)
+            const bool lie = mode && !strcmp(mode, "accept");
+            std::fprintf(stderr, "[probe] host request_resize(%u,%u) -> %s\n", w, h,
+                         lie ? "accept (will not honour)" : "refuse");
+            return lie; },                                                   // request_resize
         [](const clap_host_t *) -> bool { return true; },                     // request_show
         [](const clap_host_t *) -> bool { return true; },                     // request_hide
         [](const clap_host_t *, bool) {}                                      // closed

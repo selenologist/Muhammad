@@ -101,7 +101,12 @@ struct GuiCore
     char guiApi[8] = "none";
     char hostName[72] = "unknown host";       // WM_CLASS / window title / frontmost app
     int  askLastRet = -1;
-    long askNextMs = 0;                       // ask throttle (1.2 s)                     // last request_resize verdict (1/0/-1 none)
+    long askNextMs = 0;                       // ask throttle (1.2 s)
+    int  totalAsks = 0;                       // NEVER reset by configure: a host
+                                              // that accepts then re-asserts the
+                                              // oversized slot must not be asked
+                                              // forever (the 1 Hz flicker)
+    long acceptedAtMs = 0;                    // stamp of the last ACCEPTED ask                     // last request_resize verdict (1/0/-1 none)
     int  topTries = 0;                        // top-level (host window) shrink budget
     long topNextMs = 0;
     char dbg[1200] = {};

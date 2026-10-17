@@ -81,6 +81,21 @@ also ship in the tree.
   texts kept in `assets/` (`OFL-InterTight.txt`, `VT323-OFL.txt`). The OFL
   does not infect the work; unmodified embedded fonts are permitted.
 
+## Wrapper toolchain (build-time only, output ships)
+
+- **clap-wrapper** — https://github.com/free-audio/clap-wrapper , © Surge
+  Synth Team contributors, **MIT**. Not vendored into this repo; the VST3
+  build (see README "VST3 via clap-wrapper") consumes it from a sibling
+  checkout. The produced `muhammad.vst3` is a wrapper that dynamically loads
+  our `muhammad.clap`; treat the wrapper's MIT notice as an attribution for
+  any distributed VST3 binary, alongside the Steinberg SDK notice below.
+- **VST3 SDK** — https://github.com/steinbergmedia/vst3sdk , © Steinberg
+  Media Technologies, **MIT** (use of the VST trademark per Steinberg's
+  guidelines; pinned to tag `v3.8.0_build_66`, the version clap-wrapper
+  itself downloads — master breaks the wrapper with an `iid` ambiguity).
+- AAX/AU targets are not built; AAX would additionally involve Avid's dual
+  license terms if ever attempted.
+
 ## Compatibility summary
 
 GPL-3.0-or-later sources (Surge XT, sst-filters) are combined into a

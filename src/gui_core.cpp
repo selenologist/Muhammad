@@ -822,14 +822,16 @@ bool coreMirrorSlot(GuiCore &c, int slotW, int slotH, uint32_t &outW, uint32_t &
     // slot == current size, and an early-out before the ask meant we never
     // asked and never trimmed — the "rr 0/3, giant black window" deadlock.
     if (slotH > (long)wantH + 20 && c.hostGui && c.hostGui->request_resize &&
-        c.resizeRequests < 3 && nowMs >= c.askNextMs)
+        c.totalAsks < 3 && nowMs >= c.askNextMs)
     {
         c.askNextMs = nowMs + 1200;
         const bool ok = c.hostGui->request_resize(c.plugin->host, (uint32_t)slotW, wantH);
         c.resizeRequests++;
+        c.totalAsks++;
         c.askLastRet = ok ? 1 : 0;
-        std::fprintf(stderr, "[p5gui] request_resize(%d,%u) -> host %s (rr %d)\n",
-                     slotW, wantH, ok ? "ACCEPTED" : "REFUSED", c.resizeRequests);
+        if (ok) c.acceptedAtMs = nowMs;
+        std::fprintf(stderr, "[p5gui] request_resize(%d,%u) -> host %s (ask %d/3)\n",
+                     slotW, wantH, ok ? "ACCEPTED" : "REFUSED", c.totalAsks);
     }
 
     if ((uint32_t)slotW == c.w && (uint32_t)slotH == c.h) return false;
@@ -859,7 +861,13 @@ void buildDebugText(GuiCore &c)
     {   const std::string cur = P->currentFile();
         name = cur.empty() ? (const char *)P->engine.patch().raw + p5::P5_NAME : cur.c_str(); }
     line("Muhammad build: %s", P5_BUILD_INFO);
-    line("host: %.40s  pid %ld", c.hostName, (long)getpid());
+    {   auto *hh = P->host;
+        line("host: %.40s%s%s%.20s%s%s%.24s  pid %ld",
+             (hh && hh->name) ? hh->name : "?",
+             (hh && hh->vendor) ? " / " : "", (hh && hh->vendor) ? hh->vendor : "",
+             (hh && hh->version) ? " v" : "", (hh && hh->version) ? hh->version : "",
+             c.hostName, (long)getpid());
+    }
     {   static const char *const kProbe[] = { CLAP_EXT_GUI, CLAP_EXT_TIMER_SUPPORT, CLAP_EXT_LOG,
             CLAP_EXT_LATENCY, CLAP_EXT_AUDIO_PORTS_CONFIG, CLAP_EXT_NOTE_NAME, CLAP_EXT_STATE };
         char exts[160] = {}; int en = 0;

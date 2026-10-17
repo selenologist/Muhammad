@@ -342,6 +342,25 @@ exported. POSIX-only dev tools (hostsim ref_dump, LD_PRELOAD allocwatch,
 dlopen smoke, bench clock_gettime) are gated to Linux; test_mpe / test_engine_ab
 / test_store / clap_smoke also compile and run on macOS.
 
+VST3 (for hosts without CLAP, e.g. Ardour's VST3 scan): build the dynamic-load
+wrapper from https://github.com/free-audio/clap-wrapper —
+
+```sh
+git clone --depth 1 https://github.com/free-audio/clap-wrapper && cd clap-wrapper
+git clone --depth 1 https://github.com/free-audio/clap
+git clone https://github.com/steinbergmedia/vst3sdk   # then:
+cd vst3sdk && git checkout v3.8.0_build_66 && git submodule update --init --depth 1 && cd ..
+cmake -B build -DCMAKE_BUILD_TYPE=Release \
+  -DCLAP_SDK_ROOT=$PWD/../clap -DVST3_SDK_ROOT=$PWD/vst3sdk \
+  -DCLAP_WRAPPER_OUTPUT_NAME=muhammad -DCLAP_VST3_TUID_STRING="$(cat tools/muhammad_vst3_tuid.txt)"
+cmake --build build -j
+```
+
+The wrapper loads `muhammad.clap` by name from `~/.clap` at runtime, so the
+VST3 is only ever as current as the installed CLAP. The component TUID is
+pinned in `tools/muhammad_vst3_tuid.txt` — keep it stable or
+hosts forget the plugin identity between builds.
+
 macOS: build universal with `-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"`,
 then `tools/make_mac_bundle.sh build/muhammad.clap muhammad.clap` wraps the dylib
 into a `.clap` bundle.

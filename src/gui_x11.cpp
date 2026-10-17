@@ -141,8 +141,9 @@ void pump(Ctx &c)
         XWindowAttributes pa{};
         if (XGetWindowAttributes(c.dpy, c.parent, &pa))
         {
+            const long t = nowMs();
             uint32_t ow, oh;
-            if (coreMirrorSlot(c, pa.width, pa.height, ow, oh, nowMs()))
+            if (coreMirrorSlot(c, pa.width, pa.height, ow, oh, t))
             {   XResizeWindow(c.dpy, c.win, ow, oh);
                 dirty = true; }
             // Hosts that hand out a square slot and refuse to shrink it
@@ -153,10 +154,11 @@ void pump(Ctx &c)
             // any configure.
             const long wantH = (long)(pa.width * p5ui::kPanelH / p5ui::kPanelW);
             const bool askedAndRefused = !c.hostGui || !c.hostGui->request_resize ||
-                                         c.resizeRequests >= 3 || c.askLastRet == 0;
+                                         c.totalAsks >= 3 || c.askLastRet == 0 ||
+                                         (c.askLastRet == 1 && c.acceptedAtMs != 0 &&
+                                          t - c.acceptedAtMs > 2500);   // accepted but never honoured
             if (pa.height > wantH + 40 && c.topTries < 2 && askedAndRefused)
             {
-                const long t = nowMs();
                 if (t >= c.topNextMs)
                 {
                     c.topNextMs = t + 1500;
@@ -232,8 +234,13 @@ void pump(Ctx &c)
                 {
                     c.w = (uint32_t)ev.xconfigure.width;
                     c.h = (uint32_t)ev.xconfigure.height;
-                    c.resizeRequests = 0;   // host answered (or user dragged): renegotiate
-                    c.topTries = 0;
+                    // Re-arm negotiation ONLY when the window actually landed
+                    // at (or near) the panel aspect - a host that "accepted"
+                    // and then re-asserts the same oversized slot must not
+                    // reset our ask budget forever (Bitwig's flicker loop).
+                    const long wantH2 = (long)ev.xconfigure.width * p5ui::kPanelH / p5ui::kPanelW;
+                    if (labs((long)ev.xconfigure.height - wantH2) <= 40)
+                    {   c.resizeRequests = 0; c.topTries = 0; c.totalAsks = 0; c.acceptedAtMs = 0; }
                     dirty = true;
                 }
                 break;
