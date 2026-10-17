@@ -51,23 +51,36 @@ EXTRA=()
 case "$(uname -s)" in
     MINGW*|MSYS*|CYGWIN*)
         # VS 18-era MSVC (14.5x) hard-errors (C2338) on the deprecated
-        # <experimental/coroutine> WIL pulls in for the standalone host; the
-        # compiler message itself names the opt-out define. Delivered through
-        # cl.exe's _CL_ ENVIRONMENT variable, deliberately NOT via
-        # -DCMAKE_CXX_FLAGS: seeding that cache variable REPLACES CMake's MSVC
-        # default flagset (/EHsc /GR /D_WINDOWS...), which is exactly what
-        # produced last run's C4530 wall and WIL's exception-dependent
-        # com_ptr/err_exception_policy failures. _CL_ reaches every cl.exe
-        # through MSBuild; MSYS rewrites argv, not environment contents.
-        export _CL_="/D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS"
+        # <experimental/coroutine> WIL pulls in for the standalone; the
+        # compiler's own message names the opt-out.
+        #
+        # Delivery matters, twice proven by CI: (a) a value beginning with a
+        # SLASH (/D_SILENCE...) gets rewritten by git-bash's MSYS layer into
+        # C:/Program Files/Git/... and reaches cl.exe as a source FILE; (b)
+        # setting CMAKE_CXX_FLAGS at all REPLACES CMake's MSVC default seed,
+        # killing /EHsc /GR - which silently broke WIL's exception-dependent
+        # com_ptr the same way; (c) an _CL_ environment variable poisoned the
+        # compiler-ID discovery in the very next run. So: -D leading value
+        # (MSYS-safe), CMake's documented default flags RESTATED verbatim,
+        # and the opt-out appended. Both language seeds set; CMake's MSVC
+        # init string is "/DWIN32 /D_WINDOWS /W3 /GR /EHsc".
+        EXTRA+=(-DCMAKE_CXX_FLAGS="-DWIN32 /D_WINDOWS /W3 /GR /EHsc -D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS"
+                -DCMAKE_C_FLAGS="-DWIN32 /D_WINDOWS /W3")
         ;;
 esac
 if [ "$(uname)" = "Darwin" ]; then
     # AUv2 wrapper: Apple's AudioUnitSDK (BSD-3), cloned next to the others
     if [ ! -d "$WORK/AudioUnitSDK" ]; then
-        git clone -q --depth 1 https://github.com/apple/AudioUnitSDK "$WORK/AudioUnitSDK"
+        # pinned: CI's unpinned HEAD hit AudioUnitSDK's C++20 migration
+        # (std::span, concept/requires) while the wrapper defaulted to C++17.
+        git clone -q --depth 1 --branch AudioUnitSDK-1.0.0 \
+            https://github.com/apple/AudioUnitSDK "$WORK/AudioUnitSDK"
     fi
-    EXTRA+=(-DCLAP_WRAPPER_BUILD_AUV2=ON -DAUDIOUNIT_SDK_ROOT="$WORK/AudioUnitSDK")
+    # C++20 for the whole wrapper build on mac (the SDK needs it; vst3sdk and
+    # the wrapper both support >=17 per their own guard) + deployment 12.0 so
+    # libc++'s availability-marked std::span compiles under 10.13 default.
+    EXTRA+=(-DCLAP_WRAPPER_BUILD_AUV2=ON -DAUDIOUNIT_SDK_ROOT="$WORK/AudioUnitSDK"
+            -DCLAP_WRAPPER_CXX_STANDARD=20 -DOSX_DEPLOYMENT_TARGET=12.0)
 fi
 
 VER="$(grep -m1 'set(P5_VERSION' "$REPO/CMakeLists.txt" | sed 's/.*"\(.*\)".*/\1/')"
