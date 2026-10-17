@@ -545,6 +545,27 @@ void pump(Ctx &c)
             case ButtonPress:
                 if (ev.xbutton.button == Button4 || ev.xbutton.button == Button5)
                 {
+                    const int dir = ev.xbutton.button == Button4 ? -1 : +1;   // wheel down = next page
+                    if (c.modal == 7)                     // tuning picker pages on the wheel
+                    {
+                        const int total = 1 + (c.tuneTab ? (int)c.tuneFiles.size() : P5_STOCK_N);
+                        const int pages = (total + p5ui::pick::rows - 1) / p5ui::pick::rows;
+                        c.tunePage += dir;
+                        if (c.tunePage < 0) c.tunePage = 0;
+                        if (c.tunePage >= pages) c.tunePage = pages - 1;
+                        dirty = true;
+                        break;
+                    }
+                    if (c.modal == 4)                     // patch picker likewise
+                    {
+                        const int total = c.pickerTab == 0 ? (int)PW_FACTORY_N + 2 : (int)c.userRows.size();
+                        const int pages = total ? (total + p5ui::pick::rows - 1) / p5ui::pick::rows : 1;
+                        c.pickerPage += dir;
+                        if (c.pickerPage < 0) c.pickerPage = 0;
+                        if (c.pickerPage >= pages) c.pickerPage = pages - 1;
+                        dirty = true;
+                        break;
+                    }
                     const int k = p5ui::knobAt(p5ui::State{}, (float)ev.xbutton.x, (float)ev.xbutton.y,
                                                (float)c.w, (float)c.h);
                     if (k >= 0)

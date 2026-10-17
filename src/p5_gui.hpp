@@ -123,7 +123,7 @@ inline float railHandleX(int k, float v) { return railX + (v / 24.f) * railW; }
 float railValAt(int k, float lx);               // 0..24 semitones, clamped
 bool inside(float lx, float ly);
 // root spinner (top right)
-constexpr float spinY = 91, spinMinusX = 940, spinPlusX = 1150, spinBoxX = 970, spinBoxW = 180;
+constexpr float spinY = 91, spinMinusX = 940, spinPlusX = 1150, spinBoxX = 970, spinBoxW = 150;
 // polar dial (bottom left)
 constexpr float wheelCX = 490, wheelCY = 276, wheelR = 98;
 // chromatic text panel (bottom right): key / Hz / cents rows

@@ -768,10 +768,30 @@ void draw(const Gui &g, const State &s, float w, float h)
             nvgFillColor(g.vg, s.tuneTab == tt ? col(kColDispText) : col(kColInk));
             nvgText(g.vg, sxp(tx + 72), syp(pick::y + 25), tt ? "USER" : "STOCK", nullptr);
         }
-        nvgTextAlign(g.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
-        nvgFontSize(g.vg, 14.f);
-        nvgFillColor(g.vg, col(kColInk));
-        nvgText(g.vg, sxp(pick::x + pick::w - 120), syp(pick::y + 25), "LOAD TUNING", nullptr);
+        {   const char *pp[2] = { "<", ">" };          // page controls (hitPage bands)
+            for (int pt = 0; pt < 2; pt++)
+            {
+                const float px2 = pick::x + pick::w - 172 + pt * 50;
+                nvgBeginPath(g.vg);
+                nvgRoundedRect(g.vg, px2, pick::y + 10, 44, 26, 3);
+                nvgFillColor(g.vg, nvgRGBA(52, 52, 58, 255));
+                nvgFill(g.vg);
+                nvgStrokeColor(g.vg, col(kColDispStroke));
+                nvgStroke(g.vg);
+                nvgFontSize(g.vg, 11.f);
+                nvgTextAlign(g.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
+                nvgFillColor(g.vg, col(kColInk));
+                nvgText(g.vg, sxp(px2 + 22), syp(pick::y + 23), pp[pt], nullptr);
+            }
+            char pg[16];
+            std::snprintf(pg, sizeof pg, "%d/%d", s.tunePage + 1, s.tunePages < 1 ? 1 : s.tunePages);
+            nvgTextAlign(g.vg, NVG_ALIGN_RIGHT | NVG_ALIGN_MIDDLE);
+            nvgFontSize(g.vg, 14.f);
+            nvgFillColor(g.vg, col(kColInk));
+            nvgText(g.vg, sxp(pick::x + pick::w - 182), syp(pick::y + 23), pg, nullptr);
+            nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
+            nvgText(g.vg, sxp(pick::x + 320), syp(pick::y + 23), "LOAD TUNING", nullptr);
+        }
         nvgFontSize(g.vg, 15.f);
         for (int i = 0; i < pick::rows; i++)
         {
