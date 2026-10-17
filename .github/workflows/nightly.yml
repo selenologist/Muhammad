@@ -5,6 +5,9 @@
 #                validation happens on tester machines, build+exports gate here)
 #   macos      : universal (arm64+x86_64) plugin with the cocoa NSView shim,
 #                wrapped as a .clap bundle (compile-gated in CI)
+# Wrappers (tools/make_wrappers.sh, dynamic-load clap-wrapper): VST3 on all
+# three platforms, AUv2 on macOS, simple standalone everywhere - native
+# windows-latest leg so the Steinberg SDK sees MSVC, not MinGW.
 # On tags v* it additionally publishes a GitHub Release with all three artifacts.
 
 name: build
@@ -66,6 +69,12 @@ jobs:
         with:
           name: muhammad-${{ needs.version.outputs.ver }}-linux-x64.clap
           path: build/muhammad.clap
+      - name: wrappers (VST3 + standalone)
+        run: bash tools/make_wrappers.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: muhammad-${{ needs.version.outputs.ver }}-linux-x64-wrappers
+          path: dist/wrappers/*.zip
 
   windows:
     needs: version
@@ -85,6 +94,19 @@ jobs:
         with:
           name: muhammad-${{ needs.version.outputs.ver }}-win-x64.clap
           path: build-win/muhammad.clap
+
+  windows-wrappers:
+    needs: version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: wrappers (VST3 + standalone)
+        shell: bash
+        run: bash tools/make_wrappers.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: muhammad-${{ needs.version.outputs.ver }}-win-x64-wrappers
+          path: dist/wrappers/*.zip
 
   macos:
     needs: version
@@ -106,10 +128,16 @@ jobs:
         with:
           name: muhammad-${{ needs.version.outputs.ver }}-macos-universal.clap
           path: dist/muhammad.clap
+      - name: wrappers (VST3 + AUv2 + standalone)
+        run: bash tools/make_wrappers.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: muhammad-${{ needs.version.outputs.ver }}-macos-wrappers
+          path: dist/wrappers/*.zip
           # keep the bundle directory structure in the zip
 
   release:
-    needs: [version, linux, windows, macos]
+    needs: [version, linux, windows, windows-wrappers, macos]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     permissions:
@@ -120,9 +148,14 @@ jobs:
           path: assets
       - uses: softprops/action-gh-release@v2
         with:
-          files: assets/**/*.clap
+          files: |
+            assets/**/*.clap
+            assets/**/*.zip
           body: >
-            Muhammad ${{ needs.version.outputs.ver }} — linux-x64 (with GUI),
-            win-x64 and macos-universal (headless: platform GUI shims pending).
-            Drop the .clap into your synth app's CLAP directory
-            (~/.clap, %LOCALAPPDATA%/Bitwig/... or similar).
+            Muhammad ${{ needs.version.outputs.ver }} — CLAP for linux-x64,
+            win-x64 and macos-universal, plus wrapper bundles (VST3 on all
+            platforms; macOS also gets AUv2; every platform gets the simple
+            standalone host). The wrappers load muhammad.clap by name at
+            runtime: put the .clap in your app's CLAP directory (~/.clap,
+            %LOCALAPPDATA%/Bitwig/... or ~/Library/Application Support/...)
+            and the .vst3/.component in the matching VST3/AU folder.
