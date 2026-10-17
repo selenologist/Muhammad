@@ -397,9 +397,16 @@ void Plugin::trail(const char *ev)
 
 void Plugin::maybePingLatency()
 {
-    if (!latencyDirty || !active || !host || !host->get_extension) return;
-    auto *l = (const clap_host_latency_t *)host->get_extension(host, CLAP_EXT_LATENCY);
-    if (l && l->changed) { l->changed(host); latencyDirty = false; }
+    // DELIBERATELY NEVER PINGS. Both safe-looking moments are proven unsafe
+    // on Bitwig 5.0.4 by its own logs:
+    //  - deactivate: re-enters a dying instance (delete-crash path);
+    //  - mid-session from the GUI pump: "Plugin misbehaving Muhammad:
+    //    plugin reported latency change while activated" (BitwigStudio.log
+    //    23:59:26, from our own build d190737).
+    // Latency deltas therefore take effect at the next activate/start, when
+    // the host re-reads get_latency() itself. The mid-session gap is 21
+    // samples at 48k - inaudible, and the honest Bitwig contract.
+    // (flag stays set; nothing to do.)
 }
 
 void Plugin::savePatchNamed(const std::string &name)
