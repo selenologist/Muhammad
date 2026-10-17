@@ -33,6 +33,8 @@ struct State
     bool tuneOpen = false, tunePick = false;
     char tuneName[40] = "12-TET";
     short tuneDev[128] = {};
+    const float *wheelC = nullptr;         // cumulative cents per tone (Surge-style dial)
+    int wheelN = 0, wheelHot = -1;         // tone count incl. octave; hovered/dragged tone (1..N)
     float tuneUp = 2.f, tuneDn = 2.f;           // editor default ranges, semitones
     int tuneFocus = 0;                          // which bend-range rail the arrows adjust
     const char *tuneRows[8] = {};               // "standard" + Tunings files
@@ -123,6 +125,14 @@ inline float railHandleX(int k, float v) { return railX[k] + (v / 24.f) * railW;
 float railValAt(int k, float lx);               // 0..24 semitones, clamped
 bool inside(float lx, float ly);
 int hitControl(float lx, float ly);             // 1 LOAD 2 RESET 3/4 rails, 0 miss
+// ---- polar dial (Surge RadialScaleGraph law, ported) ----
+constexpr float wheelCX = 520, wheelCY = 208, wheelR = 114;
+constexpr float wheelRing = 16.f;               // px per ET deviation unit at full range
+float etCents(const float *c, int n);           // cents of one equal step
+float ringScale(const float *c, int n);         // px per ET unit, auto-ranged like Surge
+void nodePos(const float *c, int n, int i, float &x, float &y);   // tone i (1..n)
+int nodeAt(const float *c, int n, float lx, float ly);            // nearest node within 10 px, else -1
+float clampTone(const float *c, int n, int i, float v);           // strictly monotone neighbours
 }
 void pointToLayout(float px, float py, float w, float h, float &lx, float &ly);
 int knobAt(const State &s, float px, float py, float w, float h);

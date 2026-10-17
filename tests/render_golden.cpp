@@ -49,11 +49,12 @@ static p5ui::State stateFor(const char *name, p5::Engine &e, int &programOut)
 
     p5ui::State s;
     if (tuneMode)
-    {   // microtuning editor: 1/4-comma meantone-ish window, ranges deflected
+    {   // polar editor: the pythagorean chromatic dial, hot node on tone 5
         s.tuneOpen = true;
-        std::snprintf(s.tuneName, sizeof s.tuneName, "1/4-comma meantone (demo)");
-        static const short demo[12] = { 0, -5, -3, 2, -4, 0, -4, -1, -3, 1, -2, -5 };
-        for (int i = 0; i < 12; i++) s.tuneDev[48 + i] = demo[i];
+        std::snprintf(s.tuneName, sizeof s.tuneName, "Example Pythagorean tuning *");
+        static const float demo[12] = { 90.2f, 203.9f, 294.2f, 407.8f, 498.0f, 612.1f,
+                                        702.0f, 792.2f, 905.9f, 996.1f, 1109.9f, 1200.0f };
+        s.wheelC = demo; s.wheelN = 12; s.wheelHot = 5;
         s.tuneUp = 5.f; s.tuneDn = 2.f;
     }
     if (trimMode)

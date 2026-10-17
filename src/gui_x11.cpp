@@ -16,6 +16,7 @@
 #include <clap/clap.h>
 #include <clap/ext/timer-support.h>
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
@@ -58,6 +59,10 @@ struct Ctx
     std::vector<std::string> tuneFiles;  // Tunings dir listing (TUNING page)
     int tuneDrag = 0, tunePage = 0;      // 3/4 = which bend-range rail
     int tuneFocus = 0;                   // arrow-adjusted rail (0 up, 1 down)
+    float wheelC[64] = {};               // live editable scale (cumulative cents)
+    int wheelN = 0, wheelHot = -1, wheelDragIdx = 0;
+    float wheelDragC0 = 0.f, wheelDragDist0 = 0.f;
+    unsigned wheelLastMs = 0; int wheelLastIdx = -1;   // manual double-click detection
     char tuneRowBuf[8][64] = {};
     bool bindPending = false;            // ASSIGN armed: next program 1-8 binds
     p5store::Source bindSrc;
@@ -107,6 +112,37 @@ void applyTrimDrag(Ctx &c, float lx)
 {   applyTrimSet(c, c.trimRow, c.trimCol, p5ui::trim::valueAt(c.trimCol, lx));
 }
 
+void wheelSeed(Ctx &c)
+{   const Plugin *P = c.plugin;
+    c.wheelN = (P->tuneToneCount_ >= 2 && P->tuneToneCount_ <= 64) ? P->tuneToneCount_ : 0;
+    for (int i = 0; i < c.wheelN; i++) c.wheelC[i] = (float)P->tuneTones_[i];
+}
+
+void wheelCommit(Ctx &c)
+{   if (c.wheelN < 2) return;
+    static double cum[64];
+    for (int i = 0; i < c.wheelN; i++) cum[i] = c.wheelC[i];
+    int16_t dev[128];
+    if (!p5store::buildScaleTones(cum, c.wheelN, dev)) return;
+    c.plugin->engine.setTuningDeviation(dev);
+    c.plugin->tuneToneCount_ = c.wheelN;
+    for (int i = 0; i < c.wheelN; i++) c.plugin->tuneTones_[i] = c.wheelC[i];
+    char *n = c.plugin->tuneName_;
+    if (!std::strchr(n, '*') && std::strlen(n) + 3 < sizeof c.plugin->tuneName_)
+        std::strncat(n, " *", sizeof c.plugin->tuneName_ - std::strlen(n) - 1);
+}
+
+void applyWheelDrag(Ctx &c, float lx, float ly, unsigned mods)
+{   const int i = c.wheelDragIdx;
+    if (i < 1 || i > c.wheelN) return;
+    const float dist = std::hypot(lx - p5ui::tune::wheelCX, ly - p5ui::tune::wheelCY);
+    const float et = p5ui::tune::etCents(c.wheelC, c.wheelN);
+    float dc = (dist - c.wheelDragDist0) / p5ui::tune::ringScale(c.wheelC, c.wheelN) * et;
+    if (mods & ShiftMask) dc *= 0.1f;                       // fine edit (Surge's shift speed)
+    const float nc = p5ui::tune::clampTone(c.wheelC, c.wheelN, i, c.wheelDragC0 + dc);
+    if (nc != c.wheelC[i - 1]) { c.wheelC[i - 1] = nc; wheelCommit(c); }
+}
+
 void applyTuneDrag(Ctx &c, float lx, unsigned mods)
 {   const int k = c.tuneDrag - 3;
     float v = p5ui::tune::railValAt(k, lx);
@@ -131,6 +167,7 @@ void fillState(Ctx &c, p5ui::State &st)
     st.tuneUp = (float)c.plugin->engine.bendRangeUpDefault();
     st.tuneDn = (float)c.plugin->engine.bendRangeDownDefault();
     st.tuneFocus = c.tuneFocus;
+    st.wheelC = c.wheelC; st.wheelN = c.wheelN; st.wheelHot = c.wheelHot;
     {
         const int per = p5ui::pick::rows;
         const int total = 1 + (int)c.tuneFiles.size();
@@ -348,6 +385,7 @@ void actuate(Ctx &c, int btnIdx, unsigned mods = 0)
     {   std::fprintf(stderr, "[p5gui] TUNING actuate: modal %d -> %d\n", c.modal, c.modal == 6 ? 0 : 6);
         if (c.modal == 6) c.modal = 0;
         else { c.modal = 6; c.tuneFiles = p5store::listTunings(); c.tuneFocus = 0;
+               wheelSeed(c);
                XSetInputFocus(c.dpy, c.win, RevertToParent, CurrentTime); }   // arrow keys land here
         c.tuneDrag = 0; return; }
     if (b.pid < 0) return;                            // decorative
@@ -583,13 +621,18 @@ void pump(Ctx &c)
                         if (idx == 0)
                         {   c.plugin->engine.setTuningDeviation(nullptr);
                             std::snprintf(c.plugin->tuneName_, sizeof c.plugin->tuneName_, "12-TET");
+                            c.plugin->tuneToneCount_ = 0; c.wheelN = 0; c.wheelHot = -1;
                             std::fprintf(stderr, "[p5gui] tuning: standard 12-TET selected\n"); }
                         else if (idx - 1 < (int)c.tuneFiles.size())
                         {   static int16_t dev[128]; char nm[40];
-                            if (p5store::loadTuningDev(c.tuneFiles[idx - 1], dev, nm, sizeof nm))
+                            static double tn2[64]; int tnn = 0;
+                            if (p5store::loadTuningDev(c.tuneFiles[idx - 1], dev, nm, sizeof nm, tn2, &tnn))
                             {   c.plugin->engine.setTuningDeviation(dev);
                                 std::snprintf(c.plugin->tuneName_, sizeof c.plugin->tuneName_, "%s", nm);
-                                std::fprintf(stderr, "[p5gui] tuning loaded: %s\n", nm); }
+                                c.plugin->tuneToneCount_ = tnn;
+                                for (int k = 0; k < tnn && k < 64; k++) c.plugin->tuneTones_[k] = tn2[k];
+                                wheelSeed(c);
+                                std::fprintf(stderr, "[p5gui] tuning loaded: %s (%d tones editable)\n", nm, tnn); }
                             else std::fprintf(stderr, "[p5gui] tuning LOAD failed: %s\n",
                                               c.tuneFiles[idx - 1].c_str());
                         }
@@ -603,11 +646,40 @@ void pump(Ctx &c)
                     p5ui::pointToLayout((float)ev.xbutton.x, (float)ev.xbutton.y,
                                         (float)c.w, (float)c.h, lx, ly);
                     if (!p5ui::tune::inside(lx, ly)) { c.modal = 0; dirty = true; break; }
+                    {   if (!c.wheelN)                        // first touch of the grid = adopt 12-TET
+                        {   c.wheelN = 12;
+                            for (int k = 1; k <= 12; k++) c.wheelC[k - 1] = 100.f * k;
+                        }
+                        const int wn = p5ui::tune::nodeAt(c.wheelC, c.wheelN, lx, ly);
+                        if (wn >= 0)
+                        {   c.wheelHot = wn;
+                            const bool dbl = (wn == c.wheelLastIdx &&
+                                              (unsigned)(ev.xbutton.time - c.wheelLastMs) < 450u);
+                            c.wheelLastMs = (unsigned)ev.xbutton.time; c.wheelLastIdx = wn;
+                            if (dbl)                          // double-click: snap this tone to equal
+                            {   const float et = p5ui::tune::etCents(c.wheelC, c.wheelN);
+                                const float nc = p5ui::tune::clampTone(c.wheelC, c.wheelN, wn, et * wn);
+                                if (nc != c.wheelC[wn - 1])
+                                {   c.wheelC[wn - 1] = nc; wheelCommit(c);
+                                    std::fprintf(stderr, "[p5gui] wheel tone %d snapped to equal\n", wn); }
+                                dirty = true; break;
+                            }
+                            c.wheelDragIdx = wn;
+                            c.wheelDragC0 = c.wheelC[wn - 1];
+                            c.wheelDragDist0 = std::hypot(lx - p5ui::tune::wheelCX, ly - p5ui::tune::wheelCY);
+                            XGrabPointer(c.dpy, c.win, True,
+                                         ButtonReleaseMask | PointerMotionMask, GrabModeAsync, GrabModeAsync,
+                                         None, None, CurrentTime);
+                            c.pointerGrabbed = true;
+                            dirty = true; break;
+                        }
+                    }
                     const int ctl = p5ui::tune::hitControl(lx, ly);
                     if (ctl == 1) { c.modal = 7; c.tunePage = 0; dirty = true; }
                     else if (ctl == 2)
                     {   c.plugin->engine.setTuningDeviation(nullptr);
                         std::snprintf(c.plugin->tuneName_, sizeof c.plugin->tuneName_, "12-TET");
+                        c.plugin->tuneToneCount_ = 0; c.wheelN = 0; c.wheelHot = -1;
                         std::fprintf(stderr, "[p5gui] tuning RESET to 12-TET\n");
                         dirty = true; }
                     else if (ctl >= 3)
@@ -647,8 +719,18 @@ void pump(Ctx &c)
                 if (c.dragKnob >= 0)                        // gesture ends: tell the host the FINAL value
                 { c.plugin->guiSync((clap_id)p5ui::kKnobs[c.dragKnob].pid); dirty = true; }
                 c.dragKnob = -1; c.pressBtn = -1; c.trimDrag = 0; c.tuneDrag = 0;
+                c.wheelDragIdx = 0;
                 break;
             case MotionNotify:
+                if (c.wheelDragIdx)
+                {
+                    float lx, ly;
+                    p5ui::pointToLayout((float)ev.xmotion.x, (float)ev.xmotion.y,
+                                        (float)c.w, (float)c.h, lx, ly);
+                    applyWheelDrag(c, lx, ly, ev.xmotion.state);
+                    dirty = true;
+                    break;
+                }
                 if (c.tuneDrag)
                 {
                     float lx, ly;

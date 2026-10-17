@@ -326,9 +326,9 @@ int main(int argc, char **argv)
         bool ok7 = st7->save(plugin, &os7);
         uint32_t ver = 0;
         if (ok7 && blob7.size() >= 8) std::memcpy(&ver, blob7.data() + 4, 4);
-        check("state blob version 7", ok7 && ver == 7);
+        check("state blob version 8", ok7 && ver == 8);
         std::vector<char> blob6 = blob7;
-        const size_t tail = 2 * 128 + 2 * 2 + 40;         // dev + ranges + name
+        const size_t tail = 2 * 128 + 2 * 2 + 40 + 4 + 8 * 64;   // dev + ranges + name + tones
         bool sizes = blob6.size() > tail;
         if (sizes)
         {   blob6.resize(blob6.size() - tail);
@@ -340,7 +340,7 @@ int main(int argc, char **argv)
         std::pair<std::vector<char>*, size_t> cur6{ &blob6, 0 };
         clap_istream_t is6{ &cur6, rd7 };
         bool ok6 = sizes && st7->load(plugin, &is6);
-        check("v6 blob loads with 300 bytes stripped (compat)", ok6 && blob6.size() == blob7.size() - tail);
+        check("v6 blob loads with tail stripped (compat)", ok6 && blob6.size() == blob7.size() - tail);
     }
 
     {   // PAN WIDTH: readback, then a real per-voice stereo spread on the SIMD path

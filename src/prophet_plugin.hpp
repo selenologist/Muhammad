@@ -45,6 +45,8 @@ struct Plugin {
     uint8_t rpnM_[16] = {127}, rpnL_[16] = {127};   // per-channel RPN select (deselected)
     int rpnV_[16] = {};                              // 14-bit RPN data entry value
     char tuneName_[40] = "12-TET";
+    double tuneTones_[64] = {};                      // wheel-editable scale (cumulative cents)
+    int tuneToneCount_ = 0;
     float ccVol = 1.0f, ccExp = 1.0f;
     bool sustain_ = false;
     uint8_t heldFlag_[128] = {}, heldNotes_[128] = {};

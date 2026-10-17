@@ -329,6 +329,21 @@ arrow keys adjust the ringed (focused) rail by 0.1 st, Shift+arrows by 1.0 st;
 Left/Right move focus. Live-verified on Xvfb: 7.0 -> 7.1 -> 8.1 -> focus to
 DOWN -> 2.0.
 
+## The polar tuning wheel (v1.12.2-wheel)
+
+The TUNING page is Surge's RadialScaleGraph, ported to NanoVG: spokes divide
+the octave by degree count, each node's radius is its deviation from equal in
+ET units (blue inside / amber outside / grey on the ring), ring spacing auto-
+ranges with a 0.2-ET floor so gentle temperaments still bend the dial. Drag a
+node to change that cumulative degree (strictly monotone between neighbours);
+Shift drags fine x0.1; double-click snaps a tone back to equal; the octave
+node rescales the whole dial. First touch of the empty grid adopts 12-TET and
+edits from there. Edits rebuild the per-key deviation table through the same
+tuning-library path as file loads (wheel == file, unit-tested) and mark the
+name with ` *`. Scales up to 64 tones edit live; bigger or KBM-mapped files
+still load for playback. The scale itself persists in state blob v8, so a
+shaped wheel survives the session.
+
 ## Measurements log
 
 * v1.11: trim offset +16 measured +1.009 semitones; drift depth 127 walks

@@ -222,7 +222,39 @@ static std::string slurp(const std::string &path)
     return ss.str();
 }
 
-bool loadTuningDev(const std::string &fileName, int16_t *dev16, char *nameOut, int nameCap)
+bool buildScaleTones(const double *tones, int n, int16_t *dev16)
+{
+    if (!tones || n < 2 || n > kMaxTones) return false;
+    try
+    {
+        Tunings::Scale s;
+        s.count = n;
+        s.name = s.description = "Muhammad wheel edit";
+        for (int i = 0; i < n; i++)
+        {
+            Tunings::Tone to;
+            to.type = Tunings::Tone::kToneCents;
+            to.cents = tones[i];
+            to.ratio_d = to.ratio_n = 1;
+            to.floatValue = tones[i] / 1200.0 + 1.0;
+            to.stringRep = std::to_string(tones[i]);
+            to.lineno = -1;
+            s.tones.push_back(to);
+        }
+        Tunings::Tuning t(s);
+        for (int k = 0; k < 128; k++)
+        {
+            long d = lround(t.retuningFromEqualInSemitonesForMidiNote(k) * 16.0);
+            if (d < -512) d = -512; if (d > 512) d = 512;
+            dev16[k] = (int16_t)d;
+        }
+        return true;
+    }
+    catch (...) { return false; }
+}
+
+bool loadTuningDev(const std::string &fileName, int16_t *dev16, char *nameOut, int nameCap,
+                   double *tonesOut, int *tonesN)
 {
     const std::string path = tuningsDir() + "/" + fileName;
     const size_t dot = path.rfind('.');
@@ -238,6 +270,23 @@ bool loadTuningDev(const std::string &fileName, int16_t *dev16, char *nameOut, i
         Tuning t = sclT.empty()
             ? Tuning(parseKBMData(kbmT))
             : (kbmT.empty() ? Tuning(parseSCLData(sclT)) : Tuning(parseSCLData(sclT), parseKBMData(kbmT)));
+        if (tonesOut && tonesN)
+        {   // hand the wheel an editable copy of the SCALE degrees (cumulative
+            // cents, last = octave); KBM-mapped or huge files come back uneditable
+            *tonesN = 0;
+            const Scale *sc = nullptr;
+            if (!sclT.empty())
+            {
+                static Scale hold;                      // main-thread only
+                hold = parseSCLData(sclT);
+                sc = &hold;
+            }
+            if (sc && sc->count >= 2 && sc->count <= kMaxTones)
+            {
+                for (int i = 0; i < sc->count; i++) tonesOut[i] = sc->tones[i].cents;
+                *tonesN = sc->count;
+            }
+        }
         for (int k = 0; k < 128; k++)
         {
             const double semis = t.retuningFromEqualInSemitonesForMidiNote(k);

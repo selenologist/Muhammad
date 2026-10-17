@@ -33,7 +33,15 @@ std::vector<std::string> listPatches();
 // together. dev16 is per-MIDI-key deviation from 12-TET in 1/16-semitone.
 std::string tuningsDir();
 std::vector<std::string> listTunings();
-bool loadTuningDev(const std::string &fileName, int16_t *dev16, char *nameOut, int nameCap);                 // sorted, name without extension
+bool loadTuningDev(const std::string &fileName, int16_t *dev16, char *nameOut, int nameCap,
+                   double *tonesOut = nullptr, int *tonesN = nullptr);
+
+// Surge-style polar editor round trip: tones[] are cumulative cents of degrees
+// 1..n (the last entry is the octave). Rebuild the per-key deviation table from
+// an edited scale. kMaxTones bounds editable scale complexity; bigger files load
+// for playback but the wheel starts from the 12-TET grid.
+constexpr int kMaxTones = 64;
+bool buildScaleTones(const double *tones, int n, int16_t *dev16);                 // sorted, name without extension
 
 bool savePatch(const std::string &name, const uint8_t raw[133]);
 // Case-insensitive collision on purpose: filenames stay faithful to the typed

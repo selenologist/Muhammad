@@ -528,32 +528,79 @@ void draw(const Gui &g, const State &s, float w, float h)
         nvgFontSize(g.vg, 12.f);
         nvgText(g.vg, sxp(tune::x + 285), syp(tune::y + 42), s.tuneName, nullptr);
         nvgFontSize(g.vg, 11.f);
-        nvgText(g.vg, sxp(316), syp(tune::y + 62), "KEY", nullptr);
-        nvgText(g.vg, sxp(470), syp(tune::y + 62), "FREQUENCY", nullptr);
-        nvgText(g.vg, sxp(655), syp(tune::y + 62), "CENTS vs 12-TET", nullptr);
-        static const char *const kNote[12] = { "C", "C#", "D", "D#", "E", "F",
-                                               "F#", "G", "G#", "A", "A#", "B" };
-        nvgFontSize(g.vg, 13.f);
-        for (int i = 0; i < tune::rows; i++)
+        // ---- polar dial: degrees as spokes, radius = deviation from equal ----
         {
-            const int key = 48 + i;
-            const float ry = tune::rowTop(i);
-            const int dev = s.tuneDev[key];
-            const double f = 440.0 * std::pow(2.0, (key - 69 + dev / 16.0) / 12.0);
-            char lab[8];
-            std::snprintf(lab, sizeof lab, "%s3", kNote[i]);
-            nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
-            nvgFillColor(g.vg, col(kColInk));
-            nvgText(g.vg, sxp(300), syp(ry), lab, nullptr);
-            char ft[16];
-            std::snprintf(ft, sizeof ft, "%.2f Hz", f);
-            nvgTextAlign(g.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
-            nvgText(g.vg, sxp(470), syp(ry), ft, nullptr);
-            char ct[12];
-            std::snprintf(ct, sizeof ct, dev ? "%+.1f" : "%.1f", dev * 6.25f);
-            nvgFillColor(g.vg, dev ? nvgRGBA(240, 160, 30, 255) : col(kColInk));
-            nvgText(g.vg, sxp(655), syp(ry), ct, nullptr);
-            nvgFillColor(g.vg, col(kColInk));
+            float wc[64]; int wn = 0;
+            if (s.wheelN >= 2 && s.wheelN <= 64 && s.wheelC)
+            {   wn = s.wheelN; for (int i = 0; i < wn; i++) wc[i] = s.wheelC[i]; }
+            else { wn = 12; for (int i = 0; i < wn; i++) wc[i] = 100.f * (i + 1); }   // 12-TET grid
+            const bool grid = s.wheelN < 2;
+            const float et = tune::etCents(wc, wn);
+            const float rs = tune::ringScale(wc, wn);
+            nvgBeginPath(g.vg);                   // the equal reference circle
+            nvgCircle(g.vg, tune::wheelCX, tune::wheelCY, tune::wheelR);
+            nvgStrokeColor(g.vg, nvgRGBA(130, 130, 140, 220));
+            nvgStrokeWidth(g.vg, 1.2f);
+            nvgStroke(g.vg);
+            for (int q = -6; q <= 3; q++)         // deviation rings, Surge style R + q*rs
+            {   if (!q) continue;
+                const float rad = tune::wheelR + q * rs;
+                if (rad < 10.f || rad > tune::wheelR * 1.42f) continue;
+                nvgBeginPath(g.vg);
+                nvgCircle(g.vg, tune::wheelCX, tune::wheelCY, rad);
+                nvgStrokeColor(g.vg, nvgRGBA(85, 85, 95, grid ? 80 : 150));
+                nvgStrokeWidth(g.vg, 1.f);
+                nvgStroke(g.vg);
+            }
+            const float rOut = tune::wheelR * 1.16f;
+            for (int k = 0; k < wn; k++)          // spokes + index labels
+            {
+                const float a = -1.5707963f + (float)k * (6.2831853f / (float)wn);
+                nvgBeginPath(g.vg);
+                nvgMoveTo(g.vg, tune::wheelCX, tune::wheelCY);
+                nvgLineTo(g.vg, tune::wheelCX + rOut * std::cos(a), tune::wheelCY + rOut * std::sin(a));
+                nvgStrokeColor(g.vg, nvgRGBA(110, 110, 120, grid ? 90 : 200));
+                nvgStrokeWidth(g.vg, 1.f);
+                nvgStroke(g.vg);
+                if (wn <= 24)
+                {   char lab[4]; std::snprintf(lab, sizeof lab, "%d", k);
+                    nvgFillColor(g.vg, col(kColInk));
+                    nvgText(g.vg, sxp(tune::wheelCX + (rOut + 9.f) * std::cos(a)),
+                            syp(tune::wheelCY + (rOut + 9.f) * std::sin(a)), lab, nullptr); }
+            }
+            for (int i = 1; i <= wn; i++)         // interval text + nodes
+            {
+                float x, y; tune::nodePos(wc, wn, i, x, y);
+                if (wn <= 24)
+                {   const float a = -1.5707963f + (float)(i - 1) * (6.2831853f / (float)wn);
+                    const float ri = tune::wheelR - 20.f;
+                    char iv[8]; std::snprintf(iv, sizeof iv, "%.0f", wc[i - 1] - (i > 1 ? wc[i - 2] : 0.f));
+                    nvgFillColor(g.vg, nvgRGBA(200, 200, 206, 255));
+                    nvgText(g.vg, sxp(tune::wheelCX + ri * std::cos(a)),
+                            syp(tune::wheelCY + ri * std::sin(a)), iv, nullptr);
+                }
+                const float dev = (wc[i - 1] - et * i) / et;
+                nvgBeginPath(g.vg);
+                nvgCircle(g.vg, x, y, i == s.wheelHot ? 6.5f : 5.f);
+                nvgFillColor(g.vg, dev < -0.02f ? nvgRGBA(120, 150, 226, 255) :
+                                 dev >  0.02f ? nvgRGBA(232, 200, 96, 255) :
+                                                nvgRGBA(200, 200, 206, 255));
+                nvgFill(g.vg);
+                if (i == s.wheelHot)
+                {   nvgBeginPath(g.vg);
+                    nvgCircle(g.vg, x, y, 9.5f);
+                    nvgStrokeColor(g.vg, nvgRGBA(240, 240, 246, 230));
+                    nvgStrokeWidth(g.vg, 1.5f);
+                    nvgStroke(g.vg);
+                }
+            }
+            if (grid)
+            {   nvgFontSize(g.vg, 11.f);
+                nvgTextAlign(g.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
+                nvgFillColor(g.vg, nvgRGBA(150, 150, 158, 255));
+                nvgText(g.vg, sxp(tune::wheelCX), syp(tune::wheelCY + tune::wheelR + 26.f),
+                        "12-TET grid - drag a node to start editing", nullptr);
+            }
         }
         static const char *const kRailLbl[2] = { "BEND UP (st)", "BEND DOWN (st)" };
         const float rval[2] = { s.tuneUp, s.tuneDn };
@@ -811,6 +858,37 @@ namespace tune {
 float railValAt(int k, float lx)
 {   float t = (lx - railX[k]) / railW; t = t < 0.f ? 0.f : t > 1.f ? 1.f : t; return t * 24.f; }
 bool inside(float lx, float ly) { return lx >= x && ly >= y && lx <= x + w && ly <= y + h; }
+float etCents(const float *c, int n) { return n > 0 ? c[n - 1] / n : 100.f; }
+float ringScale(const float *c, int n)
+{   // Surge: iRange = ceil(max |dev| in ET units); ring spacing = 0.4 of the dial
+    // per range step. We keep a constant dial and scale the ring to its 60 % zoom.
+    if (n < 2) return wheelRing;
+    const float et = etCents(c, n);
+    float mx = 0.f;
+    for (int i = 1; i <= n; i++) { float d = std::fabs(c[i - 1] - et * i) / et; if (d > mx) mx = d; }
+    const float range = std::max(0.2f, std::ceil(mx * 5.f) / 5.f);   // floor: gentle tunings still bend the dial
+    return 0.6f * wheelR / range;
+}
+static float nodeRadiusPx(const float *c, int n, int i)
+{   const float et = etCents(c, n);
+    return wheelR + ((c[i - 1] - et * i) / et) * ringScale(c, n); }
+void nodePos(const float *c, int n, int i, float &x, float &y)
+{   const float a = -1.5707963f + (float)(i - 1) * (6.2831853f / (float)n);
+    const float r = nodeRadiusPx(c, n, i);
+    x = wheelCX + r * std::cos(a); y = wheelCY + r * std::sin(a); }
+int nodeAt(const float *c, int n, float lx, float ly)
+{   float best = 10.f; int idx = -1;
+    for (int i = 1; i <= n; i++)
+    {   float x, y; nodePos(c, n, i, x, y);
+        const float d = std::hypot(lx - x, ly - y);
+        if (d < best) { best = d; idx = i; }
+    }
+    return idx; }
+float clampTone(const float *c, int n, int i, float v)
+{   const float lo = (i > 1 ? c[i - 2] : 0.f) + 1.f;
+    const float hi = (i < n ? c[i] : 1e9f) - 1.f;
+    if (v < lo) v = lo; if (v > hi) v = hi;
+    return v; }
 int hitControl(float lx, float ly)
 {
     if (ly >= btnY && ly <= btnY + btnH)
