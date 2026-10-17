@@ -23,6 +23,7 @@
 #include <ctime>
 
 #include "gui_core.hpp"
+#include "p5_store.hpp"
 #include "muhammad_plugin.hpp"
 #include "p5_gui.hpp"
 
@@ -134,6 +135,49 @@ void afterPress(Ctx &c)
     {   XSetInputFocus(c.dpy, c.win, RevertToParent, CurrentTime); c.needFocus = false; }
 }
 
+static const char *gModeSource = "default";
+static bool gLearnedFloat = false;   // one-shot per process
+static bool modeFloat()
+{
+    // Persistent user control: <store>/gui.conf containing a line
+    //   mode=float   (or mode=embed).   The store dir is the plugin's own
+    // territory (Documents/Muhammad Synth) - no environment has to survive
+    // Bitwig's plugin-host process fork, and the file is something the
+    // plugin can also WRITE for itself (see autoLearnFloat).
+    // Env P5_GUI_MODE stays as the developer override; explicit config wins.
+    std::string conf;
+    {   const std::string dir = p5store::baseDir();
+        if (!dir.empty()) conf = dir + "/gui.conf";   }
+    FILE *f = conf.empty() ? nullptr : std::fopen(conf.c_str(), "rb");
+    if (f)
+    {   char ln[128]; bool fl = false;
+        while (std::fgets(ln, sizeof ln, f))
+            if (!std::strncmp(ln, "mode=float", 10)) { fl = true; break; }
+        std::fclose(f);
+        gModeSource = fl ? "config" : "config(embed)";
+        return fl;
+    }
+    const char *m = std::getenv("P5_GUI_MODE");
+    if (m && !std::strcmp(m, "float")) { gModeSource = "env"; return true; }
+    if (m && !std::strcmp(m, "embed")) { gModeSource = "env(embed)"; return false; }
+    gModeSource = "default";
+    return false;
+}
+static void autoLearnFloat()
+{
+    // The host just PROVED it owns the embedded slot (never asked our size,
+    // answered every ask, shrunk nothing). Record that verdict persistently
+    // so the NEXT session floats with zero user action; log it loudly.
+    const std::string dir = p5store::baseDir();
+    if (dir.empty()) return;
+    const std::string conf = dir + "/gui.conf";
+    if (FILE *f = std::fopen(conf.c_str(), "wb"))
+    {   std::fprintf(f, "# Muhammad GUI window mode\nmode=float\n");
+        std::fclose(f);
+        std::fprintf(stderr, "[p5gui] host proved it owns the embedded slot; wrote %s -> next session floats\n", conf.c_str());
+    }
+}
+
 void pump(Ctx &c)
 {
     bool dirty = false;
@@ -154,6 +198,9 @@ void pump(Ctx &c)
             // trim the ancestor's excess ourselves. Budget 2, re-armed by
             // any configure.
             const long wantH = (long)(pa.width * p5ui::kPanelH / p5ui::kPanelW);
+            if (c.topTries >= 10 && (pa.height > wantH + 40) && !c.getSizeCalls &&
+                !gLearnedFloat)
+            {   gLearnedFloat = true; autoLearnFloat(); }
             if (pa.height > wantH + 40 && c.topTries < 10 &&
                 c.trimIneffective < 2 && coreShouldTrimNow(c, t))
             {
@@ -504,11 +551,7 @@ bool gui_is_api_supported(const clap_plugin_t *, const char *api, bool is_floati
     (void)is_floating;   // BOTH embedded and floating X11 windows are supported
     return api && !std::strcmp(api, CLAP_WINDOW_API_X11);
 }
-static bool modeFloat()
-{
-    const char *m = std::getenv("P5_GUI_MODE");
-    return m && !std::strcmp(m, "float");
-}
+
 bool gui_get_preferred_api(const clap_plugin_t *, const char **api, bool *is_floating)
 {
     // Default embedded (polite citizen). P5_GUI_MODE=float declares a
@@ -538,9 +581,10 @@ bool gui_create(const clap_plugin_t *p, const char *api, bool is_floating)
     if (auto *cc = ctxFrom(p))
     {   if (api) std::strncpy(cc->guiApi, api, sizeof cc->guiApi - 1);
         cc->floating = is_floating || modeFloat();  // env can FORCE float
-        std::fprintf(stderr, "[p5gui] create mode: %s\n",
+        cc->modeSource = cc->floating ? gModeSource : "embedded";
+        std::fprintf(stderr, "[p5gui] create mode: %s (source: %s)\n",
                      cc->floating ? (is_floating ? "FLOATING" : "FLOATING (forced)")
-                                  : "embedded"); }
+                                  : "embedded", gModeSource); }
     return true;
 }
 void gui_destroy(const clap_plugin_t *p)

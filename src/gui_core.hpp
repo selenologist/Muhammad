@@ -99,6 +99,7 @@ struct GuiCore
     // record the api the host asked for.
     bool (*copyText)(const char *text) = nullptr;
     char guiApi[8] = "none";
+    const char *modeSource = "embedded";      // who chose embed/float
     char hostName[72] = "unknown host";       // WM_CLASS / window title / frontmost app
     int  askLastRet = -1;
     long askNextMs = 0;                       // ask throttle (1.2 s)

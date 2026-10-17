@@ -392,14 +392,24 @@ so the layers are:
    embedded host that owns its window owns it.
 3. Chassis paint: whatever area the host insisted on is drawn as designed
    chassis (gradient well + MUHAMMAD wordmark), never host-black.
-4. **For stubborn hosts: `P5_GUI_MODE=float`.** The plugin then declares —
-   and if need be forces — the CLAP *floating window* mode: a
-   plugin-owned, WM-managed top-level at the exact panel aspect with
+4. **For stubborn hosts: floating mode.** `mode=float` in
+   `Documents/Muhammad Synth/gui.conf` — the plugin's own store dir, so no
+   environment variable has to survive Bitwig's plugin-host process model —
+   makes the plugin declare (and force) the CLAP *floating window* mode:
+   a plugin-owned, WM-managed top-level at the exact panel aspect with
    `WM_NORMAL_HINTS` locking drags to the true ratio, MinSize 520x139,
    transient-for the host window, and a `WM_DELETE` handler that calls
-   `hostGui->closed()` so Bitwig's device state stays in sync. Bitwig may
-   ignore `get_preferred_api`; mode=float overrides its embedded request
+   `hostGui->closed()` so the host's device state stays in sync. Bitwig may
+   ignore `get_preferred_api`; config mode overrides its embedded request
    entirely (set_parent is absorbed as the transient anchor only).
+   `mode=embed` forces the polite path; the env `P5_GUI_MODE` stays as a
+   developer override below the config in precedence.
+   And nobody has to know any of this: if a session proves the host owns
+   the slot (ask budget spent, trim budget spent, and `get_size` was never
+   called), the plugin WRITES `gui.conf mode=float` for the next session by
+   itself, with the verdict on stderr and the decision source printed on
+   the debug page (`mode src ...`). X11-only for now; win32/mac float modes
+   follow when those platforms get runtime testers.
 
 Clicking the status/build strip (bottom edge, right side) opens the
 Surge-style **DEBUG INFO page**: build stamp, gui api + host clap.gui

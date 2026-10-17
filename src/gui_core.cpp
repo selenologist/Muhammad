@@ -908,9 +908,9 @@ void buildDebugText(GuiCore &c)
             if (x) en += std::snprintf(exts + en, sizeof exts - (size_t)en, "%s%s", en ? " " : "", kProbe[q] + 5); }
         line("host ext: %.150s", exts[0] ? exts : "(none)");
     }
-    line("gui: api %s  clap.gui svc %s  timer %s  scale %.2f",
+    line("gui: api %s  clap.gui svc %s  timer %s  scale %.2f  mode src %s",
          c.guiApi, c.hostGui ? "present" : "absent",
-         c.timerRegistered ? "registered" : "none", c.scale);
+         c.timerRegistered ? "registered" : "none", c.scale, c.modeSource);
     line("negotiation: asks %d/3 %s  top-trim %d/10 give-up %d  chassis %d",
          c.totalAsks,
          c.askLastRet < 0 ? "none" : (c.askLastRet ? "ACCEPTED" : "REFUSED"),
