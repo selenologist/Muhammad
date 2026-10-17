@@ -395,6 +395,15 @@ into a `.clap` bundle.
 executes the Linux test suite + golden images there, and publishes a GitHub
 Release with all artifacts when a `v*` tag is pushed.
 
+## Dev loop: tools/dev_install.sh
+
+`./tools/dev_install.sh` rebuilds and BARE-overwrites `~/.clap/muhammad.clap`
+on the inode a live Bitwig has mapped — its plugin host faults (SIGBUS) on the
+next code-page touch and Bitwig respawns it onto the new build. That crash
+IS the hot-reload: use it while iterating, never while performing. Normal
+installs keep the polite atomic `cp .new + mv -T` (no fault, restart to pick
+it up).
+
 ## Window sizing & floating mode & debug page (v1.13.3)
 
 Hosts hand out slots that do not match the panel aspect. What Bitwig 5.0.4
@@ -422,7 +431,10 @@ so the layers are:
    `Documents/Muhammad Synth/gui.conf` — the plugin's own store dir, so no
    environment variable has to survive Bitwig's plugin-host process model —
    makes the plugin declare (and force) the CLAP *floating window* mode:
-   a plugin-owned, WM-managed top-level at the exact panel aspect with
+   a plugin-owned, WM-managed top-level that ASKS SMALL — it opens at the
+   device-view width (1052 px, exact panel aspect), not an oversized slab, and
+   every hand-made resize is remembered in the same gui.conf (`w=`/`h=` lines)
+   so the window comes back the size you left it. With 
    `WM_NORMAL_HINTS` locking drags to the true ratio, MinSize 520x139,
    transient-for the host window, and a `WM_DELETE` handler that calls
    `hostGui->closed()` so the host's device state stays in sync. Bitwig may

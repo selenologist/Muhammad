@@ -141,6 +141,18 @@ void afterPress(Ctx &c)
 static const char *gModeSource = "default";
 static bool gLearnedFloat = false;   // one-shot per process
 static bool gExplicitEmbed = false;  // gui.conf said mode=embed: beats policy
+static uint32_t gFloatW = 0, gFloatH = 0;    // remembered FLOAT-window size (0 = unset)
+
+// gui.conf is the plugin's own territory; float mode also stores the
+// window's CURRENT size so a hand-made window comes back the same tomorrow.
+static void writeGuiConfFloat(uint32_t w, uint32_t h)
+{   const std::string dir = p5store::baseDir();
+    if (dir.empty()) return;
+    if (FILE *f = std::fopen((dir + "/gui.conf").c_str(), "wb"))
+    {   std::fprintf(f, "# Muhammad GUI window mode\nmode=float\nw=%u\nh=%u\n", w, h);
+        std::fclose(f);
+    }
+}
 static bool modeFloat()
 {
     // Persistent user control: <store>/gui.conf containing a line
@@ -156,8 +168,13 @@ static bool modeFloat()
     if (f)
     {   char ln[128]; bool fl = false;
         while (std::fgets(ln, sizeof ln, f))
-            if (!std::strncmp(ln, "mode=float", 10)) { fl = true; break; }
+        {   if (!std::strncmp(ln, "mode=float", 10)) fl = true;
+            else if (!std::strncmp(ln, "w=", 2)) gFloatW = (uint32_t)std::strtoul(ln + 2, nullptr, 10);
+            else if (!std::strncmp(ln, "h=", 2)) gFloatH = (uint32_t)std::strtoul(ln + 2, nullptr, 10);
+        }
         std::fclose(f);
+        if (gFloatW < 400 || gFloatW > 4096) gFloatW = 0;   // sanity: a real panel
+        if (gFloatH < 110 || gFloatH > 1536) gFloatH = 0;   // width, any era
         if (!fl) gExplicitEmbed = true;
         gModeSource = fl ? "config" : "config(embed)";
         return fl;
@@ -314,6 +331,12 @@ void pump(Ctx &c)
                 {
                     c.w = (uint32_t)ev.xconfigure.width;
                     c.h = (uint32_t)ev.xconfigure.height;
+                    if (c.floating)          // the hand-made window is the user's
+                    {   static long gLastConfWrite = 0;   // answer; remember it
+                        const long t = nowMs();           // (throttled: a drag is
+                        if (t - gLastConfWrite > 900)     // a storm of configures)
+                        {   gLastConfWrite = t; writeGuiConfFloat(c.w, c.h); }
+                    }
                     // Landed at (or near) the panel aspect - the goal state.
                     // Re-arm only the TRIM side; the ask cap is lifetime (a
                     // host may only touch aspect transiently during setup and
@@ -460,7 +483,11 @@ bool setupFloating(Ctx &c)
     swa.colormap = XCreateColormap(c.dpy, DefaultRootWindow(c.dpy), vi->visual, AllocNone);
     swa.event_mask = ExposureMask | ButtonPressMask | ButtonReleaseMask | PointerMotionMask |
                      StructureNotifyMask | KeyPressMask;
-    const uint32_t w = (uint32_t)(p5ui::kPanelW * 0.75 * (c.scale > 0.0 ? c.scale : 1.0));
+    // ASK SMALL: the window opens at the device-view width (~1052) at exact
+    // panel aspect - not the oversized 0.75-scale slab. Whatever the user
+    // drags it to is remembered (gui.conf) and asked for next time.
+    const uint32_t w = gFloatW ? gFloatW
+                   : (uint32_t)(1052.0 * (c.scale > 0.0 ? c.scale : 1.0));
     const uint32_t h = (uint32_t)(w * p5ui::kPanelH / p5ui::kPanelW);
     c.w = w; c.h = h;
     c.win = XCreateWindow(c.dpy, DefaultRootWindow(c.dpy), 0, 0, (int)w, (int)h, 0,
