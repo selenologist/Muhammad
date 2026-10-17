@@ -104,7 +104,8 @@ struct Ctx : GuiCore
     void trimWindowIfTall()
     {
         NSWindow *win = view.window;
-        if (!win || topTries >= 2) return;
+        if (!win || topTries >= 5 || !coreShouldTrimNow(*this, (long)([NSProcessInfo processInfo].systemUptime * 1000.0)))
+            return;
         const double sc = s();
         const long wantH = (long)(view.bounds.size.width * sc * p5ui::kPanelH / p5ui::kPanelW);
         const long curH  = (long)(view.bounds.size.height * sc + 0.5);

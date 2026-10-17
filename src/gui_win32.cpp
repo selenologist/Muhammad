@@ -324,11 +324,7 @@ void pump(Ctx &c)
             // the X11 shim; budget + throttle live in GuiCore).
             const int slotH = (int)(pr.bottom - pr.top);
             const long wantH = (long)((long)(pr.right - pr.left) * p5ui::kPanelH / p5ui::kPanelW);
-            const bool askedAndRefused = !c.hostGui || !c.hostGui->request_resize ||
-                                         c.totalAsks >= 3 || c.askLastRet == 0 ||
-                                         (c.askLastRet == 1 && c.acceptedAtMs != 0 &&
-                                          (long)GetTickCount() - c.acceptedAtMs > 2500);
-            if (slotH > wantH + 40 && c.topTries < 2 && askedAndRefused)
+            if (slotH > wantH + 40 && c.topTries < 5 && coreShouldTrimNow(c, (long)GetTickCount()))
             {   const long t = (long)GetTickCount();
                 if (t >= c.topNextMs)
                 {   c.topNextMs = t + 1500;

@@ -106,7 +106,9 @@ struct GuiCore
                                               // that accepts then re-asserts the
                                               // oversized slot must not be asked
                                               // forever (the 1 Hz flicker)
-    long acceptedAtMs = 0;                    // stamp of the last ACCEPTED ask                     // last request_resize verdict (1/0/-1 none)
+    long acceptedAtMs = 0;                    // stamp of the last ACCEPTED ask
+    bool giveUpOnHost = false;                // REFUSED seen; cleared when the
+                                              // window finally lands at aspect                     // last request_resize verdict (1/0/-1 none)
     int  topTries = 0;                        // top-level (host window) shrink budget
     long topNextMs = 0;
     char dbg[1200] = {};
@@ -131,6 +133,7 @@ bool onChar(GuiCore &c, unsigned int ch);                // true = inserted (tex
 // 1 s politeness window.
 bool coreMirrorSlot(GuiCore &c, int slotW, int slotH, uint32_t &outW, uint32_t &outH,
                     long nowMs);
+bool coreShouldTrimNow(GuiCore &c, long nowMs);
 void coreAncestorAsk(GuiCore &c, uint32_t parW, uint32_t parH,
                      uint32_t ancW, uint32_t ancH, long nowMs);
 

@@ -822,7 +822,7 @@ bool coreMirrorSlot(GuiCore &c, int slotW, int slotH, uint32_t &outW, uint32_t &
     // slot == current size, and an early-out before the ask meant we never
     // asked and never trimmed — the "rr 0/3, giant black window" deadlock.
     if (slotH > (long)wantH + 20 && c.hostGui && c.hostGui->request_resize &&
-        c.totalAsks < 3 && nowMs >= c.askNextMs)
+        c.totalAsks < 3 && nowMs >= c.askNextMs && !c.giveUpOnHost)
     {
         c.askNextMs = nowMs + 1200;
         const bool ok = c.hostGui->request_resize(c.plugin->host, (uint32_t)slotW, wantH);
@@ -832,6 +832,9 @@ bool coreMirrorSlot(GuiCore &c, int slotW, int slotH, uint32_t &outW, uint32_t &
         if (ok) c.acceptedAtMs = nowMs;
         std::fprintf(stderr, "[p5gui] request_resize(%d,%u) -> host %s (ask %d/3)\n",
                      slotW, wantH, ok ? "ACCEPTED" : "REFUSED", c.totalAsks);
+        // A host may answer REFUSED (spec-legal: "rejected"). Treat any
+        // answered ask that left us oversized as non-cooperative.
+        if (!ok) c.giveUpOnHost = true;
     }
 
     if ((uint32_t)slotW == c.w && (uint32_t)slotH == c.h) return false;
@@ -861,12 +864,12 @@ void buildDebugText(GuiCore &c)
     {   const std::string cur = P->currentFile();
         name = cur.empty() ? (const char *)P->engine.patch().raw + p5::P5_NAME : cur.c_str(); }
     line("Muhammad build: %s", P5_BUILD_INFO);
-    {   auto *hh = P->host;
-        line("host: %.40s%s%s%.20s%s%s%.24s  pid %ld",
-             (hh && hh->name) ? hh->name : "?",
-             (hh && hh->vendor) ? " / " : "", (hh && hh->vendor) ? hh->vendor : "",
-             (hh && hh->version) ? " v" : "", (hh && hh->version) ? hh->version : "",
-             c.hostName, (long)getpid());
+    {   const clap_host_t *hh = P->host;
+        const char *nm = (hh && hh->name) ? hh->name : "?";
+        const char *vd = (hh && hh->vendor) ? hh->vendor : "";
+        const char *vr = (hh && hh->version) ? hh->version : "";
+        line("host: %.40s%s%.20s v%.16s  wm[%.24s]  pid %ld",
+             nm, *vd ? " / " : "", vd, vr, c.hostName, (long)getpid());
     }
     {   static const char *const kProbe[] = { CLAP_EXT_GUI, CLAP_EXT_TIMER_SUPPORT, CLAP_EXT_LOG,
             CLAP_EXT_LATENCY, CLAP_EXT_AUDIO_PORTS_CONFIG, CLAP_EXT_NOTE_NAME, CLAP_EXT_STATE };
@@ -880,10 +883,11 @@ void buildDebugText(GuiCore &c)
     line("gui: api %s  clap.gui svc %s  timer %s  scale %.2f",
          c.guiApi, c.hostGui ? "present" : "absent",
          c.timerRegistered ? "registered" : "none", c.scale);
-    line("negotiation: rr %d/3 ask %s  top-trim %d/2  chassis %d",
-         c.resizeRequests,
-         c.askLastRet < 0 ? "not-asked" : (c.askLastRet ? "ACCEPTED" : "REFUSED"),
-         c.topTries, (int)((float)c.h > (float)c.w * p5ui::kPanelH / p5ui::kPanelW + 3.f));
+    line("negotiation: asks %d/3 %s  top-trim %d/5 give-up %d  chassis %d",
+         c.totalAsks,
+         c.askLastRet < 0 ? "none" : (c.askLastRet ? "ACCEPTED" : "REFUSED"),
+         c.topTries, (int)c.giveUpOnHost,
+         (int)((float)c.h > (float)c.w * p5ui::kPanelH / p5ui::kPanelW + 3.f));
     line("window: win %ux%u  parent %ux%u  ancestor %ux%u",
          c.w, c.h, c.parW, c.parH, c.ancW, c.ancH);
     line("audio: sr %.0f  block %u  oversample %d  polyphony %d  live %u  simd %s",
@@ -897,6 +901,17 @@ void buildDebugText(GuiCore &c)
          c.modal, c.tuneFocus, c.wheelN, c.pickerTab, c.pickerPage);
     line("store: %s", p5store::baseDir().c_str());
     if (n < (int)sizeof c.dbg - 1) c.dbg[n] = 0;
+}
+
+bool coreShouldTrimNow(GuiCore &c, long nowMs)
+{
+    // host answered REFUSED, ran out of asks, or ACCEPTED and then kept the
+    // oversized slot for > 2 s (Bitwig-style lie). Re-armed only when a real
+    // configure lands us back at the aspect (giveUpOnHost cleared by shim).
+    if (c.giveUpOnHost) return true;
+    if (c.totalAsks >= 3) return true;
+    if (c.askLastRet == 1 && c.acceptedAtMs != 0 && nowMs - c.acceptedAtMs > 2000) return true;
+    return false;
 }
 
 void coreAncestorAsk(GuiCore &c, uint32_t parW, uint32_t parH,

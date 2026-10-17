@@ -153,11 +153,7 @@ void pump(Ctx &c)
             // trim the ancestor's excess ourselves. Budget 2, re-armed by
             // any configure.
             const long wantH = (long)(pa.width * p5ui::kPanelH / p5ui::kPanelW);
-            const bool askedAndRefused = !c.hostGui || !c.hostGui->request_resize ||
-                                         c.totalAsks >= 3 || c.askLastRet == 0 ||
-                                         (c.askLastRet == 1 && c.acceptedAtMs != 0 &&
-                                          t - c.acceptedAtMs > 2500);   // accepted but never honoured
-            if (pa.height > wantH + 40 && c.topTries < 2 && askedAndRefused)
+            if (pa.height > wantH + 40 && c.topTries < 5 && coreShouldTrimNow(c, t))
             {
                 if (t >= c.topNextMs)
                 {
@@ -240,7 +236,8 @@ void pump(Ctx &c)
                     // reset our ask budget forever (Bitwig's flicker loop).
                     const long wantH2 = (long)ev.xconfigure.width * p5ui::kPanelH / p5ui::kPanelW;
                     if (labs((long)ev.xconfigure.height - wantH2) <= 40)
-                    {   c.resizeRequests = 0; c.topTries = 0; c.totalAsks = 0; c.acceptedAtMs = 0; }
+                    {   c.resizeRequests = 0; c.topTries = 0; c.totalAsks = 0;
+                        c.acceptedAtMs = 0; c.giveUpOnHost = false; }
                     dirty = true;
                 }
                 break;
