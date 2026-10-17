@@ -374,6 +374,7 @@ void Plugin::savePatchNamed(const std::string &name)
     loadTag_ = "saved";
     const std::string n = p5store::sanitize(name);
     if (n.empty()) return;
+    engine.commitWheelToPatch();          // wheel position IS the saved depth
     p5::Patch p = engine.patch();
     std::memset(p.raw + p5::P5_NAME, ' ', p5::P5_NAME_LEN);
     const size_t len = n.size() < p5::P5_NAME_LEN ? n.size() : p5::P5_NAME_LEN;
@@ -594,6 +595,12 @@ static void plugin_destroy(const clap_plugin_t *p)
 {
     auto *s = fromPlugin(p);
     if (!s) return;
+    // Self-defense: if the host deletes the device WITHOUT destroying the
+    // GUI extension first (Bitwig: engine crash on instance delete), the
+    // Ctx and its REGISTERED HOST TIMER would outlive the plugin - the
+    // next timer dispatch would hit freed memory. kGui.destroy is safe to
+    // call here: it early-outs once (and only once) a live Ctx exists.
+    if (s->gui && kGui.destroy) kGui.destroy(p);
     delete s->self;
     delete s;
 }

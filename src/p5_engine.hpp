@@ -110,6 +110,14 @@ public:
     void wheelSeed() { if (pcMode_ && !wheelTaken_) mw_ = valueOf(P5_LFO_INITIAL); }
     void wheelReset() { wheelTaken_ = false; if (pcMode_) wheelSeed(); else mw_ = 0; }
     void setModWheel(int v) { if (pcMode_) wheelTaken_ = true; mw_ = i_clamp(v, 0, 127); }
+    // A saved patch must sound the way it sounds. Once the real wheel has
+    // taken over (pc mode), the wire INITIAL byte - the ONLY thing that
+    // persists - is stale (typically the 0 it loads at), so save-without-
+    // this wrote a silent wheel: depth "zeroed until you touch it again".
+    // Sync the heard position into the byte before any serialization.
+    void commitWheelToPatch()
+    {   if (pcMode_ && wheelTaken_) editRaw(P5_LFO_INITIAL, mw_); }
+    int wheelPos() const { return mw_; }
     void setAftertouch(int v) { at_ = i_clamp(v, 0, 127); }
     void setOverlay(int i, int v) { if (i >= 0 && i < 8) e_[i] = (int16_t)v; }
     int overlay(int i) const { return e_[i]; }

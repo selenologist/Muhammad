@@ -238,6 +238,23 @@ int main()
         check("19-EDO key79 wraps to octave (+1200c over 19 ET keys = -700c)", devW[79] == -112);
     }
 
+    // ---- wheel depth persistence (pc mode) ----
+    // Saving must capture the wheel POSITION, not the stale pre-takeover
+    // INITIAL byte: the old bug saved silent patches ("depth zeroed until I
+    // touch the wheel again"). commitWheelToPatch fixes the file truth.
+    check("wheel commit: taken writes position", [&]{
+        p5::Engine en; en.setPcMode(true); en.editRaw(p5::P5_LFO_INITIAL, 0);
+        en.setModWheel(90); en.commitWheelToPatch();
+        return en.rawValue(p5::P5_LFO_INITIAL) == 90; }());
+    check("wheel commit: untouched keeps patch byte", [&]{
+        p5::Engine en; en.setPcMode(true); en.editRaw(p5::P5_LFO_INITIAL, 33);
+        en.commitWheelToPatch();
+        return en.rawValue(p5::P5_LFO_INITIAL) == 33; }());
+    check("wheel commit: no pc mode never commits", [&]{
+        p5::Engine en; en.editRaw(p5::P5_LFO_INITIAL, 40);
+        en.setModWheel(90); en.commitWheelToPatch();
+        return en.rawValue(p5::P5_LFO_INITIAL) == 40; }());
+
     std::printf("%s\n", fails ? "MPE/TUNING: FAILED" : "mpe/tuning: all ok");
     return fails ? 1 : 0;
 }

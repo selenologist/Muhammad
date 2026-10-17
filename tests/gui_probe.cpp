@@ -70,10 +70,22 @@ int main(int argc, char **argv)
     if (ready) { std::fprintf(ready, "%lu\n", (unsigned long)parent); fclose(ready); }
 
     const int frames = argc > 2 ? atoi(argv[2]) : 20000;   // default ~5 min
+    const int killAt = getenv("P5_PROBE_KILL") ? atoi(getenv("P5_PROBE_KILL")) : -1;
     for (int f = 0; f < frames; f++)
     {
         if (timer) timer->on_timer(plugin, 0);
         usleep(16000);
+        if (killAt >= 0 && f == killAt)
+        {   // Bitwig device-delete emulation: NO gui hide/destroy calls -
+            // the plugin must tidy its own GUI + registered timer inside
+            // deactivate/destroy, or the host dispatches into freed memory.
+            std::printf("probe: deleting instance under a live gui\n");
+            plugin->deactivate(plugin);
+            plugin->destroy(plugin);
+            for (int q = 0; q < 60; q++) usleep(16000);   // let anything land
+            std::printf("probe kill: survived\n");
+            return 0;
+        }
     }
     gui->hide(plugin);
     gui->destroy(plugin);

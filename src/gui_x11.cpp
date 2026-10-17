@@ -392,6 +392,26 @@ void pump(Ctx &c)
     // asking the host to shrink it would fight the ancestor-grow request)
 }
 
+// ---- X protocol error defense ------------------------------------------------
+// A host that reclaims our windows (device delete, layout teardown) can leave
+// every LATER X call of ours aimed at dead XIDs. Xlib's DEFAULT error handler
+// calls exit() - which is precisely "Bitwig's audio engine crashes when we
+// delete the instance". We install a handler that IGNORES errors on OUR
+// windows only, chaining everything else to whatever the host had installed,
+// and restore theirs at gui_destroy.
+static Ctx *gActiveCtx = nullptr;
+static int (*gPrevXErr)(Display *, XErrorEvent *) = nullptr;
+static int x11ErrorHandler(Display *d, XErrorEvent *e)
+{
+    Ctx *c = gActiveCtx;
+    if (c && (e->resourceid == (unsigned long)c->win ||
+              e->resourceid == (unsigned long)c->parent))
+    {   char b[96]; XGetErrorText(d, e->error_code, b, sizeof b);
+        std::fprintf(stderr, "[p5gui] X11 error on our window ignored: %s\n", b);
+        return 0; }
+    return gPrevXErr ? gPrevXErr(d, e) : 0;
+}
+
 // ---- lifecycle ---------------------------------------------------------------
 
 void teardown(Ctx &c)
@@ -592,6 +612,9 @@ bool gui_create(const clap_plugin_t *p, const char *api, bool is_floating)
     {   if (api) std::strncpy(cc->guiApi, api, sizeof cc->guiApi - 1);
         cc->floating = is_floating || modeFloat();  // env can FORCE float
         cc->modeSource = cc->floating ? gModeSource : "embedded";
+            cc->modeSource = cc->floating ? gModeSource : "embedded";
+        gActiveCtx = static_cast<Ctx *>(cc);
+        if (!gPrevXErr) gPrevXErr = XSetErrorHandler(x11ErrorHandler);
         std::fprintf(stderr, "[p5gui] create mode: %s (source: %s)\n",
                      cc->floating ? (is_floating ? "FLOATING" : "FLOATING (forced)")
                                   : "embedded", gModeSource); }
@@ -606,6 +629,9 @@ void gui_destroy(const clap_plugin_t *p)
     teardown(c);
     delete &c;
     s->gui = nullptr;
+    if (gActiveCtx == &c)
+    {   gActiveCtx = nullptr;
+        XSetErrorHandler(gPrevXErr); gPrevXErr = nullptr; }
 }
 bool gui_set_scale(const clap_plugin_t *p, double scale)
 {
