@@ -19,12 +19,17 @@ for spec in "init 1560" "pad 936" "bass 1560" "trim 1560" "tune 1560" "debug 156
         if [ "$#" -ge 4 ]; then tag=$4; fi
     fi
     out=$(mktemp --suffix=.png)
-    "$bin" "$out" "$state" "$w" "$h" 2>/dev/null
+    "$bin" "$out" "$state" "$w" "$h"   # stderr stays visible: a silent EGL
+    # failure was un-debuggable in CI (annotated only as exit 1)
     golden="$root/tests/golden/panel-$state-$tag.png"
     if [ ! -f "$golden" ]; then
         echo "GOLDEN-MISSING $golden (baseline run: cp $out $golden)"; fail=1
     else
-        ae=$(compare -metric AE -fuzz 2% "$golden" "$out" null: 2>&1 | head -1)
+        # `compare` exits 1 when ANY pixel differs - under set -e/pipefail that
+        # used to ABORT the loop at the first nonzero-diff golden (the CI
+        # runner's llvmpipe differs from GPU baselines by dozens of px: legal,
+        # under tolerance, but fatal to the script). Capture, then judge.
+        ae=$(compare -metric AE -fuzz 2% "$golden" "$out" null: 2>&1 | head -1) || true
         total=$(( w * h ))
         pct=$(python3 -c "print(f'{${ae:-0} / $total * 100:.3f}%')" 2>/dev/null || echo "ERR")
         ok=$(python3 -c "print(1 if float('${pct%\%}') <= 0.5 else 0)" 2>/dev/null || echo 0)

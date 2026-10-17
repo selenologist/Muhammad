@@ -1,5 +1,7 @@
 # Muhammad
 
+**Version: 0.1-alpha**
+
 *Muhammad — a polyphonic subtractive synth; its engine is ported from the Melodee firmware to CLAP.*
 
 A port of the **PROPHET** engine from [Melodee](https://keremimo.github.io/melodee/)
@@ -127,8 +129,17 @@ its A/B build standalone.
 * Mono/UNISON/MONO/LEGATO modes come from the patch's UNISON byte, and the
   unison phase-seed LCG is the plugin's own counter (the firmware's is a
   process-static; a fresh engine restarts the sequence, the firmware's does not).
-* Output: mono, copied to both ports; default trim 0.5 (a stacked full-velocity
-  chord peaks near 1.7 raw, so the port stays inside 0 dBFS), param 80.
+* Output: stereo, but at PAN WIDTH 0 (param 85) every voice sits centre and
+  the left port is copied to the right - effectively mono. Opening PAN WIDTH
+  spreads the 8 fixed voice slots across the field (each voice pans AWAY from
+  a side, never through it). Default trim 0.5 (a stacked full-velocity chord
+  peaks near 1.7 raw, so the port stays inside 0 dBFS), param 80.
+* Boot default: "Peace Be Upon Him" - the recorded patch is EMBEDDED in the
+  binary (src/p5_default.hpp, tools/gen_default_hdr.py), and the live file in
+  the store wins over the snapshot wherever it exists, so every platform's
+  first load is the same sound.
+* The build never consults any firmware checkout; validation harnesses that
+  compare against firmware renders run from the firmware's own tree by hand.
 
 ## License
 
@@ -220,7 +231,7 @@ one of raw params 0..56 now has a panel control. Host-only by necessity:
 PRESS>× need aftertouch, LFO INIT is wheel-state, BEND RANGE/PRIORITY were
 panel globals on the original, EDIT overlays ride params 64..71.
 
-## Preset picker & recall (v1.3-picker)
+## Preset picker & recall
 
 - **PRESET (programmer)** opens a mouse picker — FACTORY | USER tabs, paged
   rows (default INIT, bare INIT, then all 200 Sequential programs / your saved
@@ -257,7 +268,7 @@ panel globals on the original, EDIT overlays ride params 64..71.
   amber = HALF (x sqrt2/oct), red = FULL (x2/oct) — matching the engine's
   quantisation exactly.
 
-## Voice trim, DRIFT, and Rev4 MIDI CC (v1.11)
+## Voice trim, DRIFT, and Rev4 MIDI CC
 
 **EDIT -> V/OCT TRIM page.** The EDIT button opens a modal calibration page:
 **per oscillator** — 8 voice rows x 4 rails (A SCALE, A OFFSET, B SCALE,
@@ -315,7 +326,7 @@ GLIDE, CC59/60/61/62/63 poly-mod, CC70 bend range, CC71 retrigger, CC73
 cutoff, CC103-110 envelopes, CC112-114 unison, CC116-119 wave switches,
 ...). Unassigned CCs are ignored. NRPN uses the same numbers, if wanted.
 
-## Microtuning & MPE (v1.12.0-tunebend)
+## Microtuning & MPE
 
 **TUNING** — white button left of OVERSAMPLE opens a microtuning editor (modal
 like EDIT): a C3–B3 window of the per-key deviation table (frequency and cents
@@ -404,7 +415,7 @@ IS the hot-reload: use it while iterating, never while performing. Normal
 installs keep the polite atomic `cp .new + mv -T` (no fault, restart to pick
 it up).
 
-## Window sizing & floating mode & debug page (v1.13.3)
+## Window sizing & floating mode & debug page
 
 Hosts hand out slots that do not match the panel aspect. What Bitwig 5.0.4
 on X11 actually does (measured via the debug page, not assumed): it never
@@ -460,7 +471,7 @@ owner with TARGETS/UTF8_STRING serving, CF_UNICODETEXT on Windows,
 NSPasteboard on macOS). Click anywhere else or press Escape to close;
 the page is also a golden (`debug`).
 
-## Microtuning workstation (v1.13.0-scales)
+## Microtuning workstation
 
 The TUNING page is now a full editor, not just a file loader:
 
@@ -496,7 +507,7 @@ The TUNING page is now a full editor, not just a file loader:
   row on the right, always visible next to it. Session blob v9 persists dial
   tones, root, mask and walk flag alongside the deviation table.
 
-## Filter cutoff headroom & rail UX (v1.12.1-cut21k)
+## Filter cutoff headroom & rail UX
 
 The firmware's cutoff->g table spans 30 Hz..16 kHz over 128 indices and both
 kernels clamped modulation there: with the knob high, envelope, poly-mod and
@@ -514,7 +525,7 @@ arrow keys adjust the ringed (focused) rail by 0.1 st, Shift+arrows by 1.0 st;
 Left/Right move focus. Live-verified on Xvfb: 7.0 -> 7.1 -> 8.1 -> focus to
 DOWN -> 2.0.
 
-## The polar tuning wheel (v1.12.2-wheel)
+## The polar tuning wheel
 
 The TUNING page is Surge's RadialScaleGraph, ported to NanoVG: spokes divide
 the octave by degree count, each node's radius is its deviation from equal in
@@ -531,7 +542,7 @@ shaped wheel survives the session.
 
 ## Measurements log
 
-* v1.11: trim offset +16 measured +1.009 semitones; drift depth 127 walks
+* trim offset +16 measured +1.009 semitones; drift depth 127 walks
   audibly (engine determinism preserved: same seed -> same render); A/B stays
   bit-exact (reference regenerated with byte 37 excepted); damper hold/decay
   asserted in clap_smoke (`held 0.1.. / lift < 0.001`).

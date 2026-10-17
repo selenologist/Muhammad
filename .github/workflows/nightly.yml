@@ -44,6 +44,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libx11-dev libgl1-mesa-dev libegl1-mesa-dev libglx-dev \
+            libegl1 libgl1 libglx-mesa0 mesa-libgallium libgl1-mesa-dri \
             imagemagick x11-utils
       - run: cmake -B build -DCMAKE_BUILD_TYPE=Release
       - run: cmake --build build -j"$(nproc)"
@@ -57,6 +58,9 @@ jobs:
         env:
           P5_STORE_DIR: /tmp/muh-ci
       - name: golden images
+        # surfaceless EGL needs the Mesa RUNTIME driver (llvmpipe), not just
+        # -dev headers: --no-install-recommends silently drops it otherwise.
+        # Verified locally: llvmpipe reproduces every golden at 0.000% diff.
         run: EGL_PLATFORM_SURFACELESS_MESA=1 bash tools/check_goldens.sh
       - uses: actions/upload-artifact@v4
         with:

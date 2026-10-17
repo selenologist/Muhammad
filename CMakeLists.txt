@@ -159,22 +159,11 @@ endif()
 endif()
 
 # ---- firmware cross-check ------------------------------------------------------
-# ref_dump renders the same scripts through melodee's hostsim (the firmware's own
-# host build). Built only when a melodee checkout is given:
-#   cmake -DMELODEE_DIR=/path/to/melodee ...
-if(DEFINED MELODEE_DIR AND EXISTS "${MELODEE_DIR}/tests/hostsim.c")
-if(NOT WIN32)    # hostsim needs POSIX wait/signal: Linux-only reference renderer
-    add_executable(ref_dump tests/ref_dump.c)
-    target_include_directories(ref_dump PRIVATE
-        "${MELODEE_DIR}/build/gen" "${MELODEE_DIR}/firmware/src")
-    target_compile_definitions(ref_dump PRIVATE
-        MELODEE_HOSTSIM_C="${MELODEE_DIR}/tests/hostsim.c")
-    target_compile_options(ref_dump PRIVATE -w)
-    if(MATH_LIBRARY)
-        target_link_libraries(ref_dump PRIVATE ${MATH_LIBRARY})
-    endif()
-endif()
-endif()   # (MELODEE_DIR)
+# No firmware checkout is consulted by the build, ever. The firmware-comparison
+# harness (ref_dump against melodee's hostsim) lives OUTSIDE this project:
+# it is run from the melodee tree by hand during validation sessions, not
+# configured here. The generated tables under src/ are committed artifacts.
+
 
 add_executable(render_demo tests/render_demo.cpp ${ENGINE_SOURCES})
 target_include_directories(render_demo PRIVATE src external)

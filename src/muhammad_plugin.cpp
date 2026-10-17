@@ -2,6 +2,7 @@
 // CLAP plugin wrapper for the Muhammad engine (see muhammad_plugin.hpp).
 #include "muhammad_plugin.hpp"
 #include "p5_store.hpp"
+#include "p5_default.hpp"   // embedded boot patch (tools/gen_default_hdr.py)
 
 #include <cstdio>
 #include <cstdlib>
@@ -1104,9 +1105,14 @@ static void seedDefaultPatch(Plugin *s)
         s->curSrc_.kind = p5store::SourceKind::File; s->curSrc_.file = "Peace Be Upon Him";
         return;
     }
-    p5::Patch i; p5::patchInit(i); p5::patchDefaultName(i);
-    s->engine.setPatch(i);
-    s->markSource(0, 0, std::string());
+    // No recorded file here (fresh machine, CI artifact): boot on the
+    // EMBEDDED snapshot of the user's "Peace Be Upon Him" - every platform's
+    // first load is the same sound. tools/gen_default_hdr.py refreshes it.
+    p5::Patch e; std::memset(&e, 0, sizeof e);
+    std::memcpy(e.raw, pw::PW_DEFAULT_RAW, 134);
+    e.size = 133; e.model = 0x32; e.command = 3;
+    s->engine.setPatch(e);
+    s->markSource(1, -1, std::string("Peace Be Upon Him"));
     s->curSrc_.kind = p5store::SourceKind::Factory; s->curSrc_.factory = -2;
 }
 
