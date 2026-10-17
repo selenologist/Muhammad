@@ -242,36 +242,29 @@ void P5_SIMD_SYMBOL(Engine &e, uint32_t mask, int32_t *out, uint32_t n)
 
     alignas(32) int32_t lastArr[8];
 
-    // the per-lane halfband decimator state, 8 voices at a time (2x mode only)
-    V hax[6], hay[6], hbx[6], hby[6], hodd;
-    {
-        alignas(32) float t[8];
-        for (int j = 0; j < 6; j++) {
-            for (int q = 0; q < 8; q++) t[q] = e.hb_[q].ax[j]; hax[j] = ld(t);
-            for (int q = 0; q < 8; q++) t[q] = e.hb_[q].ay[j]; hay[j] = ld(t);
-            for (int q = 0; q < 8; q++) t[q] = e.hb_[q].bx[j]; hbx[j] = ld(t);
-            for (int q = 0; q < 8; q++) t[q] = e.hb_[q].by[j]; hby[j] = ld(t);
-        }
-        for (int q = 0; q < 8; q++) t[q] = e.hb_[q].odd; hodd = ld(t);
+    // OS-rate voice mix staging (float, quantised once after the summing).
+    // One decimator for the whole mix now: no per-lane halfband state.
+    float stgL[2 * CTL_], stgR[2 * CTL_];
+    {   const int total = (int)(n * os);
+        for (int k = 0; k < total; k++) { stgL[k] = 0.0f; stgR[k] = 0.0f; }
     }
-    // hbDecim across lanes, identical arithmetic to p5_halfband.hpp's scalar form
-    auto hbDecimV = [&](V ev, V od) -> V {
-        V a = ev, b = hodd;
-        hodd = od;
-        for (int j = 0; j < 6; j++) {
-            V ya = add(hax[j], mul(spl(hbcoeff::A[j]), sub(a, hay[j])));
-            hax[j] = a; hay[j] = ya; a = ya;
-            V yb = add(hbx[j], mul(spl(hbcoeff::B[j]), sub(b, hby[j])));
-            hbx[j] = b; hby[j] = yb; b = yb;
-        }
-        return mul(add(a, b), spl(0.5f));
-    };
+    V gl0V = spl(1.0f), gl1V = spl(1.0f);
+    if (e.panOn_)
+    {   alignas(32) float g0[8], g1[8];
+        for (int j = 0; j < 8; j++)
+        {   g0[j] = (float)e.lanes_[j].panG[0] * (1.0f / 32768.0f);
+            g1[j] = (float)e.lanes_[j].panG[1] * (1.0f / 32768.0f); }
+        gl0V = ld(g0); gl1V = ld(g1);
+    }
 
     for (uint32_t i = 0; i < n; i++) {
         const V time = spl((float)i * (1.0f / CTL_));
         const V fe = add(parF[F_F0], mul(sub(parF[F_F1], parF[F_F0]), time));
         const V ae = add(parF[F_A0], mul(sub(parF[F_A1], parF[F_A0]), time));
-        V y0 = spl(0.0f), y1 = spl(0.0f);
+        // the VCA ramp and the int32 quantisation, identical to p5_samples
+        const V gain = mul(mul(ae, parF[F_AVEL]), add(spl(1.0f), mul(ampDriftN, spl(1.0f / 32768.0f))));
+        const V amp = mul(mul(add(parF[F_AMP0], mul(sub(parF[F_AMP1], parF[F_AMP0]), time)),
+                              spl(1.0f / 32768.0f)), laneLive);
         for (uint32_t o = 0; o < os; o++) {          // the firmware's P5_OVERSAMPLE loop
         const V lfo = spl(e.wheel_[i * os + o]), wheelPitch = spl(e.wheelPitch_[i * os + o]);
 
@@ -347,25 +340,35 @@ void P5_SIMD_SYMBOL(Engine &e, uint32_t mask, int32_t *out, uint32_t n)
         if (p[P5_WHEEL_FILTER]) fc = add(fc, mul(lfo, spl(112.0f)));
 
         const V y = filterCoreV(h, softclipV(x), fc, parF[F_K], parF[F_FG], curtis, tab);
-        if (o == 0u) y0 = y; else y1 = y;
-
+        const V vcaF = mul(mul(y, gain), amp);
+        h.fbPrev = add(h.fbPrev, mul(spl(kFbLpA), sub(vcaF, h.fbPrev)));  // 6 dB/oct pole at fs/4
+        if (os == 1u)                    // the firmware-identical path, untouched
+        {   VI last = simde_mm256_cvttps_epi32(mul(vcaF, spl(2.0f * VOICE_FS)));
+            simde_mm256_storeu_si256((simde__m256i *)lastArr, last);
+            if (e.panOn_)
+                for (int j = 0; j < 8; j++)
+                {   const int64_t sv = lastArr[j];
+                    out[i] += (int32_t)((sv * e.lanes_[j].panG[0]) >> 15);
+                    e.mixR_[i] += (int32_t)((sv * e.lanes_[j].panG[1]) >> 15); }
+            else
+                for (int j = 0; j < 8; j++) out[i] += lastArr[j];
         }
-        const V ysum = (os == 1u) ? y0 : hbDecimV(y0, y1);
-
-        // the VCA ramp and the int32 quantisation, identical to p5_samples
-        const V gain = mul(mul(ae, parF[F_AVEL]), add(spl(1.0f), mul(ampDriftN, spl(1.0f / 32768.0f))));
-        const V amp = mul(mul(add(parF[F_AMP0], mul(sub(parF[F_AMP1], parF[F_AMP0]), time)),
-                              spl(1.0f / 32768.0f)), laneLive);
-        h.fbPrev = mul(mul(ysum, gain), amp);          // the tap, pre-quantisation
-        VI last = simde_mm256_cvttps_epi32(mul(h.fbPrev, spl(2.0f * VOICE_FS)));
-        simde_mm256_storeu_si256((simde__m256i *)lastArr, last);
-        if (e.panOn_)
-            for (int j = 0; j < 8; j++)
-            {   const int64_t sv = lastArr[j];
-                out[i] += (int32_t)((sv * e.lanes_[j].panG[0]) >> 15);
-                e.mixR_[i] += (int32_t)((sv * e.lanes_[j].panG[1]) >> 15); }
         else
-            for (int j = 0; j < 8; j++) out[i] += lastArr[j];
+        {   alignas(32) float vb[8];
+            if (e.panOn_)
+            {   st(mul(vcaF, gl0V), vb);
+                for (int j = 0; j < 8; j++) stgL[i * 2u + o] += vb[j];
+                st(mul(vcaF, gl1V), vb);
+                for (int j = 0; j < 8; j++) stgR[i * 2u + o] += vb[j];
+            }
+            else
+            {   st(vcaF, vb);
+                for (int j = 0; j < 8; j++) stgL[i * 2u + o] += vb[j];
+            }
+            VI last = simde_mm256_cvttps_epi32(mul(vcaF, spl(2.0f * VOICE_FS)));
+            simde_mm256_storeu_si256((simde__m256i *)lastArr, last);  // release-fade memory
+        }
+        }
     }
 
     stu(h.phA, e.phaseA_); stu(h.phB, e.phaseB_);
@@ -373,21 +376,19 @@ void P5_SIMD_SYMBOL(Engine &e, uint32_t mask, int32_t *out, uint32_t n)
     st(h.tri, e.triangle_); st(h.syncTail, e.syncTail_);
     stu(h.noise, e.noise_);
     st(h.fbPrev, e.fbState_);
-    // store the decimator state back only for lanes that ran (the scalar kernel
-    // never touches an unmasked lane's state); lanes restart on note-on anyway
-    if (os > 1u) {
-        alignas(32) float t[8];
-        for (int j = 0; j < 6; j++) {
-            st(hax[j], t); for (int q = 0; q < 8; q++) if ((mask >> q) & 1u) e.hb_[q].ax[j] = t[q];
-            st(hay[j], t); for (int q = 0; q < 8; q++) if ((mask >> q) & 1u) e.hb_[q].ay[j] = t[q];
-            st(hbx[j], t); for (int q = 0; q < 8; q++) if ((mask >> q) & 1u) e.hb_[q].bx[j] = t[q];
-            st(hby[j], t); for (int q = 0; q < 8; q++) if ((mask >> q) & 1u) e.hb_[q].by[j] = t[q];
-        }
-        st(hodd, t); for (int q = 0; q < 8; q++) if ((mask >> q) & 1u) e.hb_[q].odd = t[q];
-    }
 
     for (int j = 0; j < 8; j++)
         if ((mask >> j) & 1u) e.lanes_[j].lastPcm = lastArr[j];
+
+    if (os != 1u)      // THE decimator: once, over the summed mix at OS rate
+    {   for (uint32_t i = 0; i < n; i++)
+        {   out[i] += (int32_t)(p5::hbDecim(e.hbMixL_, stgL[i * 2u], stgL[i * 2u + 1u])
+                               * (2.0f * VOICE_FS));
+            if (e.panOn_)
+                e.mixR_[i] += (int32_t)(p5::hbDecim(e.hbMixR_, stgR[i * 2u], stgR[i * 2u + 1u])
+                                        * (2.0f * VOICE_FS));
+        }
+    }
 }
 
 } // namespace p5

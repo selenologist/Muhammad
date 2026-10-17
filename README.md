@@ -108,11 +108,13 @@ its A/B build standalone.
 * **2x oversampling toggle** (param 81 "OVERSAMPLE 2X"): the firmware's own
   P5_OVERSAMPLE=2 design — oscillators/noise/filter integrate at twice the
   host rate with halved increments, the CTL-wheel covers 2 entries per
-  sub-sample, the cutoff table rebuilds at the internal rate — but each
-  voice's 2x stream is decimated by a transcription of the **sst-filters
+  sub-sample, the cutoff table rebuilds at the internal rate — but the 2x
+  stream is decimated ONCE, at the END, over the summed voice mix (the VCA
+  runs per voice at the OS rate), using a transcription of the **sst-filters
   HalfRateFilter** soft order-12 chain (as bundled by Surge XT; ~82 dB into
-  the stopband)
-  instead of the firmware's 2-tap box average. Not bit-exact by design (the
+  the stopband) instead of the firmware's 2-tap box average. The OS strategy
+  is ours: the firmware's per-voice 2-tap arrangement was discarded, and a
+  decimator never sits inside a voice's FEEDBACK loop. Not bit-exact by design (the
   decimator IS the difference); the 1x path remains bit-exact. Reports 3
   samples via the CLAP latency extension; state blob v2 carries the flag.
   Cost: 8 voices at 690 ns/sample (~3% of one core at 44.1k), and measured
@@ -293,7 +295,15 @@ and the pre-ladder softclip distorts - extreme settings are *meant* to
 (there is no hidden limiter; worst-case stress tests stay bounded). Byte 0
 adds an exact +-0: the bit-exact harness scenarios are untouched, and scalar
 and SIMD kernels agree sample-for-sample at any depth (pinned by tests).
-FEEDBACK rides byte 133 in saved patches; files that predate it load with 0.
+A 6 dB/oct one-pole at fs/4 (half of Nyquist; positive coefficients, no
+polarity flip — the simplest filter that puts the one-sample loop's 3 dB
+corner at the loop's oscillation edge) sits in the regeneration path; with
+the mix-end decimation it is what keeps high-feedback singing musical rather
+than gremlin. BYTE LAYOUT: bits 0..6 = amount, bit 7 = POLARITY. RIGHT-CLICK
+the knob flips the loop sign; an inverted knob draws its dial WHITE. CC 42
+and host automation write the AMOUNT only and never touch the polarity bit.
+FEEDBACK rides byte 133 in saved patches (both fields); files that predate
+it load with 0.
 
 **Rev4-compatible MIDI CC** (per Sequential's Prophet-5 MIDI Implementation
 1.4 — its parameter numbering is identical to the wire enum): CC1 mod wheel,

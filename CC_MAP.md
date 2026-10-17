@@ -25,7 +25,7 @@ GM sequencer sends.
 | 66/68/69 | soft/hold1/hold2 — accepted, ignored | — | — |
 | 74 | BRIGHTNESS (adds to cutoff) | engine | Rev4 CC74 |
 | 85 | DRIFT (thermal-walk depth; Rev4's VINTAGE CC) | byte 37 | Rev4 impl 1.4 |
-| 42 | **FEEDBACK** (VCA->filter loop, 0..127) | byte 133 | **extension** |
+| 42 | **FEEDBACK** amount (VCA→filter loop, 0..127; bit 7 of byte 133 = polarity, set by right-click on the knob, never by CC 42) | byte 133 | **extension** |
 | 43 | **PAN WIDTH** (Oberheim-style voice spread) | blob | **extension** |
 | 44 | **OVERSAMPLE 2x** toggle (value >= 64 = on) | blob | **extension** |
 | 45 | **MASTER TUNE** bipolar: 64 = 0, +-63 -> +-100 cents | blob | **extension** |

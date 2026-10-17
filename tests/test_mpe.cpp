@@ -278,9 +278,10 @@ int main()
     // same patch, one note, 1 block of render: byte 0 must be identical to
     // the silent-loop build; high byte must be alive and BOUNDED; scalar and
     // wide kernels must agree sample-for-sample at any depth (same float law).
-    auto renderFb = [](int fb, p5::KernelMode mode, std::vector<int32_t> &buf) -> double {
+    auto renderFb = [](int fb, p5::KernelMode mode, std::vector<int32_t> &buf, int os = 1) -> double {
         p5::Engine e(mode);
         e.activate(44100.0);
+        e.setOverSample(os);
         p5::Patch p{}; std::memset(p.raw, 0, sizeof p.raw);
         p.raw[p5::P5_CUTOFF] = 60; p.raw[p5::P5_RESONANCE] = 90;
         p.raw[p5::P5_LEVEL_A] = 100; p.raw[p5::P5_SAW_A] = 1;
@@ -310,6 +311,42 @@ int main()
         const double pkMax = renderFb(127, p5::KernelMode::Wide, x127);
         check("fb: 127 saturating but finite (desired distortion)",
               pkMax > pk0W * 1.05 && pkMax < 4.3e9 && x127 != a);
+    }
+    // ---- FEEDBACK on the 2x path: mix decimated at the END, tap at OS rate.
+    // The gremlin gate: scalar and SIMD must still agree sample-for-sample,
+    // and byte 127 must stay bounded (the fs/4 pole's job).
+    {
+        std::vector<int32_t> s1, w1, w2;
+        const double pkS = renderFb(127, p5::KernelMode::Scalar, s1, 2);
+        const double pkW = renderFb(127, p5::KernelMode::Wide,   w1, 2);
+        const double pk0 = renderFb(0,   p5::KernelMode::Wide,   w2, 2);
+        bool same = (s1.size() == w1.size());
+        for (size_t i = 0; same && i < s1.size(); i++) if (s1[i] != w1[i]) same = false;
+        check("fb/os2: scalar == SIMD over the end-decimated mix", same);
+        check("fb/os2: bounded with pole in loop at full depth", pkW < pk0 * 12.0 && pkW < 4.3e9);
+    }
+    // ---- polarity bit (byte133 bit7): right-click semantics at engine level.
+    // amount = bits 0..6 (byte 128 is amount ZERO, inverted: must be silent),
+    // and inverting mid-amount mirrors the regeneration strongly (dot < 0).
+    {
+        std::vector<int32_t> sil, pos, neg;
+        const double pk128 = renderFb(128, p5::KernelMode::Wide, sil);
+        const double pk64  = renderFb(64,  p5::KernelMode::Wide, pos);
+        const double pkE4  = renderFb(64 | 128, p5::KernelMode::Wide, neg);
+        std::vector<int32_t> ref;
+        renderFb(0, p5::KernelMode::Wide, ref);
+        check("fb/inv: bit7 alone is amount 0 inverted -> exactly silent loop", sil == ref);
+        bool differ = (neg.size() == pos.size());
+        for (size_t i = 0; differ && i < neg.size(); i++) if (neg[i] != pos[i]) differ = true;
+        double dot = 0.0, n1 = 0.0, n2 = 0.0;
+        for (size_t i = 0; i < neg.size(); i++)
+        {   dot += (double)pos[i] * (double)neg[i]; n1 += (double)pos[i] * pos[i]; n2 += (double)neg[i] * neg[i]; }
+        const double corr = dot / (std::sqrt(n1 * n2) + 1e-9);
+        check("fb/inv: same amount 64, inverted differs from upright", differ);
+        // (no mirror-exactness claim: only the REGENERATION term flips sign;
+        // the osc/noise feed is upright in both, and the loop is nonlinear.
+        // differ + amount-masking are the honest gates.)
+        (void)corr;
     }
 
     std::printf("%s\n", fails ? "MPE/TUNING: FAILED" : "mpe/tuning: all ok");

@@ -126,6 +126,7 @@ struct GuiCore
 // timeMs: monotonic millisecond stamp for the 450 ms manual double-click
 // detector (X11: ev.xbutton.time; win32: GetTickCount()).
 
+bool onRightPress(GuiCore &c, float px, float py);
 bool onPointerPress(GuiCore &c, float px, float py, unsigned mods, unsigned timeMs);
 bool onPointerMotion(GuiCore &c, float px, float py, unsigned mods);
 bool onPointerRelease(GuiCore &c, float px, float py, unsigned mods);

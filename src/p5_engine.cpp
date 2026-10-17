@@ -54,7 +54,7 @@ void Engine::activate(double sampleRate)
     rUpDef_ = rDnDef_ = -1;
     std::memset(tuneDev_, 0, sizeof tuneDev_);
     tuningActive_ = false;
-    for (int i = 0; i < MAXV; i++) hbReset(hb_[i]);
+    hbReset(hbMixL_); hbReset(hbMixR_);
 }
 
 // Rebuild the cutoff->g table for the internal rate (os_ * hostSr_). The
@@ -122,7 +122,7 @@ void Engine::setOverSample(int os)
     os_ = os2;
     wheelLen_ = (uint32_t)(CTL_ * os_);
     buildTpt();
-    for (int i = 0; i < MAXV; i++) hbReset(hb_[i]);
+    hbReset(hbMixL_); hbReset(hbMixR_);
 }
 
 // p5_track_accept: native performance controls become the track's allocator settings
@@ -182,7 +182,7 @@ void Engine::silenceReset()
         triangle_[i] = 0.0f; syncTail_[i] = 0.0f;
     }
     lfoPhase_ = 0; lastPitch_ = 0; modNoise_ = 0; dcX1_ = dcY1_ = 0;
-    for (int i = 0; i < MAXV; i++) hbReset(hb_[i]);
+    hbReset(hbMixL_); hbReset(hbMixR_);
     live_ = 0; monoNote_ = 0; nmono_ = 0;
     vage_ = 0;   // (the firmware's vage clock is process-global; the A/B harness resets it per scenario)
     for (int i = 0; i < MAXV; i++)
@@ -211,7 +211,9 @@ void Engine::synthNoteOn(int lane, int voiceWas)
         for (int j = 0; j < 4; j++) z_[j][lane] = 0.0f;
         triangle_[lane] = 1.0f;
         syncTail_[lane] = 0.0f;
-        hbReset(hb_[lane]);           // fresh note: restart the 2x decimator too
+        // no decimator reset: the mix decimator is shared by all voices and
+        // must keep running through note boundaries (per-voice reset used to
+        // re-stamp the loop phase - part of the high-feedback gremlins)
         // Thermal excitation lets resonance start with the oscillator mixer shut,
         // as native self-oscillating factory programs require: seed the filter.
         if (p[P5_RESONANCE] >= 110u && !p[P5_LEVEL_A] && !p[P5_LEVEL_B] && !p[P5_NOISE]) {
@@ -680,7 +682,11 @@ bool Engine::renderLane(Lane &l, int32_t mPitch16, int32_t mFine, int32_t mCutof
     // byte 127 at the edge of loop unity - the ladder sings and the
     // pre-ladder softclip distorts, which is the whole point at extreme
     // settings. Mid bytes sing less; byte 0 adds an exact +-0 (bit-exact).
-    c.fb = (float)p[P5_FEEDBACK] * (3.0f / 127.0f);
+    // Bits: 0..6 = cable amount, 7 = POLARITY (right-click on the knob).
+    // valueOf-style clamping must NOT see the flag, so mask explicitly.
+    const uint8_t fbr = p[P5_FEEDBACK];
+    const float fbv = (float)(fbr & 127u) * (3.0f / 127.0f);
+    c.fb = (fbr & 128u) ? -fbv : fbv;
     c.ia = ia;
     c.ib = ib;
     c.amp0 = (float)mAmp0;

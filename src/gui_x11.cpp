@@ -333,8 +333,11 @@ void pump(Ctx &c)
                     break;
                 }
                 if (ev.xbutton.button == Button3)
-                {   dirty |= onPointerPress(c, (float)ev.xbutton.x, (float)ev.xbutton.y,
-                                           P5_MOD_RIGHT, (unsigned)ev.xbutton.time);
+                {   if (onRightPress(c, (float)ev.xbutton.x, (float)ev.xbutton.y))
+                        dirty = true;          // the flip itself repaints the dial
+                    else
+                        dirty |= onPointerPress(c, (float)ev.xbutton.x, (float)ev.xbutton.y,
+                                                P5_MOD_RIGHT, (unsigned)ev.xbutton.time);
                     break;
                 }
                 if (ev.xbutton.button != Button1) break;

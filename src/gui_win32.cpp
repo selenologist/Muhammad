@@ -211,8 +211,11 @@ LRESULT CALLBACK panelWndProc(HWND h, UINT msg, WPARAM wParam, LPARAM lParam)
             afterPress(c);                // actuate() may have opened a text modal
             break;
         case WM_RBUTTONDOWN:
-            dirty = onPointerPress(c, (float)GET_X_LPARAM(lParam), (float)GET_Y_LPARAM(lParam),
-                                   P5_MOD_RIGHT, (unsigned)GetTickCount());
+            if (onRightPress(c, (float)GET_X_LPARAM(lParam), (float)GET_Y_LPARAM(lParam)))
+                dirty = true;                  // the flip itself repaints the dial
+            else
+                dirty = onPointerPress(c, (float)GET_X_LPARAM(lParam), (float)GET_Y_LPARAM(lParam),
+                                       P5_MOD_RIGHT, (unsigned)GetTickCount());
             break;
         case WM_MOUSEMOVE:
             dirty = onPointerMotion(c, (float)GET_X_LPARAM(lParam), (float)GET_Y_LPARAM(lParam),

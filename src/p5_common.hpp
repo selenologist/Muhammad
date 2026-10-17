@@ -97,6 +97,12 @@ inline const KnobRange *knobRange(int id)
     return nullptr;
 }
 
+// FEEDBACK loop filter: a 6 dB/oct one-pole at fs/4 (half of Nyquist),
+// y += A*(x - y).  A = 1 - exp(-2*pi*fc/fs) = 1 - exp(-pi/2).  All-positive
+// coefficients -> unit DC gain and no polarity flip, exactly what the
+// feedback path needed to stop the one-sample loop ringing at the edge.
+inline constexpr float kFbLpA = 0.7921204233125831f;
+
 // 0..1 panel position for a param value (raw byte, or the param's own unit)
 inline double knobNorm(int id, double value)
 {

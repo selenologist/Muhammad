@@ -178,6 +178,7 @@ void fillState(GuiCore &c, p5ui::State &st)
     }
     for (int i = 0; i < p5ui::kNumKnobs; i++)
         st.knob[i] = p5::knobNorm(p5ui::kKnobs[i].pid, c.plugin->guiValue(p5ui::kKnobs[i].pid));
+    st.fbInv = (c.plugin->rawOf(p5::P5_FEEDBACK) & 128) != 0;   // white dial = inverted
     const int program = c.plugin->program, bank = c.plugin->bank;
     for (int i = 0; i < p5ui::kNumBtns; i++)
     {
@@ -414,6 +415,18 @@ void actuate(GuiCore &c, int btnIdx, unsigned mods)
 // ---- pointer / wheel / keyboard state machines --------------------------------
 
 void buildDebugText(GuiCore &c);
+
+// Right-click semantics live in their own exported entry: the shims know the
+// button at runtime and call this FIRST; returning false falls through to the
+// generic press. (A gate folded into onPointerPress was eliminated by -O3.)
+bool onRightPress(GuiCore &c, float px, float py)
+{   const int kn = p5ui::knobAt(p5ui::State{}, px, py, (float)c.w, (float)c.h);
+    if (kn >= 0 && p5ui::kKnobs[kn].pid == 57)
+    {   c.plugin->toggleFbPolarity();     // FEEDBACK: flip the loop sign
+        return true;                      // (dial goes white; byte133 bit7)
+    }
+    return false;
+}
 
 bool onPointerPress(GuiCore &c, float px, float py, unsigned mods, unsigned timeMs)
 {

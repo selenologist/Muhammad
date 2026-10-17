@@ -9,7 +9,11 @@
 // body twice per host sample at half increments (exactly the firmware's own
 // P5_OVERSAMPLE=2 build) but decimates each voice's 2x stream with the Surge
 // halfband instead of the firmware's 2-tap box average - a deliberate,
-// audible-only deviation. Both kernels see the identical decimated stream.
+// audible-only deviation; the OS STRATEGY (what runs at 2x and where the
+// decimator sits) is ours, not the firmware's. Decimation happens ONCE, at
+// the end, over the summed voice mix - so no per-voice filter stands inside
+// the FEEDBACK loop's hearing (that placement was the high-fb gremlins).
+// Both kernels see the identical stream and identical arithmetic.
 #include "p5_engine.hpp"
 #include "p5_math.hpp"
 
@@ -62,6 +66,12 @@ void p5KernelScalar(Engine &e, uint32_t mask, int32_t *out, uint32_t n)
     const int curtis = !!p[P5_FILTER_REV];
     const uint32_t os = (uint32_t)e.os_;
     const float *tab = e.tpt_;
+    // OS-rate voice mix, staged in float and quantised once at the end.
+    // Callers chop host blocks to <= CTL_ (the envelope-law time index
+    // proves it), so 2*CTL_ sub-samples is the exact worst case.
+    float stgL[2 * CTL_], stgR[2 * CTL_];
+    const int total = (int)(n * os);
+    for (int k = 0; k < total; k++) { stgL[k] = 0.0f; stgR[k] = 0.0f; }
     for (int v = 0; v < MAXV; v++) {
         if (!(mask >> v & 1u)) continue;
         Engine::Lane &l = e.lanes_[v];
@@ -71,16 +81,19 @@ void p5KernelScalar(Engine &e, uint32_t mask, int32_t *out, uint32_t n)
         h.z[0] = e.z_[0][v]; h.z[1] = e.z_[1][v]; h.z[2] = e.z_[2][v]; h.z[3] = e.z_[3][v];
         h.triangle = e.triangle_[v]; h.syncTail = e.syncTail_[v];
         h.noise = (int32_t)e.noise_[v];
-        h.fbPrev = e.fbState_[v];
+        h.fbPrev = e.fbState_[v];      // = the lowpassed tap (see loop)
+        const float gl0 = (float)l.panG[0] * (1.0f / 32768.0f);
+        const float gl1 = (float)l.panG[1] * (1.0f / 32768.0f);
         int32_t last = 0;
         for (uint32_t i = 0; i < n; i++) {
             const float time = (float)i * (1.0f / CTL_);
             const float fe = c.f0 + (c.f1 - c.f0) * time, ae = c.a0 + (c.a1 - c.a0) * time;
-            float y0 = 0.0f, y1 = 0.0f;
             for (uint32_t o = 0; o < os; o++) {          // the firmware's P5_OVERSAMPLE loop
                 const float noise = (float)(fastNoise32(&h.noise) >> 8) * (1.0f / 16777216.0f) - 0.5f;
                 const float lfo = e.wheel_[i * os + o], wheelPitch = e.wheelPitch_[i * os + o];
-                const uint32_t db = p[P5_WHEEL_FREQ_B] ? wheelInc(c.ib, wheelPitch) : c.ib;
+                const float gain = ae * c.ampVel * (1.0f + (float)l.ampDrift / 32768.0f);
+            const float amp = (c.amp0 + (c.amp1 - c.amp0) * time) * (1.0f / 32768.0f);
+            const uint32_t db = p[P5_WHEEL_FREQ_B] ? wheelInc(c.ib, wheelPitch) : c.ib;
                 const float b = oscWave(h.ph[1], db, pwOf(c.pwmB + (p[P5_WHEEL_PW_B] ? lfo : 0.0f)),
                                         p[P5_SAW_B], p[P5_PULSE_B], p[P5_TRI_B], &h.triangle);
                 const float bn = b * 2.0f;
@@ -110,18 +123,21 @@ void p5KernelScalar(Engine &e, uint32_t mask, int32_t *out, uint32_t n)
                 if (p[P5_POLY_FILTER]) fc += fe * c.pfEnv + bn * c.pfB;
                 if (p[P5_WHEEL_FILTER]) fc += lfo * 112.0f;
                 const float y = filterCore(h, fastSoftclip(x), fc, c.k, c.filterGain, curtis, tab);
-                if (o == 0u) y0 = y; else y1 = y;
+                const float vcaF = (y * gain) * amp;    // VCA at the OS rate, so every
+                h.fbPrev += kFbLpA * (vcaF - h.fbPrev); // sub-sample reaches the tap
+                if (os == 1u)            // the firmware-identical int path, untouched
+                {   last = (int32_t)(vcaF * (2.0f * VOICE_FS));
+                    if (e.panOn_)
+                    {   out[i] += (int32_t)(((int64_t)last * l.panG[0]) >> 15);
+                        e.mixR_[i] += (int32_t)(((int64_t)last * l.panG[1]) >> 15); }
+                    else out[i] += last;
+                }
+                else
+                {   stgL[i * 2u + o] += vcaF * (e.panOn_ ? gl0 : 1.0f);
+                    if (e.panOn_) stgR[i * 2u + o] += vcaF * gl1;
+                    last = (int32_t)(vcaF * (2.0f * VOICE_FS));  // release-fade memory
+                }
             }
-            const float sum = (os == 1u) ? y0 : hbDecim(e.hb_[v], y0, y1);
-            const float gain = ae * c.ampVel * (1.0f + (float)l.ampDrift / 32768.0f);
-            const float amp = (c.amp0 + (c.amp1 - c.amp0) * time) * (1.0f / 32768.0f);
-            const float vcaF = (sum * gain) * amp;          // the tap, pre-quantisation
-            h.fbPrev = vcaF;
-            last = (int32_t)(vcaF * (2.0f * VOICE_FS));
-            if (e.panOn_)
-            {   out[i] += (int32_t)(((int64_t)last * l.panG[0]) >> 15);
-                e.mixR_[i] += (int32_t)(((int64_t)last * l.panG[1]) >> 15); }
-            else out[i] += last;
         }
         l.lastPcm = last;
         e.phaseA_[v] = h.ph[0]; e.phaseB_[v] = h.ph[1];
@@ -129,6 +145,15 @@ void p5KernelScalar(Engine &e, uint32_t mask, int32_t *out, uint32_t n)
         e.triangle_[v] = h.triangle; e.syncTail_[v] = h.syncTail;
         e.noise_[v] = (uint32_t)h.noise;
         e.fbState_[v] = h.fbPrev;
+    }
+    if (os != 1u)      // THE decimator: once, right here, after the summed
+    {   for (uint32_t i = 0; i < n; i++)       // mix at OS rate - the end
+        {   out[i] += (int32_t)(hbDecim(e.hbMixL_, stgL[i * 2u], stgL[i * 2u + 1u])
+                               * (2.0f * VOICE_FS));
+            if (e.panOn_)
+                e.mixR_[i] += (int32_t)(hbDecim(e.hbMixR_, stgR[i * 2u], stgR[i * 2u + 1u])
+                                        * (2.0f * VOICE_FS));
+        }
     }
 }
 

@@ -269,7 +269,8 @@ private:
     const float *tpt_ = PW_P5_TPT_G;
     float tptGen_[PW_TPT_TOP + 1];
     void buildTpt();
-    HbState hb_[MAXV];                        // per-voice 2x decimators
+    HbState hbMixL_, hbMixR_;               // THE decimator: once, after the
+                                            // whole mix (R lane only if pan)
     uint32_t vage_ = 0;                       // voice ages: one clock for every part
     uint32_t unisonSeed_ = 0x1234567u;        // mono_play's phase-seeding LCG
 
