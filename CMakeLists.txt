@@ -86,6 +86,7 @@ if(MUHAMMAD_GUI)
     endif()
 
     # headless golden-image test (see tools/check_goldens.sh)
+if(NOT WIN32)   # goldens need Mesa/EGL surfaces; Windows ships no golden target
     # x86 ships the wide kernel twice: portable baseline + true AVX2 (SIMDe maps to
 # native instructions under -mavx2 -mfma). Engine::activate selects by cpuid;
 # contract stays OFF so both paths are bit-identical to the firmware reference.
@@ -104,6 +105,7 @@ add_executable(render_golden tests/render_golden.cpp ${ENGINE_SOURCES})
     target_compile_definitions(render_golden PRIVATE GL_GLEXT_PROTOTYPES=1 P5_BUILD_INFO="${P5_BUILD_INFO}")
     target_link_libraries(render_golden PRIVATE p5_gui ${MUHAMMAD_GL_LIBS} ${MATH_LIBRARY})
 endif()
+    endif()
 
 # ---- the CLAP plugin ----------------------------------------------------------
 add_library(muhammad_clap MODULE
