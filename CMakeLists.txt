@@ -96,6 +96,11 @@ if(GUI_DEFINES)
     target_compile_definitions(prophet_clap PRIVATE ${GUI_DEFINES} P5_BUILD_INFO="${P5_BUILD_INFO}")
     target_link_libraries(prophet_clap PRIVATE p5_gui ${X11_LIBRARIES} ${PROPHET_GL_LIBS})
 endif()
+if(WIN32)
+# MinGW MODULE targets ignore SHARED_LINKER_FLAGS_INIT; bake the C++ runtime in so
+# muhammad.clap loads on a bare Windows box (kernel32/msvcrt/advapi only).
+target_link_options(prophet_clap PRIVATE -static -static-libgcc -static-libstdc++)
+endif()
 set_target_properties(prophet_clap PROPERTIES
     PREFIX ""
     OUTPUT_NAME "muhammad"
@@ -119,10 +124,12 @@ if(TARGET m)
     target_link_libraries(test_quantnoise PRIVATE m)
 endif()
 
+if(NOT WIN32)   # bench uses POSIX clock_gettime(CLOCK_MONOTONIC)
 add_executable(bench_engine tests/bench_engine.cpp ${ENGINE_SOURCES})
 target_include_directories(bench_engine PRIVATE src external)
 if(MATH_LIBRARY)
     target_link_libraries(bench_engine PRIVATE ${MATH_LIBRARY})
+endif()
 endif()
 
 # ---- firmware cross-check ------------------------------------------------------
@@ -130,6 +137,7 @@ endif()
 # host build). Built only when a melodee checkout is given:
 #   cmake -DMELODEE_DIR=/path/to/melodee ...
 if(DEFINED MELODEE_DIR AND EXISTS "${MELODEE_DIR}/tests/hostsim.c")
+if(NOT WIN32)    # hostsim needs POSIX wait/signal: Linux-only reference renderer
     add_executable(ref_dump tests/ref_dump.c)
     target_include_directories(ref_dump PRIVATE
         "${MELODEE_DIR}/build/gen" "${MELODEE_DIR}/firmware/src")
@@ -140,6 +148,7 @@ if(DEFINED MELODEE_DIR AND EXISTS "${MELODEE_DIR}/tests/hostsim.c")
         target_link_libraries(ref_dump PRIVATE ${MATH_LIBRARY})
     endif()
 endif()
+endif()   # (MELODEE_DIR)
 
 add_executable(render_demo tests/render_demo.cpp ${ENGINE_SOURCES})
 target_include_directories(render_demo PRIVATE src external)
@@ -148,8 +157,10 @@ if(MATH_LIBRARY)
 endif()
 
 # ---- audio-thread allocation watchdog (LD_PRELOAD shim for clap_smoke) --------
+if(NOT WIN32)
 add_library(allocwatch SHARED tools/allocwatch.c)
 set_target_properties(allocwatch PROPERTIES PREFIX "")
+endif()
 
 find_library(X11_LIBRARY X11)
 if(X11_LIBRARY)
@@ -158,9 +169,11 @@ if(X11_LIBRARY)
     target_link_libraries(gui_probe PRIVATE ${X11_LIBRARY} ${CMAKE_DL_LIBS} m)
 endif()
 
+if(PROPHET_GUI AND NOT WIN32)   # links the X11-era GL panel lib
 add_executable(test_tune tests/test_tune.cpp src/p5_store.cpp)
 target_include_directories(test_tune PRIVATE src external ${NANOVG_DIR}/src ${NANOVG_DIR})
 target_link_libraries(test_tune PRIVATE p5_gui nanovg)
+endif()
 
 add_executable(test_mpe tests/test_mpe.cpp ${ENGINE_SOURCES} src/p5_store.cpp)
 target_include_directories(test_mpe PRIVATE src external)
@@ -175,11 +188,15 @@ if(TARGET m)
 endif()
 
 # ---- patch store unit test (headless; P5_STORE_DIR override) -----------------
+if(NOT WIN32)
 add_executable(test_store tests/test_store.cpp src/p5_store.cpp)
 target_include_directories(test_store PRIVATE src)
+endif()
 
 # ---- CLAP smoke test: dlopens the built plugin and drives its surface --------
+if(NOT WIN32)
 add_executable(clap_smoke tests/clap_smoke.cpp)
 target_include_directories(clap_smoke PRIVATE vendor/clap)
 target_link_libraries(clap_smoke PRIVATE ${CMAKE_DL_LIBS})
 add_dependencies(clap_smoke prophet_clap)
+endif()

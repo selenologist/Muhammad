@@ -1,0 +1,123 @@
+# Muhammad CLAP — multi-platform nightlies
+# Free on public repos. Produces:
+#   linux-x64  : full plugin WITH GUI + runs the whole test suite + golden images
+#   win-x64    : headless plugin (cross-compiled with MinGW-w64; the X11 GUI shim
+#                does not exist for Windows yet -> GUI extension stays unadvertised)
+#   macos      : universal (arm64+x86_64) headless plugin wrapped as a .clap bundle
+# On tags v* it additionally publishes a GitHub Release with all three artifacts.
+
+name: build
+
+on:
+  schedule:
+    - cron: '15 4 * * *'          # daily ~05:15 AEDT / 14:15 UTC+AEDT-ish; UTC 04:15
+  workflow_dispatch:
+  push:
+    branches: [master]
+    tags: ['v*']
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      ver: ${{ steps.v.outputs.ver }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: |
+          VER=$(grep -m1 'set(P5_VERSION' CMakeLists.txt | sed 's/.*"\(.*\)".*/\1/')
+          echo "ver=$VER" >> "$GITHUB_OUTPUT"
+          echo "version: $VER"
+
+  linux:
+    needs: version
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libx11-dev libgl1-mesa-dev libegl1-mesa-dev libglx-dev \
+            imagemagick x11-utils
+      - run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build build -j"$(nproc)"
+      - name: tests
+        working-directory: build
+        run: |
+          ./test_store
+          ./test_tune
+          ./test_mpe
+          P5_STORE_DIR=/tmp/muh-ci ./clap_smoke ./muhammad.clap
+        env:
+          P5_STORE_DIR: /tmp/muh-ci
+      - name: golden images
+        run: EGL_PLATFORM_SURFACELESS_MESA=1 bash tools/check_goldens.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: muhammad-${{ needs.version.outputs.ver }}-linux-x64.clap
+          path: build/muhammad.clap
+
+  windows:
+    needs: version
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mingw-w64
+      - run: >
+          cmake -B build-win -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64-x64.cmake -DPROPHET_GUI=OFF
+      - run: cmake --build build-win -j"$(nproc)"
+      - name: sanity (PE exports clap_entry, no stray DLL deps)
+        run: |
+          x86_64-w64-mingw32-objdump -x build-win/muhammad.clap | grep -q '\[   0\] clap_entry'
+          ! x86_64-w64-mingw32-objdump -p build-win/muhammad.clap | grep -q 'libstdc++'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: muhammad-${{ needs.version.outputs.ver }}-win-x64.clap
+          path: build-win/muhammad.clap
+
+  macos:
+    needs: version
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - run: >
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          -DPROPHET_GUI=OFF -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+      - run: cmake --build build -j"$(sysctl -n hw.ncpu)"
+      - name: tests
+        working-directory: build
+        run: |
+          ./test_mpe
+          P5_STORE_DIR=/tmp/muh-ci ./clap_smoke ./muhammad.clap
+      - name: bundle
+        run: bash tools/make_mac_bundle.sh build/muhammad.clap dist/muhammad.clap
+      - uses: actions/upload-artifact@v4
+        with:
+          name: muhammad-${{ needs.version.outputs.ver }}-macos-universal.clap
+          path: dist/muhammad.clap
+          # keep the bundle directory structure in the zip
+
+  release:
+    needs: [version, linux, windows, macos]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: assets/**/*.clap
+          body: >
+            Muhammad ${{ needs.version.outputs.ver }} — linux-x64 (with GUI),
+            win-x64 and macos-universal (headless: platform GUI shims pending).
+            Drop the .clap into your synth app's CLAP directory
+            (~/.clap, %LOCALAPPDATA%/Bitwig/... or similar).

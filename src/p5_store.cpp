@@ -27,6 +27,9 @@ std::string rawDir()
     // XDG user-dirs first, then plain ~/Documents, then ~/Music, then home.
     if (const char *docs = std::getenv("XDG_DOCUMENTS_DIR")) if (*docs) return docs;
     const char *home = std::getenv("HOME");
+#ifdef _WIN32
+    if (!home || !*home) home = std::getenv("USERPROFILE");
+#endif
     if (!home) home = ".";
     fs::path h(home);
     fs::path cand[] = {h / "Documents", h / "Music", h};
@@ -399,7 +402,7 @@ bool saveTuningScl(const char *name, const double *tones, int n)
     if (!tones || n < 2 || n > 64) return false;
     const std::string label = sclSanitize(name);
     std::string dir = tuningsDir();
-    mkdir(dir.c_str(), 0777);
+    {   std::error_code ec; fs::create_directories(dir, ec); }   // portable; raw mkdir() is POSIX-only
     std::ofstream f(dir + "/" + label + ".scl", std::ios::trunc);
     if (!f) return false;
     char buf[96];

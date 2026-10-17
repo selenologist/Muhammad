@@ -2,6 +2,8 @@
  * Units for the polar-wheel math (p5_gui) and the store's scale round trip. */
 #include <cmath>
 #include <cstdio>
+#include <fstream>
+#include <filesystem>
 #include <cstdlib>
 #include <cstring>
 #include "p5_gui.hpp"
@@ -52,11 +54,19 @@ int main()
           tune::clampTone(seq, 3, 3, 50.f) == 301.f);
 
     // store round trip: equal tones -> zero dev; pythagorean wheel == loaded file
+#ifdef _WIN32
+    _putenv_s("P5_STORE_DIR", "muh-wheel-test-store");
+    std::filesystem::create_directories("muh-wheel-test-store/Tunings");
+    {   std::ofstream f("muh-wheel-test-store/Tunings/Example Pythagorean.scl");
+        f << "Example Pythagorean tuning\n 12\n!\n 90.2\n 203.9\n 294.2\n 407.8\n"
+             " 498.0\n 612.1\n 702.0\n 792.2\n 905.9\n 996.1\n 1109.9\n 1200.0\n"; }
+#else
     setenv("P5_STORE_DIR", "/tmp/muh-wheel-test-store", 1);
     std::system("mkdir -p /tmp/muh-wheel-test-store/Tunings && "
         "printf 'Example Pythagorean tuning\\n 12\\n!\\n 90.2\\n 203.9\\n 294.2\\n 407.8\\n "
         "498.0\\n 612.1\\n 702.0\\n 792.2\\n 905.9\\n 996.1\\n 1109.9\\n 1200.0\\n' "
         "> '/tmp/muh-wheel-test-store/Tunings/Example Pythagorean.scl'");
+#endif
     static int16_t devA[128], devB[128];
     double cum[64]; for (int i = 0; i < 12; i++) cum[i] = py[i];
     const bool bld = p5store::buildScaleTones(cum, 12, devA);

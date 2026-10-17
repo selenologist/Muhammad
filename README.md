@@ -311,6 +311,36 @@ from the status nibble.
 State blob v7 persists the 128-key deviation table, tuning name, and the
 editor range defaults; v6 blobs still load (standard tuning, wire ranges).
 
+## Cross-compiling & CI nightlies
+
+Linux is the primary target (full plugin + NanoVG/X11 panel + golden tests).
+The engine, store and CLAP core are portable; the panel embedding shim
+(`gui_x11.cpp`) is the only OS-bound piece, so other platforms build
+**headless** (`-DPROPHET_GUI=OFF`) — the plugin loads, sounds, and takes state;
+it just does not advertise a GUI until a per-OS shim exists.
+
+Windows x64, cross-compiled from Linux (no Windows box needed):
+
+```sh
+sudo apt install mingw-w64
+cmake -B build-win -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64-x64.cmake -DPROPHET_GUI=OFF
+cmake --build build-win -j
+```
+
+The result is `build-win/muhammad.clap`: PE32+ DLL, statically linked against
+libstdc++/libgcc/winpthread (kernel32+msvcrt only at runtime), `clap_entry`
+exported. POSIX-only dev tools (hostsim ref_dump, LD_PRELOAD allocwatch,
+dlopen smoke, bench clock_gettime) are gated to Linux; test_mpe / test_engine_ab
+/ test_store / clap_smoke also compile and run on macOS.
+
+macOS: build universal with `-DPROPHET_GUI=OFF -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"`,
+then `tools/make_mac_bundle.sh build/muhammad.clap muhammad.clap` wraps the dylib
+into a `.clap` bundle.
+
+`.github/workflows/nightly.yml` runs all three platforms on schedule/push/PR,
+executes the Linux test suite + golden images there, and publishes a GitHub
+Release with all artifacts when a `v*` tag is pushed.
+
 ## Microtuning workstation (v1.13.0-scales)
 
 The TUNING page is now a full editor, not just a file loader:
