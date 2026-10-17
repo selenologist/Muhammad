@@ -66,7 +66,7 @@ std::string patchPath(const std::string &name)
     return baseDir() + "/" + sanitize(name) + ".muhammad";
 }
 
-bool savePatch(const std::string &name, const uint8_t raw[133])
+bool savePatch(const std::string &name, const uint8_t raw[134])
 {
     if (!ensureDir()) return false;
     const std::string n = sanitize(name);
@@ -93,7 +93,8 @@ std::string foldCollision(const std::string &name)
     return {};
 }
 
-bool loadPatch(const std::string &name, uint8_t raw[133])
+bool loadPatch(const std::string &name, uint8_t raw[134])   // 134 even when the
+//               file is 133: byte 133 gets its honest default
 {
     std::ifstream f(patchPath(name), std::ios::binary);
     if (!f) f = std::ifstream(name, std::ios::binary);       // full path too
@@ -165,6 +166,7 @@ bool loadMap()
         if (!std::strcmp(kind, "fac")) { s.kind = SourceKind::Factory; s.factory = std::atoi(rest.c_str()); }
         else if (!std::strcmp(kind, "fil")) { s.kind = SourceKind::File; s.file = rest; }
         else continue;
+        if (sl < 0 || sl >= kSlotBanks * kSlotsPerBank) continue;   // corrupt map line
         g_map[sl] = s;
     }
     g_mapLoaded = true;
@@ -221,7 +223,13 @@ std::vector<std::string> listTunings()
 
 static std::string slurp(const std::string &path)
 {
-    std::ifstream f(path);
+    // A tuning file is a few hundred lines of text. Cap it: an unbounded
+    // slurp of a 500 MB neighbor is a memory bomb with zero upside.
+    std::ifstream f(path, std::ios::binary | std::ios::ate);
+    if (!f) return {};
+    const std::streamoff sz = f.tellg();
+    if (sz <= 0 || sz > (1 << 20)) return {};
+    f.seekg(0, std::ios::beg);
     std::ostringstream ss;
     ss << f.rdbuf();
     return ss.str();
@@ -276,6 +284,9 @@ uint16_t deriveMask(const double *tones, int n)
 bool loadTuningDev(const std::string &fileName, int16_t *dev16, char *nameOut, int nameCap,
                    double *tonesOut, int *tonesN, bool *kbmUsed)
 {
+    if (fileName.find('/') != std::string::npos || fileName.find('\\') != std::string::npos ||
+        fileName.find("..") != std::string::npos)      // a NAME, never a path
+        return false;
     const std::string path = tuningsDir() + "/" + fileName;
     const size_t dot = path.rfind('.');
     const std::string stem = dot == std::string::npos ? path : path.substr(0, dot);

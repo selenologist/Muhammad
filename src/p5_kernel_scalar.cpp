@@ -66,6 +66,15 @@ void p5KernelScalar(Engine &e, uint32_t mask, int32_t *out, uint32_t n)
     const int curtis = !!p[P5_FILTER_REV];
     const uint32_t os = (uint32_t)e.os_;
     const float *tab = e.tpt_;
+    // Patch-mode flags hoisted ONCE per block (integer control flow only -
+    // no float law touched, bit-exactness by construction). The per-sample
+    // array reads were the scalar fallback's cheap-to-kill overhead.
+    const int fSawA = p[P5_SAW_A], fPulA = p[P5_PULSE_A], fSawB = p[P5_SAW_B],
+              fPulB = p[P5_PULSE_B], fTriB = p[P5_TRI_B], fSync = p[P5_SYNC],
+              fPolyFreq = p[P5_POLY_FREQ], fPolyPw = p[P5_POLY_PW],
+              fPolyFilter = p[P5_POLY_FILTER], fWFreqB = p[P5_WHEEL_FREQ_B],
+              fWFreqA = p[P5_WHEEL_FREQ_A], fWPwA = p[P5_WHEEL_PW_A],
+              fWPwB = p[P5_WHEEL_PW_B], fWFilter = p[P5_WHEEL_FILTER];
     // OS-rate voice mix, staged in float and quantised once at the end.
     // Callers chop host blocks to <= CTL_ (the envelope-law time index
     // proves it), so 2*CTL_ sub-samples is the exact worst case.
@@ -93,23 +102,23 @@ void p5KernelScalar(Engine &e, uint32_t mask, int32_t *out, uint32_t n)
                 const float lfo = e.wheel_[i * os + o], wheelPitch = e.wheelPitch_[i * os + o];
                 const float gain = ae * c.ampVel * (1.0f + (float)l.ampDrift / 32768.0f);
             const float amp = (c.amp0 + (c.amp1 - c.amp0) * time) * (1.0f / 32768.0f);
-            const uint32_t db = p[P5_WHEEL_FREQ_B] ? wheelInc(c.ib, wheelPitch) : c.ib;
-                const float b = oscWave(h.ph[1], db, pwOf(c.pwmB + (p[P5_WHEEL_PW_B] ? lfo : 0.0f)),
-                                        p[P5_SAW_B], p[P5_PULSE_B], p[P5_TRI_B], &h.triangle);
+            const uint32_t db = fWFreqB ? wheelInc(c.ib, wheelPitch) : c.ib;
+                const float b = oscWave(h.ph[1], db, pwOf(c.pwmB + (fWPwB ? lfo : 0.0f)),
+                                        fSawB, fPulB, fTriB, &h.triangle);
                 const float bn = b * 2.0f;
-                uint32_t da = p[P5_POLY_FREQ] ? incOf(c.ia, fe * c.paEnv + bn * c.paB) : c.ia;
-                if (p[P5_WHEEL_FREQ_A]) da = wheelInc(da, wheelPitch);
-                const uint32_t pw = pwOf(c.pwmA + (p[P5_POLY_PW] ? fe * c.pwEnv + b * c.pwB : 0.0f)
-                                         + (p[P5_WHEEL_PW_A] ? lfo : 0.0f));
+                uint32_t da = fPolyFreq ? incOf(c.ia, fe * c.paEnv + bn * c.paB) : c.ia;
+                if (fWFreqA) da = wheelInc(da, wheelPitch);
+                const uint32_t pw = pwOf(c.pwmA + (fPolyPw ? fe * c.pwEnv + b * c.pwB : 0.0f)
+                                         + (fWPwA ? lfo : 0.0f));
                 float unused = 0.0f;
-                float a = oscWave(h.ph[0], da, pw, p[P5_SAW_A], p[P5_PULSE_A], 0, &unused) + h.syncTail;
+                float a = oscWave(h.ph[0], da, pw, fSawA, fPulA, 0, &unused) + h.syncTail;
                 h.syncTail = 0.0f;
                 const uint32_t nb = h.ph[1] + db, na = h.ph[0] + da;
-                if (p[P5_SYNC] && nb < h.ph[1] && db) {  // B resets A mid-sample, with the BLEP split
+                if (fSync && nb < h.ph[1] && db) {  // B resets A mid-sample, with the BLEP split
                     const float frac = syncFraction(0u - h.ph[1], db), remain = 1.0f - frac;
                     const uint32_t at = h.ph[0] + (uint32_t)((float)da * frac);
-                    const float before = oscWave(at, da, pw, p[P5_SAW_A], p[P5_PULSE_A], 0, &unused);
-                    const float after = oscWave(0, da, pw, p[P5_SAW_A], p[P5_PULSE_A], 0, &unused);
+                    const float before = oscWave(at, da, pw, fSawA, fPulA, 0, &unused);
+                    const float after = oscWave(0, da, pw, fSawA, fPulA, 0, &unused);
                     const float jump = (after - before) * 0.5f;
                     a += jump * remain * remain;
                     h.syncTail = -jump * frac * frac;
@@ -120,8 +129,8 @@ void p5KernelScalar(Engine &e, uint32_t mask, int32_t *out, uint32_t n)
                 h.ph[1] = nb;
                 const float x = a * c.la + b * c.lb + noise * c.ln + c.fb * h.fbPrev;
                 float fc = c.cut + fe * c.filterVel * c.envAmount;
-                if (p[P5_POLY_FILTER]) fc += fe * c.pfEnv + bn * c.pfB;
-                if (p[P5_WHEEL_FILTER]) fc += lfo * 112.0f;
+                if (fPolyFilter) fc += fe * c.pfEnv + bn * c.pfB;
+                if (fWFilter) fc += lfo * 112.0f;
                 const float y = filterCore(h, fastSoftclip(x), fc, c.k, c.filterGain, curtis, tab);
                 const float vcaF = (y * gain) * amp;    // VCA at the OS rate, so every
                 h.fbPrev += kFbLpA * (vcaF - h.fbPrev); // sub-sample reaches the tap

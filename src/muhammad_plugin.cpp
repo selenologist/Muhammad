@@ -257,11 +257,11 @@ void Plugin::markSource(int kind, int idx, const std::string &file)
 bool Plugin::loadUserPatch(const std::string &name)
 {
     loadTag_ = "user";
-    uint8_t raw[133];
+    uint8_t raw[134];                  // the extension byte, or the honest 0
     if (!p5store::loadPatch(name, raw)) return false;
     p5::Patch p;
     std::memset(&p, 0, sizeof p);
-    std::memcpy(p.raw, raw, 133);
+    std::memcpy(p.raw, raw, 134);      // full store, feedback/polarity included
     p.size = 133; p.model = 0x32; p.command = 3;
     engine.setPatch(p);
     program = -1;
@@ -960,6 +960,7 @@ static bool state_load(const clap_plugin_t *p, const clap_istream_t *in)
     if (!rd(in, head, sizeof head)) return false;
     if (head[0] != PW_STATE_MAGIC || head[1] == 0u || head[1] > PW_STATE_VERSION) return false;
     int16_t migDr = -1;                 // v5..v9 side-channel drift (see below)
+    size_t rsz = 133;                   // patch bytes in this blob (v11+: 134)
     uint8_t raw[134] = {}; int16_t ov[8]; float trim; int32_t os = 1;
     if (head[1] == 1u) {
         struct StateBlobV1 { uint32_t magic, version; uint8_t raw[133]; int16_t overlay[8]; float trim; } b;
@@ -971,7 +972,10 @@ static bool state_load(const clap_plugin_t *p, const clap_istream_t *in)
     } else {
         // v10 and older stored 133 wire bytes; the v11 extension byte keeps
         // its honest default 0 (accepting files that predate it).
-        const size_t rsz = head[1] >= 11u ? 134u : 133u;
+        rsz = head[1] >= 11u ? 134u : 133u;   // v11 grew the blob: save side
+                                        // writes 134, and the tail memcpy must
+                                        // actually USE rsz (it silently dropped
+                                        // FEEDBACK until now)
         if (!rd(in, raw, rsz) || !rd(in, ov, sizeof ov) ||
             !rd(in, &trim, sizeof trim) || !rd(in, &os, sizeof os)) return false;
         if (head[1] >= 3u) {
@@ -1006,6 +1010,8 @@ static bool state_load(const clap_plugin_t *p, const clap_istream_t *in)
                     static int16_t dev[128];
                     int16_t br[2];
                     if (!rd(in, dev, sizeof dev)) return false;
+                    for (int k = 0; k < 128; k++)   // deviation table is a ±512
+                    { if (dev[k] < -512) dev[k] = -512; if (dev[k] > 512) dev[k] = 512; }
                     if (!rd(in, br, sizeof br)) return false;
                     if (!rd(in, s->tuneName_, sizeof s->tuneName_)) return false;
                     s->tuneName_[sizeof s->tuneName_ - 1] = 0;
@@ -1036,12 +1042,18 @@ static bool state_load(const clap_plugin_t *p, const clap_istream_t *in)
     // their stored depth beats whatever opaque value their byte 37 carries.
     p5::Patch patch;
     std::memset(&patch, 0, sizeof patch);
-    std::memcpy(patch.raw, raw, 133);
-    patch.size = 133; patch.model = 0x32; patch.command = 3;
-    s->engine.setPatch(patch);
+    std::memcpy(patch.raw, raw, rsz);            // rsz=134 for v11: the FEEDBACK
+    patch.size = 133; patch.model = 0x32; patch.command = 3;   // byte (and its
+    s->engine.setPatch(patch);                   // polarity bit) comes back
     if (migDr >= 0) s->engine.setDriftDepth(migDr);   // v5..v9 blob migration
+    // Host-supplied numbers are GUESSED-AT DATA, not truth: bound everything
+    // the parser read before it can index a table or steer the engine.
+    if (s->program < -1 || s->program >= (int)PW_FACTORY_N) s->program = -1;
+    if (s->bank < 0 || s->bank > 127) s->bank = 0;
+    if (!(trim >= 0.0f && trim <= 1.0f)) trim = 0.0f;      // also kills NaN
     s->markSource(0, s->program, s->srcFile_);   // restored session floats as saved
-    if (s->program >= 0 && !std::memcmp(patch.raw, PW_FACTORY_RAW[s->program], 133))
+    if (s->program >= 0 && !std::memcmp(patch.raw, PW_FACTORY_RAW[s->program], 133)
+        && patch.raw[133] == 0)   // factory identity only while the extension byte is 0
     { s->curSrc_.kind = p5store::SourceKind::Factory; s->curSrc_.factory = s->program; }
     else if (!s->srcFile_.empty())
     { s->curSrc_.kind = p5store::SourceKind::File; s->curSrc_.file = s->srcFile_; }
@@ -1082,10 +1094,10 @@ const clap_plugin_preset_load_t kPresetLoad = { preset_from_location };
 // name) so the first thing you see when loading is "Peace Be Upon Him".
 static void seedDefaultPatch(Plugin *s)
 {
-    uint8_t raw[133];
+    uint8_t raw[134];
     if (p5store::loadPatch("Peace Be Upon Him", raw))
     {   // the user recorded a real default: that file IS the default patch now
-        p5::Patch p; std::memset(&p, 0, sizeof p); std::memcpy(p.raw, raw, 133);
+        p5::Patch p; std::memset(&p, 0, sizeof p); std::memcpy(p.raw, raw, 134);
         p.size = 133; p.model = 0x32; p.command = 3;
         s->engine.setPatch(p);
         s->markSource(1, -1, "Peace Be Upon Him");

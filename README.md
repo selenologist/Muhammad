@@ -117,7 +117,7 @@ its A/B build standalone.
   decimator never sits inside a voice's FEEDBACK loop. Not bit-exact by design (the
   decimator IS the difference); the 1x path remains bit-exact. Reports 3
   samples via the CLAP latency extension; state blob v2 carries the flag.
-  Cost: 8 voices at 690 ns/sample (~3% of one core at 44.1k), and measured
+  Cost: 8 voices at 2× is ~400 ns/sample on the wide path (~12% of one core at 44.1k; the 1× path runs ~205 ns), and measured
   on hard-sync saws it cleans the inter-harmonic alias floor from -74 dB to
   -78 dB — modest because the firmware's BLEP already does the heavy lifting.
 * **The >110-velocity filter accent is a no-op on this engine** — the firmware

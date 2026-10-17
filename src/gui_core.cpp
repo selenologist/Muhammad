@@ -658,6 +658,10 @@ bool onPointerPress(GuiCore &c, float px, float py, unsigned mods, unsigned time
         }
         return dirty;                                 // page is modal: swallow the press
     }
+    if (p5ui::nameDispAt(p5ui::State{}, px, py, (float)c.w, (float)c.h) >= 0)
+    {   c.modal = 4; c.pickerTab = 0; c.pickerPage = 0;   // the patch-name screen
+        return true;                                      // opens the picker, same
+    }                                                     // as the PRESET button
     c.dragKnob = p5ui::knobAt(p5ui::State{}, px, py, (float)c.w, (float)c.h);
     if (c.dragKnob >= 0)
     {

@@ -978,6 +978,15 @@ int knobAt(const State &, float px, float py, float w, float h)
     return -1;
 }
 
+int nameDispAt(const State &, float px, float py, float w, float h)
+{
+    float lx, ly;
+    toLayout(w, h, px, py, lx, ly);
+    const Disp &d = kDisplays[0];              // the one display IS the name screen
+    if (lx < d.x || lx > d.x + d.w || ly < d.y || ly > d.y + d.h) return -1;
+    return 0;
+}
+
 int btnAt(const State &, float px, float py, float w, float h)
 {
     float lx, ly;

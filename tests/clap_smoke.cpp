@@ -375,6 +375,45 @@ auto rd7 = [](const clap_istream_t *s, void *b, uint64_t n) -> int64_t {
         check("v6 blob loads with tail stripped (compat)", ok6 && blob6.size() == blob9.size() - tail);
     }
 
+    {   // REGRESSION (final hardening pass): the v11 blob must carry the
+        // FEEDBACK extension byte (bits 0..6 amount, bit 7 polarity) through a
+        // save -> zero -> load round trip. The tail memcpy once truncated to
+        // 133 bytes and silently dropped it from every restored session.
+        const clap_plugin_params_t *pf = (const clap_plugin_params_t *)
+            plugin->get_extension(plugin, CLAP_EXT_PARAMS);
+        const clap_plugin_state_t *sf = (const clap_plugin_state_t *)
+            plugin->get_extension(plugin, CLAP_EXT_STATE);
+        {   clap_event_param_value p57{};
+            p57.header.type = CLAP_EVENT_PARAM_VALUE; p57.header.size = sizeof p57;
+            p57.header.time = 0; p57.param_id = 57; p57.value = 91.0;
+            EventList e57{ { &p57.header } };
+            clap_input_events_t in57{ &e57, EL_size, EL_get };
+            pf->flush(plugin, &in57, &out); }
+        std::vector<char> fbb;
+        struct OFB { static int64_t wfb(const clap_ostream_t *o, const void *d, uint64_t n) {
+            auto *v = (std::vector<char> *)o->ctx; const char *p2 = (const char *)d;
+            v->insert(v->end(), p2, p2 + n); return (int64_t)n; } };
+        clap_ostream_t osfb{ &fbb, OFB::wfb };
+        bool saved = sf->save(plugin, &osfb) && fbb.size() > 8 + 134;
+        bool inBlob = saved && (uint8_t)fbb[8 + 133] == 91;      // raw sits right after the head
+        {   clap_event_param_value z57{};
+            z57.header.type = CLAP_EVENT_PARAM_VALUE; z57.header.size = sizeof z57;
+            z57.header.time = 0; z57.param_id = 57; z57.value = 0.0;
+            EventList ez{ { &z57.header } };
+            clap_input_events_t inz{ &ez, EL_size, EL_get };
+            pf->flush(plugin, &inz, &out); }        // wipe it, prove load restores
+        auto rdfb = [](const clap_istream_t *is, void *b, uint64_t n) -> int64_t {
+            auto *st = (std::pair<std::vector<char>*, size_t> *)is->ctx;
+            if (st->second + n > st->first->size()) return 0;
+            std::memcpy(b, st->first->data() + st->second, n); st->second += n; return (int64_t)n; };
+        bool loaded = false;
+        {   std::pair<std::vector<char>*, size_t> cur{ &fbb, 0 };
+            clap_istream_t isfb{ &cur, rdfb };
+            loaded = sf->load(plugin, &isfb); }
+        double fbv = -1; pf->get_value(plugin, 57, &fbv);
+        check("state blob round-trips the FEEDBACK byte", loaded && fbv == 91.0 && inBlob);
+    }
+
     {   // PAN WIDTH: readback, then a real per-voice stereo spread on the SIMD path
         const clap_plugin_params_t *pa2 = (const clap_plugin_params_t *)plugin->get_extension(plugin, CLAP_EXT_PARAMS);
         clap_event_param_value pv2{};

@@ -167,6 +167,10 @@ bool hitClose(float lx, float ly);
 }
 void pointToLayout(float px, float py, float w, float h, float &lx, float &ly);
 int knobAt(const State &s, float px, float py, float w, float h);
+
+// click target for the programmer display (the patch-NAME screen): opens the
+// preset picker exactly like the PRESET button does. Returns 0 on a hit.
+int nameDispAt(const State &s, float px, float py, float w, float h);
 int btnAt(const State &s, float px, float py, float w, float h);
 
 // Knob drag: fractional range per 100 px of vertical movement.
