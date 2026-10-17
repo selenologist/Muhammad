@@ -198,7 +198,17 @@ void pump(Ctx &c)
             // trim the ancestor's excess ourselves. Budget 2, re-armed by
             // any configure.
             const long wantH = (long)(pa.width * p5ui::kPanelH / p5ui::kPanelW);
-            if (c.topTries >= 10 && (pa.height > wantH + 40) && !c.getSizeCalls &&
+            // LEARN when the slot is proven hostile by EITHER exhaustion
+            // path: the trim budget spent (fighting an always-re-asserting
+            // host, my harness) OR the anti-fight stop reached (Bitwig's
+            // trims came back larger -> ineffective -> stopped at 2 of 10,
+            // which the first learn gate waited on and could thus never
+            // fire - the user had to set gui.conf by hand). get_size never
+            // called = the host doesn't consult the plugin's size at all,
+            // the decisive tell; cooperative hosts (Ardour's wrapper) have
+            // a non-zero counter and are never learned against.
+            const bool trimmedOut = c.topTries >= 10 || c.trimIneffective >= 2;
+            if (trimmedOut && pa.height > wantH + 40 && !c.getSizeCalls &&
                 !gLearnedFloat)
             {   gLearnedFloat = true; autoLearnFloat(); }
             if (pa.height > wantH + 40 && c.topTries < 10 &&

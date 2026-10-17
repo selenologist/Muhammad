@@ -405,9 +405,10 @@ so the layers are:
    `mode=embed` forces the polite path; the env `P5_GUI_MODE` stays as a
    developer override below the config in precedence.
    And nobody has to know any of this: if a session proves the host owns
-   the slot (ask budget spent, trim budget spent, and `get_size` was never
-   called), the plugin WRITES `gui.conf mode=float` for the next session by
-   itself, with the verdict on stderr and the decision source printed on
+   the slot (the trim path ENDS — budget exhausted, or two trims read back
+   same-or-larger and the anti-fight stop kicks in — while `get_size` was
+   never called once), the plugin WRITES `gui.conf mode=float` for the next
+   session by itself, with the verdict on stderr and the decision source printed on
    the debug page (`mode src ...`). X11-only for now; win32/mac float modes
    follow when those platforms get runtime testers.
 
