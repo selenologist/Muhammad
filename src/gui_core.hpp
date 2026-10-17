@@ -108,7 +108,10 @@ struct GuiCore
                                               // forever (the 1 Hz flicker)
     long acceptedAtMs = 0;                    // stamp of the last ACCEPTED ask
     bool giveUpOnHost = false;                // REFUSED seen; cleared when the
-                                              // window finally lands at aspect                     // last request_resize verdict (1/0/-1 none)
+                                              // window finally lands at aspect
+    unsigned long trimWid = 0;                // last window we resized
+    uint32_t trimAfterW = 0, trimAfterH = 0;  // its geometry AFTER resize (XSync readback)
+    int  getSizeCalls = 0;                    // did the host ever ask our size?                     // last request_resize verdict (1/0/-1 none)
     int  topTries = 0;                        // top-level (host window) shrink budget
     long topNextMs = 0;
     char dbg[1200] = {};

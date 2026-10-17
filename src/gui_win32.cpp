@@ -326,7 +326,7 @@ void pump(Ctx &c)
             // the X11 shim; budget + throttle live in GuiCore).
             const int slotH = (int)(pr.bottom - pr.top);
             const long wantH = (long)((long)(pr.right - pr.left) * p5ui::kPanelH / p5ui::kPanelW);
-            if (slotH > wantH + 40 && c.topTries < 5 && coreShouldTrimNow(c, (long)GetTickCount()))
+            if (slotH > wantH + 40 && c.topTries < 10 && coreShouldTrimNow(c, (long)GetTickCount()))
             {   const long t = (long)GetTickCount();
                 if (t >= c.topNextMs)
                 {   c.topNextMs = t + 1500;
@@ -507,6 +507,7 @@ bool gui_set_scale(const clap_plugin_t *p, double scale)
 }
 bool gui_get_size(const clap_plugin_t *p, uint32_t *w, uint32_t *h)
 {
+    if (auto *cc = ctxFrom(p)) cc->getSizeCalls++;
     double scale = 1.0;
     if (auto *c = ctxFrom(p)) if (c->scale > 0.0) scale = c->scale;
     *w = (uint32_t)(p5ui::kPanelW * scale + 0.5);

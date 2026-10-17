@@ -883,11 +883,13 @@ void buildDebugText(GuiCore &c)
     line("gui: api %s  clap.gui svc %s  timer %s  scale %.2f",
          c.guiApi, c.hostGui ? "present" : "absent",
          c.timerRegistered ? "registered" : "none", c.scale);
-    line("negotiation: asks %d/3 %s  top-trim %d/5 give-up %d  chassis %d",
+    line("negotiation: asks %d/3 %s  top-trim %d/10 give-up %d  chassis %d",
          c.totalAsks,
          c.askLastRet < 0 ? "none" : (c.askLastRet ? "ACCEPTED" : "REFUSED"),
          c.topTries, (int)c.giveUpOnHost,
          (int)((float)c.h > (float)c.w * p5ui::kPanelH / p5ui::kPanelW + 3.f));
+    line("trim readback: 0x%lx now %ux%u   (get_size was called %d times)",
+         c.trimWid, c.trimAfterW, c.trimAfterH, c.getSizeCalls);
     line("window: win %ux%u  parent %ux%u  ancestor %ux%u",
          c.w, c.h, c.parW, c.parH, c.ancW, c.ancH);
     line("audio: sr %.0f  block %u  oversample %d  polyphony %d  live %u  simd %s",

@@ -104,7 +104,7 @@ struct Ctx : GuiCore
     void trimWindowIfTall()
     {
         NSWindow *win = view.window;
-        if (!win || topTries >= 5 || !coreShouldTrimNow(*this, (long)([NSProcessInfo processInfo].systemUptime * 1000.0)))
+        if (!win || topTries >= 10 || !coreShouldTrimNow(*this, (long)([NSProcessInfo processInfo].systemUptime * 1000.0)))
             return;
         const double sc = s();
         const long wantH = (long)(view.bounds.size.width * sc * p5ui::kPanelH / p5ui::kPanelW);
@@ -424,6 +424,7 @@ static bool gui_set_scale(const clap_plugin_t *p, double scale)
 }
 static bool gui_get_size(const clap_plugin_t *p, uint32_t *w, uint32_t *h)
 {
+    if (auto *cc = ctxFrom(p)) cc->getSizeCalls++;
     // Cocoa contract: logical points. Natural proposal at 0.75 layout scale,
     // same as the other platforms; backing scaling is ours.
     (void)p;

@@ -153,7 +153,7 @@ void pump(Ctx &c)
             // trim the ancestor's excess ourselves. Budget 2, re-armed by
             // any configure.
             const long wantH = (long)(pa.width * p5ui::kPanelH / p5ui::kPanelW);
-            if (pa.height > wantH + 40 && c.topTries < 5 && coreShouldTrimNow(c, t))
+            if (pa.height > wantH + 40 && c.topTries < 10 && coreShouldTrimNow(c, t))
             {
                 if (t >= c.topNextMs)
                 {
@@ -176,10 +176,23 @@ void pump(Ctx &c)
                                 XFree(ch.res_class); }
                             if (ch.res_name) XFree(ch.res_name); }
                         const int nh = ta.height - (pa.height - (int)wantH);
-                        std::fprintf(stderr, "[p5gui] host kept slot %dx%d; shrinking top-level 0x%lx %dx%d -> %dx%d (try %d)\n",
+                        const int tgtH = nh > (int)wantH ? nh : (int)wantH;
+                        std::fprintf(stderr, "[p5gui] host kept slot %dx%d; shrinking top 0x%lx %dx%d -> %dx%d + holder 0x%lx (try %d)\n",
                                      pa.width, pa.height, (unsigned long)top,
-                                     ta.width, ta.height, ta.width, nh, c.topTries);
-                        XResizeWindow(c.dpy, top, ta.width, nh > (int)wantH ? nh : (int)wantH);
+                                     ta.width, ta.height, ta.width, tgtH,
+                                     (unsigned long)c.parent, c.topTries);
+                        // Resize the WM top-level AND the immediate holder: JUCE
+                        // re-lays out from whichever component actually shrinks.
+                        XResizeWindow(c.dpy, top, ta.width, tgtH);
+                        if (top != c.parent) XResizeWindow(c.dpy, c.parent, pa.width, (int)wantH);
+                        XFlush(c.dpy);
+                        XSync(c.dpy, False);                 // apply, then read truth
+                        XWindowAttributes va{};
+                        if (XGetWindowAttributes(c.dpy, top, &va))
+                        {   c.trimWid = (unsigned long)top;
+                            c.trimAfterW = (uint32_t)va.width; c.trimAfterH = (uint32_t)va.height; }
+                        std::fprintf(stderr, "[p5gui] trim readback: top 0x%lx now %dx%d\n",
+                                     (unsigned long)top, va.width, va.height);
                     }
                 }
             }
@@ -379,7 +392,8 @@ bool setupEmbedded(Ctx &c, Window parent)
     classHint.res_class = const_cast<char *>("Muhammad");
     XSetClassHint(c.dpy, c.win, &classHint);
     XSizeHints *sh = XAllocSizeHints();
-    sh->flags = PAspect | PMinSize;
+    sh->flags = PAspect | PMinSize | PSize;
+    sh->width = (int)(p5ui::kPanelW * 0.75); sh->height = (int)(p5ui::kPanelH * 0.75);
     sh->min_aspect.x = sh->max_aspect.x = (int)p5ui::kPanelW;   // 1560:416, exactly
     sh->min_aspect.y = sh->max_aspect.y = (int)p5ui::kPanelH;
     sh->min_width = 520; sh->min_height = 139;
@@ -453,6 +467,7 @@ bool gui_set_scale(const clap_plugin_t *p, double scale)
 }
 bool gui_get_size(const clap_plugin_t *p, uint32_t *w, uint32_t *h)
 {
+    if (auto *cc = ctxFrom(p)) cc->getSizeCalls++;
     double scale = 1.0;
     if (auto *c = ctxFrom(p)) if (c->scale > 0.0) scale = c->scale;
     *w = (uint32_t)(p5ui::kPanelW * 0.75 * scale);
