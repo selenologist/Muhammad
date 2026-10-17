@@ -20,6 +20,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <unistd.h>
 #include <ctime>
 
 #include "gui_core.hpp"
@@ -399,6 +400,7 @@ void pump(Ctx &c)
         autoLearnFloat();          // persist: next session floats from tick one
         switchToFloat(c);          // AND escape this session right now
     }
+    if (c.plugin) c.plugin->maybePingLatency();
     // (shrink-negotiation removed: surplus height is now DRAWN chassis, so
     // asking the host to shrink it would fight the ancestor-grow request)
 }
@@ -498,6 +500,7 @@ void switchToFloat(Ctx &c)
     // inside setupFloating. The host keeps thinking it embedded us - it is
     // wrong, visibly, and that is the point.
     std::fprintf(stderr, "[p5gui] switching to FLOATING mid-session\n");
+    if (c.plugin) c.plugin->trail("switch_to_float");
     const Window anchor = c.parent;
     const uint32_t rw = c.w, rh = c.h;
     teardown(c);
@@ -643,23 +646,12 @@ bool gui_create(const clap_plugin_t *p, const char *api, bool is_floating)
             c.hostGui = (const clap_host_gui_t *)s->host->get_extension(s->host, CLAP_EXT_GUI);
         std::fprintf(stderr, "[p5gui] host clap.gui service %s\n", c.hostGui ? "present" : "absent");
     }
+    if (auto *s0 = static_cast<Plugin *>(p->plugin_data))
+    {   char b[64]; std::snprintf(b, sizeof b, "gui_create api=%s float=%d", api?api:"-", (int)is_floating);
+        s0->trail(b); }
     if (auto *cc = ctxFrom(p))
     {   if (api) std::strncpy(cc->guiApi, api, sizeof cc->guiApi - 1);
         cc->floating = is_floating || modeFloat();  // env can FORCE float
-        auto *pl = static_cast<Plugin *>(p->plugin_data);
-        if (!cc->floating && !gExplicitEmbed && pl && pl->host && pl->host->name)
-        {   // HOST POLICY: Bitwig Studio (measured via its own clap_host_t:
-            // name="Bitwig Studio", vendor="Bitwig GmbH") never consults
-            // get_size and owns the embedded slot's size absolutely - float
-            // from the FIRST session instead of losing one to the inference
-            // chain (which still runs for any other host).
-            char low[64]; size_t li = 0;
-            for (const char *q = pl->host->name; *q && li + 1 < sizeof low; q++, li++)
-                low[li] = (char)(*q >= 'A' && *q <= 'Z' ? *q + 32 : *q);
-            low[li] = 0;
-            if (std::strstr(low, "bitwig"))
-            {   cc->floating = true; gModeSource = "host policy (Bitwig)"; }
-        }
         cc->modeSource = cc->floating ? gModeSource : "embedded";
             cc->modeSource = cc->floating ? gModeSource : "embedded";
         gActiveCtx = static_cast<Ctx *>(cc);
@@ -672,6 +664,7 @@ bool gui_create(const clap_plugin_t *p, const char *api, bool is_floating)
 void gui_destroy(const clap_plugin_t *p)
 {
     auto *s = static_cast<Plugin *>(p->plugin_data);
+    s->trail("gui_destroy");
     if (!s->gui) return;
     Ctx &c = *static_cast<Ctx *>(s->gui);
     unregisterTimer(c);
@@ -759,6 +752,7 @@ void gui_suggest_title(const clap_plugin_t *, const char *) {}
 bool gui_show(const clap_plugin_t *p)
 {
     std::fprintf(stderr, "[p5gui] show\n");
+    if (auto *s0 = static_cast<Plugin *>(p->plugin_data)) s0->trail("gui_show");
     auto *c = ctxFrom(p);
     if (!c) return false;
     if (c->floating && !c->win && !setupFloating(*c)) return false;
@@ -772,6 +766,7 @@ bool gui_show(const clap_plugin_t *p)
 }
 bool gui_hide(const clap_plugin_t *p)
 {
+    if (auto *s0 = static_cast<Plugin *>(p->plugin_data)) s0->trail("gui_hide");
     auto *c = ctxFrom(p);
     if (!c || !c->win) return false;
     unregisterTimer(*c);

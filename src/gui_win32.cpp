@@ -374,6 +374,7 @@ void pump(Ctx &c)
         }
     }
     if (dirty) paintNow(c);
+    if (c.plugin) c.plugin->maybePingLatency();
 }
 
 // ---- lifecycle ---------------------------------------------------------------------

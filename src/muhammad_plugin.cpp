@@ -6,6 +6,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
+#if !defined(_WIN32)
+#include <unistd.h>     // getpid (gui_trail.log breadcrumb)
+#endif
 #if defined(__SSE__) || defined(__SSE2__)
 #include <xmmintrin.h>          // MXCSR FTZ/DAZ: denormals must never tax the audio thread
 #endif
@@ -369,6 +373,31 @@ void Plugin::recallBasicInit()
     syncAllParams();
 }
 
+void Plugin::trail(const char *ev)
+{
+#if !defined(_WIN32)
+    const std::string dir = p5store::baseDir();
+    if (dir.empty()) return;
+    if (FILE *f = std::fopen((dir + "/gui_trail.log").c_str(), "ae"))
+    {   timespec ts{}; clock_gettime(CLOCK_REALTIME, &ts);
+        std::tm bt{}; localtime_r(&ts.tv_sec, &bt);
+        std::fprintf(f, "%02d:%02d:%02d.%03ld pid %ld  %s\n",
+                     bt.tm_hour, bt.tm_min, bt.tm_sec, ts.tv_nsec / 1000000,
+                     (long)getpid(), ev);
+        std::fclose(f);
+    }
+#else
+    (void)ev;
+#endif
+}
+
+void Plugin::maybePingLatency()
+{
+    if (!latencyDirty || !active || !host || !host->get_extension) return;
+    auto *l = (const clap_host_latency_t *)host->get_extension(host, CLAP_EXT_LATENCY);
+    if (l && l->changed) { l->changed(host); latencyDirty = false; }
+}
+
 void Plugin::savePatchNamed(const std::string &name)
 {
     loadTag_ = "saved";
@@ -600,6 +629,7 @@ static void plugin_destroy(const clap_plugin_t *p)
     // Ctx and its REGISTERED HOST TIMER would outlive the plugin - the
     // next timer dispatch would hit freed memory. kGui.destroy is safe to
     // call here: it early-outs once (and only once) a live Ctx exists.
+    s->trail("plugin_destroy");
     if (s->gui && kGui.destroy) kGui.destroy(p);
     delete s->self;
     delete s;
@@ -624,10 +654,14 @@ static void plugin_deactivate(const clap_plugin_t *p)
 {
     auto *s = fromPlugin(p);
     s->active = false;
-    if (s->latencyDirty && s->host && s->host->get_extension) {
-        auto *l = (const clap_host_latency_t *)s->host->get_extension(s->host, CLAP_EXT_LATENCY);
-        if (l && l->changed) l->changed(s->host);
-    }
+    // Latency is NEVER announced during deactivate. The ping makes the host
+    // re-query us and reconfigure graph latency - from INSIDE a teardown,
+    // which is a prime way to crash a JUCE engine deleting a track (the
+    // Bitwig device-delete crash). It is also pointless: hosts re-read
+    // get_latency() at every activate, so a change that happened while
+    // active takes effect at the next activation. Keep the flag for
+    // in-session transitions... there are none: activation state is the
+    // only place latency is consulted.
     s->latencyDirty = false;
 }
 
