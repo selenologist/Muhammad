@@ -315,9 +315,39 @@ void pump(Ctx &c)
     {   RECT pr{};
         if (GetClientRect(c.parent, &pr))
         {   uint32_t ow = 0, oh = 0;
-            if (coreMirrorSlot(c, (int)(pr.right - pr.left), (int)(pr.bottom - pr.top), ow, oh))
+            if (coreMirrorSlot(c, (int)(pr.right - pr.left), (int)(pr.bottom - pr.top),
+                               ow, oh, (long)GetTickCount()))
             {   MoveWindow(c.win, 0, 0, (int)ow, (int)oh, TRUE);
                 dirty = true; }
+            // host won't shrink its own window and its drag locks the launch
+            // aspect: trim the root window by exactly the dead band (mirrors
+            // the X11 shim; budget + throttle live in GuiCore).
+            const int slotH = (int)(pr.bottom - pr.top);
+            const long wantH = (long)((long)(pr.right - pr.left) * p5ui::kPanelH / p5ui::kPanelW);
+            const bool askedAndRefused = !c.hostGui || !c.hostGui->request_resize ||
+                                         c.resizeRequests >= 3 || c.askLastRet == 0;
+            if (slotH > wantH + 40 && c.topTries < 2 && askedAndRefused)
+            {   const long t = (long)GetTickCount();
+                if (t >= c.topNextMs)
+                {   c.topNextMs = t + 1500;
+                    c.topTries++;
+                    HWND root = GetAncestor(c.parent, GA_ROOT);
+                    RECT gr{};
+                    if (root && GetWindowRect(root, &gr))
+                    {   if (c.hostName[0] == 'u')
+                        {   char nb[72] = {};
+                            if (GetWindowTextA(root, nb, (int)sizeof nb - 1) > 0)
+                                std::snprintf(c.hostName, sizeof c.hostName, "%.64s", nb); }
+                        const int nh = (gr.bottom - gr.top) - (slotH - (int)wantH);
+                        std::fprintf(stderr, "[p5gui] host kept slot %dx%ld; trimming root HWND %p -> height %d (try %d)\n",
+                                     (int)(pr.right - pr.left), (long)slotH, (void *)root,
+                                     nh > (int)wantH ? nh : (int)wantH, c.topTries);
+                        SetWindowPos(root, nullptr, 0, 0, gr.right - gr.left,
+                                     nh > (int)wantH ? nh : (int)wantH,
+                                     SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+                    }
+                }
+            }
         }
     }
     // Measure wrapper + ancestor every ~1s (diag) and politely ask the host
@@ -445,7 +475,6 @@ bool gui_create(const clap_plugin_t *p, const char *api, bool is_floating)
 {
     std::fprintf(stderr, "[p5gui] create api=%s floating=%d\n", api ? api : "(null)", (int)is_floating);
     if (!gui_is_api_supported(p, api, is_floating)) return false;
-    if (auto *cc = ctxFrom(p)) if (api) std::strncpy(cc->guiApi, api, sizeof cc->guiApi - 1);
     auto *s = static_cast<Plugin *>(p->plugin_data);
     if (!s->gui)
     {
@@ -456,6 +485,7 @@ bool gui_create(const clap_plugin_t *p, const char *api, bool is_floating)
             c.hostGui = (const clap_host_gui_t *)s->host->get_extension(s->host, CLAP_EXT_GUI);
         std::fprintf(stderr, "[p5gui] host clap.gui service %s\n", c.hostGui ? "present" : "absent");
     }
+    if (auto *cc = ctxFrom(p)) if (api) std::strncpy(cc->guiApi, api, sizeof cc->guiApi - 1);
     return true;
 }
 void gui_destroy(const clap_plugin_t *p)

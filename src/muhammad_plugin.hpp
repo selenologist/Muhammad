@@ -32,6 +32,7 @@ struct Plugin {
     clap_plugin_t *self = nullptr;
     p5::Engine engine{p5::KernelMode::Auto};
     double sr = 44100.0;
+    uint32_t minBlock = 0;                  // from activate (debug page)
     bool active = false;
     float trim = 0.5f;   // headroom for stacked full-velocity voices (parameter 0..2)
     int32_t scratch[32] = {0};

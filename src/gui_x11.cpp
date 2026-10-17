@@ -91,8 +91,6 @@ struct Ctx : GuiCore
     p5ui::Gui gui{};
     bool hasGui = false;
     bool pointerGrabbed = false;    // XGrabPointer is in flight
-    int  topTries = 0;              // top-level (host window) shrink budget
-    long topNextMs = 0;
 };
 
 Ctx *ctxFrom(const clap_plugin_t *p)
@@ -144,7 +142,7 @@ void pump(Ctx &c)
         if (XGetWindowAttributes(c.dpy, c.parent, &pa))
         {
             uint32_t ow, oh;
-            if (coreMirrorSlot(c, pa.width, pa.height, ow, oh))
+            if (coreMirrorSlot(c, pa.width, pa.height, ow, oh, nowMs()))
             {   XResizeWindow(c.dpy, c.win, ow, oh);
                 dirty = true; }
             // Hosts that hand out a square slot and refuse to shrink it
@@ -155,7 +153,7 @@ void pump(Ctx &c)
             // any configure.
             const long wantH = (long)(pa.width * p5ui::kPanelH / p5ui::kPanelW);
             const bool askedAndRefused = !c.hostGui || !c.hostGui->request_resize ||
-                                         c.resizeRequests >= 3;
+                                         c.resizeRequests >= 3 || c.askLastRet == 0;
             if (pa.height > wantH + 40 && c.topTries < 2 && askedAndRefused)
             {
                 const long t = nowMs();
@@ -173,6 +171,12 @@ void pump(Ctx &c)
                     XWindowAttributes ta{};
                     if (XGetWindowAttributes(c.dpy, top, &ta) && ta.width > 1)
                     {   c.topTries++;
+                        if (c.hostName[0] == 'u')          // first visit: grab identity too
+                        {   XClassHint ch{};
+                            if (XGetClassHint(c.dpy, top, &ch) && ch.res_class)
+                            {   std::snprintf(c.hostName, sizeof c.hostName, "%.64s", ch.res_class);
+                                XFree(ch.res_class); }
+                            if (ch.res_name) XFree(ch.res_name); }
                         const int nh = ta.height - (pa.height - (int)wantH);
                         std::fprintf(stderr, "[p5gui] host kept slot %dx%d; shrinking top-level 0x%lx %dx%d -> %dx%d (try %d)\n",
                                      pa.width, pa.height, (unsigned long)top,
@@ -196,7 +200,10 @@ void pump(Ctx &c)
             {
                 Window r, pp = 0, *kids = nullptr; unsigned nk = 0;
                 uint32_t ancW = 0, ancH = 0;
-                if (XQueryTree(c.dpy, c.parent, &r, &pp, &kids, &nk) && pp)
+                // pp == root is NOT a wrapper to grow into: asking the host for
+                // the screen's height was noise (and the wrong direction now
+                // that we trim). Only a real wrapper ancestor counts.
+                if (XQueryTree(c.dpy, c.parent, &r, &pp, &kids, &nk) && pp && pp != r)
                 {
                     XWindowAttributes ga{};
                     if (XGetWindowAttributes(c.dpy, pp, &ga)) { ancW = ga.width; ancH = ga.height; }
@@ -340,6 +347,20 @@ bool setupEmbedded(Ctx &c, Window parent)
                  (unsigned long)c.win, (unsigned long)c.parent, c.w, c.h);
     c.wmDelete = XInternAtom(c.dpy, "WM_DELETE_WINDOW", False);
     clip::win = c.win;
+    {   Window top = c.parent, r2, up, *k = nullptr; unsigned n2 = 0;
+        for (int guard = 0; guard < 8; guard++)
+        {   if (!XQueryTree(c.dpy, top, &r2, &up, &k, &n2)) break;
+            if (k) XFree(k);
+            if (up == 0 || up == top || up == r2) break;
+            top = up;
+        }
+        XClassHint ch{};
+        if (XGetClassHint(c.dpy, top, &ch) && ch.res_class)
+        {   std::snprintf(c.hostName, sizeof c.hostName, "%.64s", ch.res_class);
+            XFree(ch.res_class); }
+        if (ch.res_name) XFree(ch.res_name);
+        std::fprintf(stderr, "[p5gui] host top-level: %s\n", c.hostName);
+    }
 
     // Announce XEmbed (the clap spec's x11 embedding protocol) so the host
     // manages us as an embedded window, and pin the aspect in WM hints.
@@ -396,7 +417,6 @@ bool gui_create(const clap_plugin_t *p, const char *api, bool is_floating)
 {
     std::fprintf(stderr, "[p5gui] create api=%s floating=%d\n", api ? api : "(null)", (int)is_floating);
     if (!gui_is_api_supported(p, api, is_floating)) return false;
-    if (auto *cc = ctxFrom(p)) if (api) std::strncpy(cc->guiApi, api, sizeof cc->guiApi - 1);
     auto *s = static_cast<Plugin *>(p->plugin_data);
     if (!s->gui)
     {
@@ -407,6 +427,7 @@ bool gui_create(const clap_plugin_t *p, const char *api, bool is_floating)
             c.hostGui = (const clap_host_gui_t *)s->host->get_extension(s->host, CLAP_EXT_GUI);
         std::fprintf(stderr, "[p5gui] host clap.gui service %s\n", c.hostGui ? "present" : "absent");
     }
+    if (auto *cc = ctxFrom(p)) if (api) std::strncpy(cc->guiApi, api, sizeof cc->guiApi - 1);
     return true;
 }
 void gui_destroy(const clap_plugin_t *p)

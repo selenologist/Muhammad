@@ -99,6 +99,30 @@ struct Ctx : GuiCore
 
     void requestRedraw() { if (view) [view setNeedsDisplay:YES]; }
 
+    // cocoa has no WM: trim OUR NSWindow the same way the X11 shim trims the
+    // host top-level, keeping chrome height.
+    void trimWindowIfTall()
+    {
+        NSWindow *win = view.window;
+        if (!win || topTries >= 2) return;
+        const double sc = s();
+        const long wantH = (long)(view.bounds.size.width * sc * p5ui::kPanelH / p5ui::kPanelW);
+        const long curH  = (long)(view.bounds.size.height * sc + 0.5);
+        if (curH <= wantH + 40) return;
+        const long t = (long)([NSProcessInfo processInfo].systemUptime * 1000.0);
+        if ((unsigned long)(t - (long)topNextMs) < 1500u) return;
+        topNextMs = (long)t;
+        topTries++;
+        const NSSize fs = win.frame.size;
+        const NSSize cs = win.contentView ? win.contentView.bounds.size : fs;
+        const double chrome = fs.height - cs.height;
+        const double newH = (double)wantH / sc + chrome;
+        std::fprintf(stderr, "[p5gui] host kept view %lx%lx; trimming window %.0fx%.0f -> %.0fx%.0f (try %d)\n",
+                     (unsigned long)view.bounds.size.width, (unsigned long)view.bounds.size.height,
+                     fs.width, fs.height, fs.width, newH, topTries);
+        [win setContentSize:NSMakeSize(fs.width, newH)];
+    }
+
     void consumeFocus()
     {
         if (needFocus && view.window)
@@ -144,6 +168,9 @@ struct Ctx : GuiCore
         view.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
         view.wantsLayer = YES;
         [host addSubview:view];
+        if (NSRunningApplication *me = NSWorkspace.sharedWorkspace.frontmostApplication)
+            std::snprintf(hostName, sizeof hostName, "%.64s",
+                          me.localizedName.UTF8String ?: "mac host");
         std::fprintf(stderr, "[p5gui] NSView attached to host view, frame %.0fx%.0f\n",
                      host.bounds.size.width, host.bounds.size.height);
         if (!setupGL()) { teardown(); return false; }
@@ -173,6 +200,7 @@ struct Ctx : GuiCore
         if (!view) return;
         syncPixels();
         consumeFocus();
+        trimWindowIfTall();
         const long t = (long)([NSProcessInfo processInfo].systemUptime * 1000.0);
         if ((unsigned long)(t - (long)lastAskMs) >= 1000u)
         {
@@ -364,7 +392,6 @@ static bool gui_create(const clap_plugin_t *p, const char *api, bool is_floating
 {
     std::fprintf(stderr, "[p5gui] create api=%s floating=%d\n", api ? api : "(null)", (int)is_floating);
     if (!gui_is_api_supported(p, api, is_floating)) return false;
-    if (auto *cc = ctxFrom(p)) if (api) std::strncpy(cc->guiApi, api, sizeof cc->guiApi - 1);
     auto *s = static_cast<Plugin *>(p->plugin_data);
     if (!s->gui)
     {
@@ -375,6 +402,7 @@ static bool gui_create(const clap_plugin_t *p, const char *api, bool is_floating
             c.hostGui = (const clap_host_gui_t *)s->host->get_extension(s->host, CLAP_EXT_GUI);
         std::fprintf(stderr, "[p5gui] host clap.gui service %s\n", c.hostGui ? "present" : "absent");
     }
+    if (auto *cc = ctxFrom(p)) if (api) std::strncpy(cc->guiApi, api, sizeof cc->guiApi - 1);
     return true;
 }
 static void gui_destroy(const clap_plugin_t *p)

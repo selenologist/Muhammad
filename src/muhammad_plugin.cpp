@@ -598,10 +598,11 @@ static void plugin_destroy(const clap_plugin_t *p)
     delete s;
 }
 
-static bool plugin_activate(const clap_plugin_t *p, double sample_rate, uint32_t, uint32_t)
+static bool plugin_activate(const clap_plugin_t *p, double sample_rate, uint32_t min_block, uint32_t)
 {
     auto *s = fromPlugin(p);
     s->sr = sample_rate;
+    s->minBlock = min_block;
     s->engine.activate(sample_rate);
     s->engine.setSmoothing(true);   // PC playability; the A/B harness keeps it off
     s->engine.setPcMode(true);      // LFO INITIAL = wheel state at patch load

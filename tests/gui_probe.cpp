@@ -27,7 +27,17 @@ int main(int argc, char **argv)
     const clap_plugin_descriptor_t *desc = factory->get_plugin_descriptor(factory, 0);
     clap_host_t host{};
     host.clap_version = CLAP_VERSION_INIT;
-    host.get_extension = [](const clap_host_t *, const char *) -> const void * { return nullptr; };
+    static const clap_host_gui_t probeHostGui = {
+        [](const clap_host_t *) {},                                            // resize_hints_changed
+        [](const clap_host_t *, uint32_t w, uint32_t h) -> bool
+        {   std::fprintf(stderr, "[probe] host request_resize(%u,%u) -> refuse\n", w, h);
+            return false; },                                                  // request_resize
+        [](const clap_host_t *) -> bool { return true; },                     // request_show
+        [](const clap_host_t *) -> bool { return true; },                     // request_hide
+        [](const clap_host_t *, bool) {}                                      // closed
+    };
+    host.get_extension = [](const clap_host_t *, const char *id) -> const void *
+    {   return (!strcmp(id, CLAP_EXT_GUI)) ? (const void *)&probeHostGui : nullptr; };
     const clap_plugin_t *plugin = factory->create_plugin(factory, &host, desc->id);
     if (!plugin->init(plugin)) { std::printf("init fail\n"); return 2; }
     plugin->activate(plugin, 44100.0, 512.0, 1u /* steady */);

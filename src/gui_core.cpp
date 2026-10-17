@@ -18,6 +18,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdarg>
+#include <unistd.h>
 #include <cstdio>
 #include <cstring>
 
@@ -810,33 +811,38 @@ bool onChar(GuiCore &c, unsigned int ch)
 
 // ---- aspect negotiation -------------------------------------------------------
 
-bool coreMirrorSlot(GuiCore &c, int slotW, int slotH, uint32_t &outW, uint32_t &outH)
+bool coreMirrorSlot(GuiCore &c, int slotW, int slotH, uint32_t &outW, uint32_t &outH,
+                    long nowMs)
 {
     if (slotW <= 1 || slotH <= 1) return false;
+    const uint32_t wantH = (uint32_t)((uint64_t)slotW * p5ui::kPanelH / p5ui::kPanelW);
+
+    // The ASK is its own state machine, evaluated on EVERY pass: a host that
+    // resizes our child window directly to its oversized slot (Bitwig) makes
+    // slot == current size, and an early-out before the ask meant we never
+    // asked and never trimmed — the "rr 0/3, giant black window" deadlock.
+    if (slotH > (long)wantH + 20 && c.hostGui && c.hostGui->request_resize &&
+        c.resizeRequests < 3 && nowMs >= c.askNextMs)
+    {
+        c.askNextMs = nowMs + 1200;
+        const bool ok = c.hostGui->request_resize(c.plugin->host, (uint32_t)slotW, wantH);
+        c.resizeRequests++;
+        c.askLastRet = ok ? 1 : 0;
+        std::fprintf(stderr, "[p5gui] request_resize(%d,%u) -> host %s (rr %d)\n",
+                     slotW, wantH, ok ? "ACCEPTED" : "REFUSED", c.resizeRequests);
+    }
+
     if ((uint32_t)slotW == c.w && (uint32_t)slotH == c.h) return false;
     static int mirrorLogged = 0;
     if (!mirrorLogged++)
         std::fprintf(stderr, "[p5gui] mirroring parent geometry -> %dx%d\n", slotW, slotH);
-    // Fill whatever the host gave us: a taller-than-aspect slot is OURS and
-    // the renderer paints the extra as chassis (gradient well + wordmark),
-    // not host-black letterbox. We still ask the host to shrink to the panel
-    // aspect (budget 3) — compliant hosts get the tight window, Bitwig-style
-    // hosts get a clean rack card instead of a black band.
-    const uint32_t wantH = (uint32_t)((uint64_t)slotW * p5ui::kPanelH / p5ui::kPanelW);
+    // Until the window is actually right-sized (host complied, or the shim's
+    // top-level trim landed), the excess is OURS and gets chassis, not
+    // host-black. This is transient by design, not the steady state.
     outW = (uint32_t)slotW; outH = (uint32_t)slotH;
     c.w = outW; c.h = outH;
-    if (slotH > (long)wantH + 20 && c.hostGui && c.hostGui->request_resize &&
-        c.resizeRequests < 3)
-    {   c.resizeRequests++;
-        std::fprintf(stderr, "[p5gui] slot %dx%d taller than aspect; asked host for %dx%u (rr %d)\n",
-                     slotW, slotH, slotW, wantH, c.resizeRequests);
-        const bool ok = c.hostGui->request_resize(c.plugin->host, slotW, wantH);
-        std::fprintf(stderr, "[p5gui] request_resize(%d,%u) -> host %s\n",
-                     slotW, wantH, ok ? "ACCEPTED" : "REFUSED");
-    }
     return true;
 }
-
 void buildDebugText(GuiCore &c)
 {
     Plugin *P = c.plugin;
@@ -853,13 +859,27 @@ void buildDebugText(GuiCore &c)
     {   const std::string cur = P->currentFile();
         name = cur.empty() ? (const char *)P->engine.patch().raw + p5::P5_NAME : cur.c_str(); }
     line("Muhammad build: %s", P5_BUILD_INFO);
-    line("gui: api %s  host clap.gui svc %s  timer %s  rr %d/3  scale %.2f",
+    line("host: %.40s  pid %ld", c.hostName, (long)getpid());
+    {   static const char *const kProbe[] = { CLAP_EXT_GUI, CLAP_EXT_TIMER_SUPPORT, CLAP_EXT_LOG,
+            CLAP_EXT_LATENCY, CLAP_EXT_AUDIO_PORTS_CONFIG, CLAP_EXT_NOTE_NAME, CLAP_EXT_STATE };
+        char exts[160] = {}; int en = 0;
+        auto *hh = P->host;
+        for (unsigned q = 0; q < sizeof kProbe / sizeof *kProbe && en < 150; q++)
+        {   const void *x = (hh && hh->get_extension) ? hh->get_extension(hh, kProbe[q]) : nullptr;
+            if (x) en += std::snprintf(exts + en, sizeof exts - (size_t)en, "%s%s", en ? " " : "", kProbe[q] + 5); }
+        line("host ext: %.150s", exts[0] ? exts : "(none)");
+    }
+    line("gui: api %s  clap.gui svc %s  timer %s  scale %.2f",
          c.guiApi, c.hostGui ? "present" : "absent",
-         c.timerRegistered ? "registered" : "none", c.resizeRequests, c.scale);
+         c.timerRegistered ? "registered" : "none", c.scale);
+    line("negotiation: rr %d/3 ask %s  top-trim %d/2  chassis %d",
+         c.resizeRequests,
+         c.askLastRet < 0 ? "not-asked" : (c.askLastRet ? "ACCEPTED" : "REFUSED"),
+         c.topTries, (int)((float)c.h > (float)c.w * p5ui::kPanelH / p5ui::kPanelW + 3.f));
     line("window: win %ux%u  parent %ux%u  ancestor %ux%u",
          c.w, c.h, c.parW, c.parH, c.ancW, c.ancH);
-    line("audio: sr %.0f  oversample %d  polyphony %d  live voices %u  simd %s",
-         P->sr, P->engine.oversample(), P->engine.polyphony(),
+    line("audio: sr %.0f  block %u  oversample %d  polyphony %d  live %u  simd %s",
+         P->sr, P->minBlock, P->engine.oversample(), P->engine.polyphony(),
          (unsigned)P->engine.liveVoices(), P->engine.simdPath());
     line("patch: src %s  name %.20s", P->loadTag_, name);
     line("tuning: %.60s  tones %d  root %d  mask %03x  walk %d",

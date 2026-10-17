@@ -98,7 +98,12 @@ struct GuiCore
     // owner on X11, CF_UNICODETEXT on win32, NSPasteboard on cocoa) and
     // record the api the host asked for.
     bool (*copyText)(const char *text) = nullptr;
-    char guiApi[8] = "x11";
+    char guiApi[8] = "none";
+    char hostName[72] = "unknown host";       // WM_CLASS / window title / frontmost app
+    int  askLastRet = -1;
+    long askNextMs = 0;                       // ask throttle (1.2 s)                     // last request_resize verdict (1/0/-1 none)
+    int  topTries = 0;                        // top-level (host window) shrink budget
+    long topNextMs = 0;
     char dbg[1200] = {};
 };
 
@@ -119,7 +124,8 @@ bool onChar(GuiCore &c, unsigned int ch);                // true = inserted (tex
 // (for the grow-ask) the ancestor's, then calls these; the core owns the
 // "never taller than panel aspect" math, the request_resize budget and the
 // 1 s politeness window.
-bool coreMirrorSlot(GuiCore &c, int slotW, int slotH, uint32_t &outW, uint32_t &outH);
+bool coreMirrorSlot(GuiCore &c, int slotW, int slotH, uint32_t &outW, uint32_t &outH,
+                    long nowMs);
 void coreAncestorAsk(GuiCore &c, uint32_t parW, uint32_t parH,
                      uint32_t ancW, uint32_t ancH, long nowMs);
 

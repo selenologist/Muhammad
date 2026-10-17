@@ -327,74 +327,6 @@ void draw(const Gui &g, const State &s, float w, float h)
         }
     }
 
-    // ---- full debug info page (modal 10; click status strip to open) ----
-    if (s.debugOpen && s.debugText && s.debugText[0])
-    {
-        nvgBeginPath(g.vg);
-        nvgRect(g.vg, -xoff / sc, -yoff / sc, (w - xoff) / sc, (h - yoff) / sc);  // whole window
-        nvgFillColor(g.vg, nvgRGBA(0, 0, 0, 190));
-        nvgFill(g.vg);
-        nvgBeginPath(g.vg);
-        nvgRoundedRect(g.vg, dbgpg::x, dbgpg::y, dbgpg::w, dbgpg::h, 6);
-        nvgFillColor(g.vg, col(kColPanel));
-        nvgFill(g.vg);
-        nvgStrokeColor(g.vg, col(kColBox));
-        nvgStrokeWidth(g.vg, 1.5f);
-        nvgStroke(g.vg);
-        nvgFontFaceId(g.vg, g.fontId);
-        nvgTextAlign(g.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
-        nvgFontSize(g.vg, 16.f);
-        nvgFillColor(g.vg, col(kColInk));
-        nvgText(g.vg, sxp(dbgpg::x + dbgpg::w / 2), syp(dbgpg::y + 24), "DEBUG INFO", nullptr);
-        // close X chip
-        nvgBeginPath(g.vg);
-        nvgRoundedRect(g.vg, dbgpg::x + dbgpg::w - 44, dbgpg::y + 10, 30, 26, 3);
-        nvgFillColor(g.vg, nvgRGBA(90, 40, 36, 255));
-        nvgFill(g.vg);
-        nvgFontSize(g.vg, 12.f);
-        nvgFillColor(g.vg, col(kColInk));
-        nvgText(g.vg, sxp(dbgpg::x + dbgpg::w - 29), syp(dbgpg::y + 23), "X", nullptr);
-        // body text: screen font, pre-wrapped lines
-        nvgFontFaceId(g.vg, g.screenId);
-        nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_TOP);
-        nvgFontSize(g.vg, 12.5f);
-        nvgFillColor(g.vg, col(kColInk));
-        {   const char *p = s.debugText;
-            float ty = dbgpg::y + 48;
-            while (*p && ty < dbgpg::y + 352)
-            {   const char *e = std::strchr(p, '\n');
-                const int len = e ? (int)(e - p) : (int)std::strlen(p);
-                char rowl[256];
-                if (len > 0 && len < (int)sizeof rowl)
-                {   std::memcpy(rowl, p, (size_t)len); rowl[len] = 0;
-                    nvgText(g.vg, sxp(dbgpg::x + 18), syp(ty), rowl, nullptr); }
-                ty += 19.f;
-                if (!e) break;
-                p = e + 1;
-            }
-        }
-        // COPY button
-        nvgBeginPath(g.vg);
-        nvgRoundedRect(g.vg, dbgpg::x + dbgpg::copyX - dbgpg::x, dbgpg::copyY, dbgpg::copyW, dbgpg::copyH, 3);
-        nvgFillColor(g.vg, nvgRGBA(52, 52, 58, 255));
-        nvgFill(g.vg);
-        nvgStrokeColor(g.vg, col(kColBox));
-        nvgStrokeWidth(g.vg, 1.f);
-        nvgStroke(g.vg);
-        nvgFontFaceId(g.vg, g.fontId);
-        nvgTextAlign(g.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
-        nvgFontSize(g.vg, 13.f);
-        nvgFillColor(g.vg, col(kColInk));
-        nvgText(g.vg, sxp(dbgpg::copyX + dbgpg::copyW / 2), syp(dbgpg::copyY + dbgpg::copyH / 2),
-                "COPY", nullptr);
-        nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
-        nvgFontSize(g.vg, 10.f);
-        nvgFillColor(g.vg, col(kColInk));
-        nvgText(g.vg, sxp(dbgpg::copyX + 150), syp(dbgpg::copyY + 13),
-                "copies everything above - click anywhere else to close", nullptr);
-        nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_BASELINE);
-    }
-
     // silkscreen texts (labels, subheads) — headers drawn with the boxes
     for (const auto &t : kTexts)
     {
@@ -883,6 +815,74 @@ void draw(const Gui &g, const State &s, float w, float h)
         char pg[16];
         std::snprintf(pg, sizeof pg, "%d / %d", s.tunePage + 1, s.tunePages);
         nvgText(g.vg, sxp(pick::x + pick::w / 2), syp(pick::y + pick::h - 18), pg, nullptr);
+        nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_BASELINE);
+    }
+
+    // ---- full debug info page (modal 10; click status strip to open) ----
+    if (s.debugOpen && s.debugText && s.debugText[0])
+    {
+        nvgBeginPath(g.vg);
+        nvgRect(g.vg, -xoff / sc, -yoff / sc, (w - xoff) / sc, (h - yoff) / sc);  // whole window
+        nvgFillColor(g.vg, nvgRGBA(0, 0, 0, 190));
+        nvgFill(g.vg);
+        nvgBeginPath(g.vg);
+        nvgRoundedRect(g.vg, dbgpg::x, dbgpg::y, dbgpg::w, dbgpg::h, 6);
+        nvgFillColor(g.vg, col(kColPanel));
+        nvgFill(g.vg);
+        nvgStrokeColor(g.vg, col(kColBox));
+        nvgStrokeWidth(g.vg, 1.5f);
+        nvgStroke(g.vg);
+        nvgFontFaceId(g.vg, g.fontId);
+        nvgTextAlign(g.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
+        nvgFontSize(g.vg, 16.f);
+        nvgFillColor(g.vg, col(kColInk));
+        nvgText(g.vg, sxp(dbgpg::x + dbgpg::w / 2), syp(dbgpg::y + 24), "DEBUG INFO", nullptr);
+        // close X chip
+        nvgBeginPath(g.vg);
+        nvgRoundedRect(g.vg, dbgpg::x + dbgpg::w - 44, dbgpg::y + 10, 30, 26, 3);
+        nvgFillColor(g.vg, nvgRGBA(90, 40, 36, 255));
+        nvgFill(g.vg);
+        nvgFontSize(g.vg, 12.f);
+        nvgFillColor(g.vg, col(kColInk));
+        nvgText(g.vg, sxp(dbgpg::x + dbgpg::w - 29), syp(dbgpg::y + 23), "X", nullptr);
+        // body text: screen font, pre-wrapped lines
+        nvgFontFaceId(g.vg, g.screenId);
+        nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_TOP);
+        nvgFontSize(g.vg, 12.5f);
+        nvgFillColor(g.vg, col(kColInk));
+        {   const char *p = s.debugText;
+            float ty = dbgpg::y + 48;
+            while (*p && ty < dbgpg::y + 352)
+            {   const char *e = std::strchr(p, '\n');
+                const int len = e ? (int)(e - p) : (int)std::strlen(p);
+                char rowl[256];
+                if (len > 0 && len < (int)sizeof rowl)
+                {   std::memcpy(rowl, p, (size_t)len); rowl[len] = 0;
+                    nvgText(g.vg, sxp(dbgpg::x + 18), syp(ty), rowl, nullptr); }
+                ty += 19.f;
+                if (!e) break;
+                p = e + 1;
+            }
+        }
+        // COPY button
+        nvgBeginPath(g.vg);
+        nvgRoundedRect(g.vg, dbgpg::x + dbgpg::copyX - dbgpg::x, dbgpg::copyY, dbgpg::copyW, dbgpg::copyH, 3);
+        nvgFillColor(g.vg, nvgRGBA(52, 52, 58, 255));
+        nvgFill(g.vg);
+        nvgStrokeColor(g.vg, col(kColBox));
+        nvgStrokeWidth(g.vg, 1.f);
+        nvgStroke(g.vg);
+        nvgFontFaceId(g.vg, g.fontId);
+        nvgTextAlign(g.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
+        nvgFontSize(g.vg, 13.f);
+        nvgFillColor(g.vg, col(kColInk));
+        nvgText(g.vg, sxp(dbgpg::copyX + dbgpg::copyW / 2), syp(dbgpg::copyY + dbgpg::copyH / 2),
+                "COPY", nullptr);
+        nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
+        nvgFontSize(g.vg, 10.f);
+        nvgFillColor(g.vg, col(kColInk));
+        nvgText(g.vg, sxp(dbgpg::copyX + 150), syp(dbgpg::copyY + 13),
+                "copies everything above - click anywhere else to close", nullptr);
         nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_BASELINE);
     }
 
