@@ -281,6 +281,8 @@ btn(1196, 196, "flt_keyboard", label="KEYBD", label_dy=42)
 # --- MASTER TUNE / VOLUME (white knobs, unbordered, right) ---
 knob(1360, 66, "master_tune", label="MASTER TUNE", white=True, label_dy=40)
 knob(1292, 66, "feedback", label="FEEDBACK", label_dy=40)
+knob(1430, 66, "vel_amp", label="AMP", label_dy=40)
+notes((1430, 118, "VELOCITY"))
 knob(1498, 66, "volume", label="VOLUME", white=True, label_dy=40)
 
 # --- AMPLIFIER (right, r2) ---

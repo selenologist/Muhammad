@@ -46,7 +46,7 @@ struct Box   { float x, y, w, h; const char *header; };
 struct Rule  { float x1, y1, x2, y2; };
 struct Disp  { float x, y, w, h; };
 
-inline constexpr int kNumKnobs = 32, kNumBtns = 38, kNumTexts = 76, kNumBoxes = 11, kNumRules = 17, kNumDisplays = 1;
+inline constexpr int kNumKnobs = 33, kNumBtns = 38, kNumTexts = 78, kNumBoxes = 11, kNumRules = 17, kNumDisplays = 1;
 inline constexpr Knob kKnobs[] = {
         {32, 48.0f, 60.0f, false, 0, 10},
         {33, 112.0f, 60.0f, false, 0, 10},
@@ -72,6 +72,7 @@ inline constexpr Knob kKnobs[] = {
         {49, 1138.0f, 196.0f, false, 0, 10},
         {82, 1360.0f, 66.0f, true, 0, 10},
         {57, 1292.0f, 66.0f, false, 0, 10},
+        {42, 1430.0f, 66.0f, false, 0, 10},
         {80, 1498.0f, 66.0f, true, 0, 10},
         {44, 1292.0f, 196.0f, false, 0, 10},
         {46, 1360.0f, 196.0f, false, 0, 10},
@@ -174,6 +175,8 @@ inline constexpr Text kTexts[] = {
         {1196.0f, 238.0f, T_LBL, "KEYBD"},
         {1360.0f, 106.0f, T_LBL, "MASTER TUNE"},
         {1292.0f, 106.0f, T_LBL, "FEEDBACK"},
+        {1430.0f, 106.0f, T_LBL, "AMP"},
+        {1430.0f, 118.0f, T_LBL, "VELOCITY"},
         {1498.0f, 106.0f, T_LBL, "VOLUME"},
         {1292.0f, 240.0f, T_LBL, "ATTACK"},
         {1360.0f, 240.0f, T_LBL, "DECAY"},
