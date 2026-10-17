@@ -4,6 +4,7 @@
 #include <clap/clap.h>
 #include <clap/ext/latency.h>
 #include <dlfcn.h>
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>

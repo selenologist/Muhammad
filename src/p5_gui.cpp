@@ -3,6 +3,7 @@
 
 #include <nanovg.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>

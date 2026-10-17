@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cmath>      // IWYU: lround
 #include <vector>
 
 #include <nanovg.h>

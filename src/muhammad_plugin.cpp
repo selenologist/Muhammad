@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cctype>
 #include <ctime>
 #if !defined(_WIN32)
 #include <unistd.h>     // getpid (gui_trail.log breadcrumb)

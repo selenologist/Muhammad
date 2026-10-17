@@ -6,6 +6,7 @@
 // The per-sample synthesis lives in the two kernels; this file is control-rate,
 // so bit-for-bit fidelity at 44.1 kHz costs nothing per sample here.
 #include <cmath>
+#include <cstring>    // IWYU: memcpy lives here, not in the header chain
 #include "p5_engine.hpp"
 #include "p5_math.hpp"
 

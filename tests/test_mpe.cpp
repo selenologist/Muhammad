@@ -2,6 +2,7 @@
  * Units for the v1.12 MPE + microtuning engine surface: per-channel bend
  * isolation, asymmetric ranges, channel-keyed release, reuse semantics, and
  * the per-key tuning deviation table. Deterministic int-domain renders. */
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include <clap/clap.h>
 #include <cstring>
+#include <cstdio>
 #include <cstdlib>
 #include "muhammad_discovery.h"
 #include "p5_engine.hpp"

@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <unistd.h>            // mkdtemp (POSIX; libc++ does not leak it via stdlib)
 #include <filesystem>
 
 int main()
