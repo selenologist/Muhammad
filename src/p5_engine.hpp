@@ -38,6 +38,7 @@ struct LaneParams {
     float f0, a0, f1, a1, cut, k, filterGain, filterVel, ampVel, envAmount;
     float paEnv, paB, pfEnv, pfB, pwEnv, pwB, pwmA, pwmB, la, lb, ln;
     float amp0, amp1;                         // m.amp0/m.amp1, Q15 as float
+    float fb;                                 // FEEDBACK loop gain (byte 133 * 0.9/127)
     uint32_t ia, ib;
 };
 
@@ -71,7 +72,8 @@ public:
         if (factoryIndex == 0) { std::snprintf(name, P5_NAME_LEN + 1, "Peace Be Upon Him"); return; }
         Patch p;
         std::memset(&p, 0, sizeof p);
-        std::memcpy(p.raw, PW_FACTORY_RAW[factoryIndex - 1], RAW_MAX);
+        std::memcpy(p.raw, PW_FACTORY_RAW[factoryIndex - 1], WIRE_SIZE);
+        p.raw[P5_FEEDBACK] = 0;   // factory wire data predates our extension
         p5::patchName(name, p);
     }
     void editRaw(int idx, int v) {               // native editor write: exact byte, no state reset
@@ -275,6 +277,7 @@ private:
     Lane lanes_[MAXV];
     // hot state, struct-of-arrays: the SIMD kernel loads these eight lanes at a time
     uint32_t phaseA_[MAXV], phaseB_[MAXV], noise_[MAXV];
+    float fbState_[MAXV] = {};       // FEEDBACK: last sample's VCA out, per voice
     float z_[4][MAXV], triangle_[MAXV], syncTail_[MAXV];
 
     KernelMode mode_ = KernelMode::Auto;

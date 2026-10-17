@@ -8,7 +8,8 @@
 
 namespace p5 {
 
-constexpr uint32_t RAW_MAX = 133u;
+constexpr uint32_t RAW_MAX = 134u;    // our store format: 133-byte wire patch + FEEDBACK
+constexpr uint32_t WIRE_SIZE = 133u;  // Sequential's sysex/wire size - never larger
 constexpr uint32_t FRAME_MAX = 159u;
 
 enum RawIdx {
@@ -25,18 +26,25 @@ enum RawIdx {
     P5_DECAY_AMP, P5_SUSTAIN_FILTER, P5_SUSTAIN_AMP, P5_RELEASE_FILTER,
     P5_RELEASE_AMP, P5_RELEASE_ON, P5_UNISON, P5_UNISON_COUNT,
     P5_UNISON_DETUNE,
-    P5_NAME = 65, P5_NAME_LEN = 20, P5_BEND = 86, P5_RETRIGGER = 87
+    P5_NAME = 65, P5_NAME_LEN = 20, P5_BEND = 86, P5_RETRIGGER = 87,
+    // FEEDBACK: our extension byte, appended AFTER the wire payload (files
+    // predate it and load with 0 = the honest default: no feedback path).
+    // Per-voice VCA->filter-in regeneration, like feeding the headphone
+    // output back into the Prophet's external input. Extreme values are
+    // expected to distort - the softclip in front of the ladder is the
+    // saturator; nothing is hidden from it.
+    P5_FEEDBACK = 133
 };
 
 struct Patch {
     uint8_t raw[RAW_MAX];
-    uint8_t size = RAW_MAX, model = 0x32, command = 3, group = 0, program = 0;
+    uint8_t size = WIRE_SIZE, model = 0x32, command = 3, group = 0, program = 0;
 };
 
 inline void patchInit(Patch &p)
 {
     std::memset(&p, 0, sizeof p);
-    p.size = RAW_MAX; p.model = 0x32; p.command = 3;
+    p.size = WIRE_SIZE; p.model = 0x32; p.command = 3;
     p.raw[P5_FREQ_A] = p.raw[P5_FREQ_B] = 24;
     p.raw[P5_VINTAGE] = 0;    // 0: stable Rev 4 .. 127: Rev 1
     p.raw[P5_SAW_A] = p.raw[P5_KEY_B] = 1;

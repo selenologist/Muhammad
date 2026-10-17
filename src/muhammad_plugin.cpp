@@ -17,7 +17,7 @@
 namespace pw {
 
 // ---- parameter model ---------------------------------------------------------
-static const char *kRawNames[57] = {
+static const char *kRawNames[58] = {
     "OSC A COARSE", "OSC B COARSE", "OSC B FINE", "OSC A SAW", "OSC A PULSE",
     "OSC B SAW", "OSC B TRI", "OSC B PULSE", "OSC A PULSE W", "OSC B PULSE W",
     "SYNC", "OSC B LOW", "OSC B KEYBD", "GLIDE", "OSC A LEVEL", "OSC B LEVEL",
@@ -29,13 +29,13 @@ static const char *kRawNames[57] = {
     "VEL>FLT", "VEL>AMP", "FLT ATTACK", "AMP ATTACK", "FLT DECAY", "AMP DECAY",
     "FLT SUSTAIN", "AMP SUSTAIN", "FLT RELEASE", "AMP RELEASE", "RELEASE ON",
     "UNISON", "UNISON CNT", "UNISON DET",
-    "BEND RANGE", "RETRIGGER"
+    "BEND RANGE", "RETRIGGER", "FEEDBACK"
 };
-static const int kRawIndex[57] = {
+static const int kRawIndex[58] = {
      0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, 15,
     16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
     32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,
-    48, 49, 50, 51, 52, 53, 54, 86, 87
+    48, 49, 50, 51, 52, 53, 54, 86, 87, 133
 };
 static const char *kOverlayNames[8] = {
     "EDIT CUTOFF", "EDIT RESO", "EDIT TUNE A", "EDIT TUNE B",
@@ -44,9 +44,9 @@ static const char *kOverlayNames[8] = {
 static const double kOverlayMin[8] = { -63, -63, -24, -24, -63, -63, -63, -63 };
 static const double kOverlayMax[8] = {  63,  63,  24,  24,  63,  63,  63,  63 };
 
-constexpr uint32_t PARAM_COUNT = 57 + NUM_OVERLAYS + 7;   // + trim, os, tune, program, bank, pan width, drift
+constexpr uint32_t PARAM_COUNT = 58 + NUM_OVERLAYS + 7;   // FEEDBACK rides index 57   // + trim, os, tune, program, bank, pan width, drift
 
-static bool isRawParam(clap_id id) { return id < 57; }
+static bool isRawParam(clap_id id) { return id < 58; }
 
 // Effective ranges (shared with the GUI/golden normalizer in p5_common.hpp),
 // so host display, engine behaviour and the panel render cannot drift.
@@ -230,7 +230,7 @@ void Plugin::loadProgram(int k)
     program = k;
     bank = k / 8;
     // the whole patch changed under the host's feet: sync every knob
-    for (clap_id id = 0; id < 57; id++)
+    for (clap_id id = 0; id < 58; id++)
         markPending(id, paramValue(this, id));
     requestHostParamFlush(this);
 }
@@ -264,7 +264,7 @@ bool Plugin::loadUserPatch(const std::string &name)
     program = -1;
     markSource(1, -1, p5store::sanitize(name));
     curSrc_.kind = p5store::SourceKind::File; curSrc_.factory = 0; curSrc_.file = p5store::sanitize(name);
-    for (clap_id id = 0; id < 57; id++)
+    for (clap_id id = 0; id < 58; id++)
         markPending(id, paramValue(this, id));
     requestHostParamFlush(this);
     return true;
@@ -272,7 +272,7 @@ bool Plugin::loadUserPatch(const std::string &name)
 
 void Plugin::syncAllParams()
 {
-    for (clap_id id = 0; id < 57; id++) markPending(id, paramValue(this, id));
+    for (clap_id id = 0; id < 58; id++) markPending(id, paramValue(this, id));
     requestHostParamFlush(this);
 }
 
@@ -307,11 +307,13 @@ void Plugin::rebuildSlotCache()
         if (s.kind == p5store::SourceKind::File)
         {
             if (p5store::loadPatch(s.file, slotRaw_[i])) { slotCode_[i] = -3; }
-            else { std::memcpy(slotRaw_[i], PW_FACTORY_RAW[i], 133); slotCode_[i] = (int16_t)i; }
+            else { std::memcpy(slotRaw_[i], PW_FACTORY_RAW[i], 133); slotRaw_[i][133] = 0;
+                   slotCode_[i] = (int16_t)i; }
             continue;
         }
         code = s.factory;
-        if (code >= 0 && code < (int)PW_FACTORY_N) std::memcpy(slotRaw_[i], PW_FACTORY_RAW[code], 133);
+        if (code >= 0 && code < (int)PW_FACTORY_N)
+        {   std::memcpy(slotRaw_[i], PW_FACTORY_RAW[code], 133); slotRaw_[i][133] = 0; }
         else { p5::Patch p; p5::patchInit(p); if (code != -1) p5::patchDefaultName(p);
                std::memcpy(slotRaw_[i], p.raw, 133); }
         slotCode_[i] = (int16_t)code;
@@ -326,7 +328,7 @@ void Plugin::adoptPendingIdentity()
     const p5store::Source src = p5store::slot(idSyncSlot_);
     curSrc_ = src;
     if (src.kind == p5store::SourceKind::File) srcFile_ = src.file; else srcFile_.clear();
-    for (clap_id id = 0; id < 57; id++) markPending(id, paramValue(this, id));
+    for (clap_id id = 0; id < 58; id++) markPending(id, paramValue(this, id));
     requestHostParamFlush(this);
 }
 
@@ -335,10 +337,10 @@ static void applyPcFromCache(Plugin *s, int slot)
     if (!s->slotReady_ || slot < 0 || slot >= (int)PW_FACTORY_N) return;
     p5::Patch p;
     std::memset(&p, 0, sizeof p);
-    std::memcpy(p.raw, s->slotRaw_[slot], 133);
+    std::memcpy(p.raw, s->slotRaw_[slot], 134);
     p.size = 133; p.model = 0x32; p.command = 3;
     s->engine.setPatch(p);                        // pure POD state, no I/O
-    std::memcpy(s->srcRaw_, p.raw, 133);
+    std::memcpy(s->srcRaw_, p.raw, 134);
     s->hasSrc_ = true; s->floatValid_ = false;
     const int code = s->slotCode_[slot];
     s->program = (code >= 0 && code < (int)PW_FACTORY_N) ? code : -1;
@@ -425,7 +427,7 @@ void Plugin::savePatchNamed(const std::string &name)
     markSource(1, -1, n);
     rebuildSlotCache();
     curSrc_.kind = p5store::SourceKind::File; curSrc_.factory = 0; curSrc_.file = n;
-    for (clap_id id = 0; id < 57; id++)
+    for (clap_id id = 0; id < 58; id++)
         markPending(id, paramValue(this, id));
     requestHostParamFlush(this);
 }
@@ -508,7 +510,10 @@ static int ccRawParam(int cc)
     case  52: return 6;   case  53: return 26;  case  54: return 27;  case  55: return 28;
     case  56: return 29;  case  57: return 30;  case  58: return 31;  case  59: return 32;
     case  60: return 33;  case  61: return 34;  case  62: return 35;  case  63: return 36;
-    case  70: return 86;  case  71: return 87;  case  73: return 17;  case  86: return 38;
+    // (70/71 originally returned BYTE numbers 86/87 but callers treat the
+    // result as a clap PID: CC70 silently aliased DRIFT and CC71 was a no-op.
+    // BEND RANGE is PID 55 (byte 86), RETRIGGER PID 56 (byte 87).)
+    case  70: return 55;  case  71: return 56;  case  73: return 17;  case  86: return 38;
     case  87: return 39;  case  89: return 40;  case  90: return 41;  case 102: return 42;
     case 103: return 43;  case 104: return 44;  case 105: return 45;  case 106: return 46;
     case 107: return 47;  case 108: return 48;  case 109: return 49;  case 110: return 50;
@@ -597,6 +602,13 @@ static void dispatchEvent(Plugin *s, const clap_event_header_t *ev)
             }
             else if (d1 == 74) s->engine.setBrightness(d2);
             else if (d1 == 85) applyParam(s, PID_DRIFT, d2);        // Rev4 CC85 "vintage" == our DRIFT
+            // Muhammad extensions (MMA-unassigned in both Rev4 impl and GM;
+            // see CC_MAP.md): live control of FEEDBACK + the sidecar knobs.
+            else if (d1 == 42) applyParam(s, 57, d2);                    // FEEDBACK 0..127
+            else if (d1 == 43) applyParam(s, PID_PAN_WIDTH, d2);         // PAN WIDTH 0..127
+            else if (d1 == 44) applyParam(s, PID_OS, d2 >= 64 ? 1 : 0);  // OVERSAMPLE toggle
+            else if (d1 == 45) applyParam(s, PID_TUNE, (d2 - 64) * 100 / 63); // MASTER TUNE +-100c
+            else if (d1 == 48) applyParam(s, PID_TRIM, (d2 * 3) / 128);  // OUTPUT trim 0..2
             else if (d1 == 120 || d1 == 123) panicVoices(s);
             else if (d1 == 121) { s->ccVol = s->ccExp = 1.0f; s->engine.setBrightness(0); }
             else { const int r = ccRawParam(d1); if (r >= 0) applyParam(s, (clap_id)r, d2); }
@@ -809,19 +821,22 @@ static bool par_get_info(const clap_plugin_t *, uint32_t index, clap_param_info_
     if (index >= PARAM_COUNT) return false;
     std::memset(info, 0, sizeof *info);
     clap_id id;
-    if (index < 57) {
+    if (index < 58) {
         id = index; info->min_value = 0; info->max_value = 127;
         if (const KnobClamp *k = knobClamp(id)) { info->min_value = k->lo; info->max_value = k->hi; }
     }
-    else if (index < 57 + NUM_OVERLAYS) {
-        int o = (int)(index - 57); id = (clap_id)(64 + o);
+    else if (index < 58 + NUM_OVERLAYS) {
+        int o = (int)(index - 58); id = (clap_id)(64 + o);
         info->min_value = kOverlayMin[o]; info->max_value = kOverlayMax[o];
-    } else if (index < 57 + NUM_OVERLAYS + 1) { id = PID_TRIM; info->min_value = 0; info->max_value = 2; }
-    else if (index < 57 + NUM_OVERLAYS + 2) { id = PID_OS; info->min_value = 0; info->max_value = 1; }
-    else if (index < 57 + NUM_OVERLAYS + 3) { id = PID_TUNE; info->min_value = -100; info->max_value = 100; }
-    else if (index < 57 + NUM_OVERLAYS + 4) { id = PID_PROGRAM; info->min_value = 0; info->max_value = PW_FACTORY_N - 1; }
-    else if (index < 57 + NUM_OVERLAYS + 6) { id = PID_BANK; info->min_value = 0; info->max_value = PW_FACTORY_N / 8 - 1; }
-    else if (index < 57 + NUM_OVERLAYS + 7) { id = PID_PAN_WIDTH; info->min_value = 0; info->max_value = 127; }
+    } else if (index < 58 + NUM_OVERLAYS + 1) { id = PID_TRIM; info->min_value = 0; info->max_value = 2; }
+    else if (index < 58 + NUM_OVERLAYS + 2) { id = PID_OS; info->min_value = 0; info->max_value = 1; }
+    else if (index < 58 + NUM_OVERLAYS + 3) { id = PID_TUNE; info->min_value = -100; info->max_value = 100; }
+    else if (index < 58 + NUM_OVERLAYS + 4) { id = PID_PROGRAM; info->min_value = 0; info->max_value = PW_FACTORY_N - 1; }
+    // (the +5 case existed nowhere in the original chain: BANK swallowed
+    // PAN_WIDTH's index and DRIFT hung off the trailing else - enumeration
+    // now yields exactly one id per index, FEEDBACK-era count 73 exposes it)
+    else if (index < 58 + NUM_OVERLAYS + 5) { id = PID_BANK; info->min_value = 0; info->max_value = PW_FACTORY_N / 8 - 1; }
+    else if (index < 58 + NUM_OVERLAYS + 6) { id = PID_PAN_WIDTH; info->min_value = 0; info->max_value = 127; }
     else { id = PID_DRIFT; info->min_value = 0; info->max_value = 127; }
     info->id = id;
     const bool stepped = isRawParam(id) || id == PID_TUNE || id == PID_PROGRAM || id == PID_BANK ||
@@ -900,7 +915,7 @@ const clap_plugin_params_t kParams = { par_count, par_get_info, par_get_value,
 
 // ---- state (versioned binary blob) --------------------------------------------
 #define PW_STATE_MAGIC 0x5035434Cu            // "P5CL"
-#define PW_STATE_VERSION 10u   // v10: drift moved into patch byte 37 (dr field retired)
+#define PW_STATE_VERSION 11u   // v11: patch grew to 134 bytes (byte 133 = FEEDBACK)
 static bool wr(const clap_ostream_t *o, const void *b, size_t n)
 { return o->write(o, b, (uint64_t)n) == (int64_t)n; }
 static bool state_save(const clap_plugin_t *p, const clap_ostream_t *out)
@@ -925,7 +940,7 @@ static bool state_save(const clap_plugin_t *p, const clap_ostream_t *out)
     double tt[64] = {};
     for (int i = 0; i < s->tuneToneCount_ && i < 64; i++) tt[i] = s->tuneTones_[i];
     int32_t tmeta[3] = { s->tuneRoot_, (int32_t)s->tuneMask_, s->tuneWalk_ };
-    return wr(out, head, sizeof head) && wr(out, s->engine.patch().raw, 133) &&
+    return wr(out, head, sizeof head) && wr(out, s->engine.patch().raw, 134) &&
            wr(out, ov, sizeof ov) && wr(out, &trim, sizeof trim) && wr(out, &os, sizeof os) &&
            wr(out, gui, sizeof gui) && wr(out, &pan, sizeof pan) &&
            wr(out, tr, sizeof tr) &&
@@ -942,7 +957,7 @@ static bool state_load(const clap_plugin_t *p, const clap_istream_t *in)
     if (!rd(in, head, sizeof head)) return false;
     if (head[0] != PW_STATE_MAGIC || head[1] == 0u || head[1] > PW_STATE_VERSION) return false;
     int16_t migDr = -1;                 // v5..v9 side-channel drift (see below)
-    uint8_t raw[133]; int16_t ov[8]; float trim; int32_t os = 1;
+    uint8_t raw[134] = {}; int16_t ov[8]; float trim; int32_t os = 1;
     if (head[1] == 1u) {
         struct StateBlobV1 { uint32_t magic, version; uint8_t raw[133]; int16_t overlay[8]; float trim; } b;
         b.magic = head[0]; b.version = head[1];
@@ -951,7 +966,10 @@ static bool state_load(const clap_plugin_t *p, const clap_istream_t *in)
         std::memcpy(ov, b.overlay, sizeof ov);
         trim = b.trim;
     } else {
-        if (!rd(in, raw, sizeof raw) || !rd(in, ov, sizeof ov) ||
+        // v10 and older stored 133 wire bytes; the v11 extension byte keeps
+        // its honest default 0 (accepting files that predate it).
+        const size_t rsz = head[1] >= 11u ? 134u : 133u;
+        if (!rd(in, raw, rsz) || !rd(in, ov, sizeof ov) ||
             !rd(in, &trim, sizeof trim) || !rd(in, &os, sizeof os)) return false;
         if (head[1] >= 3u) {
             int16_t gui[3] = {0, -1, 0};
@@ -1049,7 +1067,7 @@ static bool preset_from_location(const clap_plugin_t *p, uint32_t location_kind,
     if (k == 0) {
         p5::Patch i; p5::patchInit(i); p5::patchDefaultName(i);
         s->engine.setPatch(i); s->program = -1; s->markSource(0, 0, std::string());
-        for (clap_id id = 0; id < 57; id++) s->markPending(id, paramValue(s, id));
+        for (clap_id id = 0; id < 58; id++) s->markPending(id, paramValue(s, id));
         requestHostParamFlush(s);
         return true;
     }

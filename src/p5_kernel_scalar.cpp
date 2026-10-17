@@ -22,6 +22,7 @@ struct Hot {
     float z[4];
     float triangle, syncTail;
     int32_t noise;
+    float fbPrev;                     // FEEDBACK: last main sample's VCA out
 };
 
 // p5_filter_core: four trapezoidal one-poles with an algebraic feedback
@@ -70,6 +71,7 @@ void p5KernelScalar(Engine &e, uint32_t mask, int32_t *out, uint32_t n)
         h.z[0] = e.z_[0][v]; h.z[1] = e.z_[1][v]; h.z[2] = e.z_[2][v]; h.z[3] = e.z_[3][v];
         h.triangle = e.triangle_[v]; h.syncTail = e.syncTail_[v];
         h.noise = (int32_t)e.noise_[v];
+        h.fbPrev = e.fbState_[v];
         int32_t last = 0;
         for (uint32_t i = 0; i < n; i++) {
             const float time = (float)i * (1.0f / CTL_);
@@ -103,7 +105,7 @@ void p5KernelScalar(Engine &e, uint32_t mask, int32_t *out, uint32_t n)
                     h.ph[0] = na;
                 }
                 h.ph[1] = nb;
-                const float x = a * c.la + b * c.lb + noise * c.ln;
+                const float x = a * c.la + b * c.lb + noise * c.ln + c.fb * h.fbPrev;
                 float fc = c.cut + fe * c.filterVel * c.envAmount;
                 if (p[P5_POLY_FILTER]) fc += fe * c.pfEnv + bn * c.pfB;
                 if (p[P5_WHEEL_FILTER]) fc += lfo * 112.0f;
@@ -113,7 +115,9 @@ void p5KernelScalar(Engine &e, uint32_t mask, int32_t *out, uint32_t n)
             const float sum = (os == 1u) ? y0 : hbDecim(e.hb_[v], y0, y1);
             const float gain = ae * c.ampVel * (1.0f + (float)l.ampDrift / 32768.0f);
             const float amp = (c.amp0 + (c.amp1 - c.amp0) * time) * (1.0f / 32768.0f);
-            last = (int32_t)(sum * gain * amp * (2.0f * VOICE_FS));
+            const float vcaF = (sum * gain) * amp;          // the tap, pre-quantisation
+            h.fbPrev = vcaF;
+            last = (int32_t)(vcaF * (2.0f * VOICE_FS));
             if (e.panOn_)
             {   out[i] += (int32_t)(((int64_t)last * l.panG[0]) >> 15);
                 e.mixR_[i] += (int32_t)(((int64_t)last * l.panG[1]) >> 15); }
@@ -124,6 +128,7 @@ void p5KernelScalar(Engine &e, uint32_t mask, int32_t *out, uint32_t n)
         e.z_[0][v] = h.z[0]; e.z_[1][v] = h.z[1]; e.z_[2][v] = h.z[2]; e.z_[3][v] = h.z[3];
         e.triangle_[v] = h.triangle; e.syncTail_[v] = h.syncTail;
         e.noise_[v] = (uint32_t)h.noise;
+        e.fbState_[v] = h.fbPrev;
     }
 }
 

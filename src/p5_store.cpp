@@ -74,7 +74,7 @@ bool savePatch(const std::string &name, const uint8_t raw[133])
     std::ofstream f(patchPath(n), std::ios::binary | std::ios::trunc);
     if (!f) return false;
     f.write((const char *)&kMagic, sizeof kMagic);
-    f.write((const char *)raw, 133);
+    f.write((const char *)raw, 134);
     return (bool)f;
 }
 
@@ -101,8 +101,10 @@ bool loadPatch(const std::string &name, uint8_t raw[133])
     uint64_t magic = 0;
     f.read((char *)&magic, sizeof magic);
     if (magic != kMagic) return false;
-    f.read((char *)raw, 133);
-    return f.gcount() == 133;
+    f.read((char *)raw, 134);
+    const std::streamsize n = f.gcount();
+    if (n == 133) { raw[133] = 0; return true; }   // files predate the FEEDBACK byte
+    return n == 134;
 }
 
 std::vector<std::string> listPatches()

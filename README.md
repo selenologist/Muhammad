@@ -284,6 +284,17 @@ ops/sample. (First cut had a DC-biased noise draw that parked the walk at
 about -110 cents — a "fixed detune", caught by the unit suite; the drift
 checks now assert unbiasedness directly from early-vs-neutral pitch.)
 
+**FEEDBACK** (param 57, wire extension byte 133): the voice's own VCA output
+regenerates into its filter input - the Prophet/VCS3 "output jack into
+external input" trick, per voice and never on the summed mix. The envelope
+lives INSIDE the loop, so a quiet voice feeds back quietly, exactly like the
+cable. Byte 127 puts full sustain at the edge of loop unity: the ladder sings
+and the pre-ladder softclip distorts - extreme settings are *meant* to
+(there is no hidden limiter; worst-case stress tests stay bounded). Byte 0
+adds an exact +-0: the bit-exact harness scenarios are untouched, and scalar
+and SIMD kernels agree sample-for-sample at any depth (pinned by tests).
+FEEDBACK rides byte 133 in saved patches; files that predate it load with 0.
+
 **Rev4-compatible MIDI CC** (per Sequential's Prophet-5 MIDI Implementation
 1.4 — its parameter numbering is identical to the wire enum): CC1 mod wheel,
 CC7 volume * CC13 expression (multiply into output), CC32 bank, CC64 damper

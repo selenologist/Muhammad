@@ -201,11 +201,20 @@ int main(int argc, char **argv)
         };
         sendMidi(3, 64, 0);      // Rev4 CC3 -> OSC A FREQUENCY (raw 0)
         sendMidi(85, 50, 0);     // Rev4 CC85 -> DRIFT (param 86)
+        sendMidi(42, 96, 0);     // extension CC42 -> FEEDBACK (param 57, byte 133)
         const clap_plugin_params_t *pcc = (const clap_plugin_params_t *)plugin->get_extension(plugin, CLAP_EXT_PARAMS);
         double v0 = -1, v86 = -1;
         pcc->get_value(plugin, 0, &v0); pcc->get_value(plugin, 86, &v86);
         check("Rev4 CC3 maps to OSC A FREQ", v0 == 64.0);
         check("Rev4 CC85 (vintage) drives DRIFT", v86 == 50.0);
+        double fbv = -1;
+        pcc->get_value(plugin, 57, &fbv);
+        check("CC42 drives FEEDBACK (readback 96)", fbv == 96.0);
+        sendMidi(70, 4, 0);   sendMidi(71, 1, 0);    // BEND RANGE / RETRIGGER by PID, not byte alias
+        double v55 = -1, v56 = -1;
+        pcc->get_value(plugin, 55, &v55); pcc->get_value(plugin, 56, &v56);
+        check("CC70/71 map to BEND RANGE / RETRIGGER", v55 == 4.0 && v56 == 1.0);
+        sendMidi(42, 0, 0);      // feedback off again for the tests downstream
         sendMidi(85, 0, 0);      // leave drift off for the tests downstream
         {   // CC64 damper: a note released under the pedal must keep sounding
             sendMidi(123, 0, 0);        // CC123: wipe voices left ringing by earlier tests
@@ -334,8 +343,11 @@ auto rd7 = [](const clap_istream_t *s, void *b, uint64_t n) -> int64_t {
         // Rebuild a v9 blob by re-inserting that field at its historical offset
         // (after pan), load it, and prove the MIGRATION lands the depth in the
         // param - then trim to v6 (16-value trim pairs, no dev/br/tuning tail).
+        // v11 stores the 134-byte extended patch; shrink to the v9-era 133
+        // FIRST, then re-insert the retired dr field at its historical offset.
         const size_t off9 = 8 + 133 + 16 + 4 + 4 + 6 + 2;   // hdr raw ov trim os gui pan
         std::vector<char> blob9 = blob7;
+        blob9.erase(blob9.begin() + 8 + 133);               // raw 134 -> 133
         {   const int16_t dr = 55;
             blob9.insert(blob9.begin() + (long)off9,
                          reinterpret_cast<const char*>(&dr),
@@ -348,7 +360,7 @@ auto rd7 = [](const clap_istream_t *s, void *b, uint64_t n) -> int64_t {
         const clap_plugin_params_t *pr9 = (const clap_plugin_params_t *)
             plugin->get_extension(plugin, CLAP_EXT_PARAMS);
         double dv = -1; if (pr9 && pr9->get_value) pr9->get_value(plugin, 86, &dv);
-        check("state blob version 10", ok7 && ver == 10);
+        check("state blob version 11", ok7 && ver == 11);
         check("v9 blob loads; drift migrates into byte 37", ok9 && (int)dv == 55);
         std::vector<char> blob6 = blob9;
         const size_t tail = 2 * 128 + 2 * 2 + 40 + 4 + 8 * 64 + 3 * 4;   // + tones meta (root/mask/walk)
@@ -467,7 +479,7 @@ auto rd7 = [](const clap_istream_t *s, void *b, uint64_t n) -> int64_t {
 
         // programmer params + gui surface
         uint32_t cnt = params->count(plugin);
-        check("param count 72 (57 raw + 8 ov + trim + os + tune + program + bank + pan + drift)", cnt == 72);
+        check("param count 73 (58 raw incl FEEDBACK + 8 ov + trim + os + tune + program + bank + pan + drift)", cnt == 73);
         bool tuneInfo = false;
         for (uint32_t i = 0; i < cnt; i++) {
             clap_param_info_t inf{};

@@ -91,6 +91,7 @@ struct HotV {
     V z0, z1, z2, z3;
     V tri, syncTail;
     VI noise;
+    V fbPrev;                        // FEEDBACK per-voice tap (same law as scalar)
 };
 
 // p5_fast_blep: the BLEP correction at a saw's wrap and at start
@@ -195,16 +196,16 @@ void P5_SIMD_SYMBOL(Engine &e, uint32_t mask, int32_t *out, uint32_t n)
     const uint32_t os = (uint32_t)e.os_;
     const float *tab = e.tpt_;
 
-    // transpose the per-lane block parameters (LaneParams is 24 floats + 2 u32)
-    V parF[23];
-    for (int f = 0; f < 23; f++) {
+    // transpose the per-lane block parameters (LaneParams: 24 floats + 2 u32)
+    V parF[24];
+    for (int f = 0; f < 24; f++) {
         alignas(32) float t[8];
         for (int j = 0; j < 8; j++) t[j] = ((const float *)&e.lanes_[j].p)[f];
         parF[f] = ld(t);
     }
     enum { F_F0, F_A0, F_F1, F_A1, F_CUT, F_K, F_FG, F_FVEL, F_AVEL, F_ENVAMT,
            F_PAENV, F_PAB, F_PFENV, F_PFB, F_PWENV, F_PWB, F_PWMA, F_PWMB,
-           F_LA, F_LB, F_LN, F_AMP0, F_AMP1 };
+           F_LA, F_LB, F_LN, F_AMP0, F_AMP1, F_FB };
     VI ia, ib;
     {
         alignas(32) uint32_t t[8];
@@ -231,6 +232,7 @@ void P5_SIMD_SYMBOL(Engine &e, uint32_t mask, int32_t *out, uint32_t n)
     h.z0 = ld(e.z_[0]); h.z1 = ld(e.z_[1]); h.z2 = ld(e.z_[2]); h.z3 = ld(e.z_[3]);
     h.tri = ld(e.triangle_); h.syncTail = ld(e.syncTail_);
     h.noise = ldu(e.noise_);
+    h.fbPrev = ld(e.fbState_);
 
     const V mSawA = spl(p[P5_SAW_A] ? 0.5f : 0.0f);
     const V mPulA = spl(p[P5_PULSE_A] ? 1.0f : 0.0f);
@@ -336,7 +338,9 @@ void P5_SIMD_SYMBOL(Engine &e, uint32_t mask, int32_t *out, uint32_t n)
         }
         h.phB = nb;
 
-        const V x = add(add(mul(a, parF[F_LA]), mul(b, parF[F_LB])), mul(noise, parF[F_LN]));
+        const V x = add(add(add(mul(a, parF[F_LA]), mul(b, parF[F_LB])),
+                            mul(noise, parF[F_LN])),
+                        mul(parF[F_FB], h.fbPrev));
 
         V fc = add(parF[F_CUT], mul(mul(fe, parF[F_FVEL]), parF[F_ENVAMT]));
         if (p[P5_POLY_FILTER]) fc = add(fc, add(mul(fe, parF[F_PFENV]), mul(bn, parF[F_PFB])));
@@ -352,7 +356,8 @@ void P5_SIMD_SYMBOL(Engine &e, uint32_t mask, int32_t *out, uint32_t n)
         const V gain = mul(mul(ae, parF[F_AVEL]), add(spl(1.0f), mul(ampDriftN, spl(1.0f / 32768.0f))));
         const V amp = mul(mul(add(parF[F_AMP0], mul(sub(parF[F_AMP1], parF[F_AMP0]), time)),
                               spl(1.0f / 32768.0f)), laneLive);
-        VI last = simde_mm256_cvttps_epi32(mul(mul(mul(ysum, gain), amp), spl(2.0f * VOICE_FS)));
+        h.fbPrev = mul(mul(ysum, gain), amp);          // the tap, pre-quantisation
+        VI last = simde_mm256_cvttps_epi32(mul(h.fbPrev, spl(2.0f * VOICE_FS)));
         simde_mm256_storeu_si256((simde__m256i *)lastArr, last);
         if (e.panOn_)
             for (int j = 0; j < 8; j++)
@@ -367,6 +372,7 @@ void P5_SIMD_SYMBOL(Engine &e, uint32_t mask, int32_t *out, uint32_t n)
     st(h.z0, e.z_[0]); st(h.z1, e.z_[1]); st(h.z2, e.z_[2]); st(h.z3, e.z_[3]);
     st(h.tri, e.triangle_); st(h.syncTail, e.syncTail_);
     stu(h.noise, e.noise_);
+    st(h.fbPrev, e.fbState_);
     // store the decimator state back only for lanes that ran (the scalar kernel
     // never touches an unmasked lane's state); lanes restart on note-on anyway
     if (os > 1u) {

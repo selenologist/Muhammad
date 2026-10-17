@@ -31,7 +31,7 @@ PID = {
     "flt_s": 47, "amp_s": 48, "flt_r": 49, "amp_r": 50,
     "release_btn": 51, "unison": 52, "unison_det": 54, "vintage": 86,   # DRIFT (byte 37 retired: Sequential owns it)
     "volume": 80, "master_tune": 82, "prog_bankselect": 84, "os": 81, "pan_width": 85, "unison_cnt": 53,
-    "vel_amp": 42, "vel_flt": 41,
+    "vel_amp": 42, "vel_flt": 41, "feedback": 57,
     "lfo_preset": -4, "flt_model": 20, "prog_preset": -3, "prog_record": -2,
     "edit_btn": -1, "tune_btn": -6,
 }
@@ -200,18 +200,18 @@ box(8, 14, 290, 116, "POLY-MOD")
 knob(48, 60, "fil_env")
 knob(112, 60, "osc2")
 notes((48, 94, "FIL. ENV."), (112, 94, "OSC 2"))
-subhead(92, 116, "SOURCE AMOUNT", 10)
+subhead(78, 112, "SOURCE AMOUNT", 10)
 for x, p, lab in ((170, "pm_freq1", "FREQ 1"), (216, "pm_pw1", "PW 1"), (264, "pm_filter", "FILTER")):
     btn(x, 60, p, label=lab, label_above=-24)
-subhead(229, 106, "DESTINATION", 8)
+subhead(217, 98, "DESTINATION", 8)
 
 # --- LFO (A, r2) ---
 btn(26, 190, "lfo_preset", color="btnGray", label="PRESET", label_dy=34)
 box(52, 138, 248, 120, "VIBRATO")
-knob(110, 196, "lfo_freq", label="FREQUENCY", label_dy=44)
+knob(110, 196, "lfo_freq", label="FREQUENCY", label_dy=38)
 for x, g, p in ((180, "gSaw", "lfo_saw"), (214, "gTri", "lfo_tri"), (248, "gSq", "lfo_sq")):
     btn(x, 196, p, glyph=g)
-subhead(214, 240, "SHAPE", 10)
+subhead(214, 232, "SHAPE", 10)
 
 # --- WHEEL-MOD (A, r3) ---
 box(8, 266, 290, 138, "WHEEL-MOD")
@@ -240,14 +240,14 @@ btn(642, 68, "osc1_sync", label="SYNC", label_dy=33)
 
 # --- OSCILLATOR 2 (B, r2) ---
 box(306, 138, 398, 118, "OSCILLATOR 2")
-knob(344, 190, "osc2_freq", label="FREQUENCY", label_dy=48)
-knob(402, 190, "osc2_fine", label="FINE", label_dy=48)
+knob(344, 190, "osc2_freq", label="FREQUENCY", label_dy=38)
+knob(402, 190, "osc2_fine", label="FINE", label_dy=38)
 for x, g, p in ((452, "gSaw", "osc2_saw"), (480, "gTri", "osc2_tri"), (508, "gSq", "osc2_sq")):
     btn(x, 190, p, glyph=g)
 subhead(480, 228, "SHAPE", 8)
 knob(562, 190, "osc2_pw", label="PULSE WIDTH", label_dy=36)
-btn(620, 190, "osc2_lofreq", label="LO FREQ", label_dy=48)
-btn(672, 190, "osc2_keyboard", label="KEYBOARD", label_dy=48)
+btn(620, 190, "osc2_lofreq", label="LO FREQ", label_dy=-26)
+btn(672, 190, "osc2_keyboard", label="KEYBOARD", label_dy=36)
 
 # --- UNISON group (B, r3, unbordered): DETUNE / UNISON / COUNT ---
 knob(360, 332, "unison_det", label="DETUNE", label_dy=38, ticks=(0, 7))
@@ -271,7 +271,7 @@ knob(988, 74, "flt_cutoff", label="CUTOFF")
 knob(1056, 74, "flt_reso", label="RESONANCE")
 knob(1124, 74, "flt_envamt", label="ENVELOPE")
 notes((1124, 118, "AMOUNT"))
-knob(1190, 74, "vel_flt", label="VEL>FLT")
+knob(1190, 74, "vel_flt", label="VELOCITY")
 knob(946, 196, "flt_a", label="ATTACK", label_dy=42)
 knob(1010, 196, "flt_d", label="DECAY", label_dy=42)
 knob(1074, 196, "flt_s", label="SUSTAIN", label_dy=42)
@@ -279,17 +279,17 @@ knob(1138, 196, "flt_r", label="RELEASE", label_dy=42)
 btn(1196, 196, "flt_keyboard", label="KEYBD", label_dy=42)
 
 # --- MASTER TUNE / VOLUME (white knobs, unbordered, right) ---
-knob(1320, 66, "master_tune", label="MASTER TUNE", white=True, label_dy=40)
-knob(1396, 66, "vel_amp", label="VEL>AMP", label_dy=40)
-knob(1472, 66, "volume", label="VOLUME", white=True, label_dy=40)
+knob(1360, 66, "master_tune", label="MASTER TUNE", white=True, label_dy=40)
+knob(1292, 66, "feedback", label="FEEDBACK", label_dy=40)
+knob(1498, 66, "volume", label="VOLUME", white=True, label_dy=40)
 
 # --- AMPLIFIER (right, r2) ---
 box(1240, 14, 312, 116, "MASTER")
 box(1240, 138, 312, 120, "AMPLIFIER")
-knob(1296, 196, "amp_a", label="ATTACK", label_dy=44)
-knob(1364, 196, "amp_d", label="DECAY", label_dy=44)
-knob(1432, 196, "amp_s", label="SUSTAIN", label_dy=44)
-knob(1498, 196, "amp_r", label="RELEASE", label_dy=44)
+knob(1292, 196, "amp_a", label="ATTACK", label_dy=44)
+knob(1360, 196, "amp_d", label="DECAY", label_dy=44)
+knob(1428, 196, "amp_s", label="SUSTAIN", label_dy=44)
+knob(1496, 196, "amp_r", label="RELEASE", label_dy=44)
 
 # --- PROGRAMMER (r3, shifted right; larger display; spread program row) ---
 box(306, 266, 246, 138, "UNISON")
@@ -299,7 +299,7 @@ subhead(1396, 296, "PERFORM", 8)
 btn(598, 330, "prog_preset", color="btnGray", label="PRESET", label_dy=36)
 btn(640, 330, "prog_record", color="btnOrange", label="RECORD", label_dy=36)
 btn(682, 330, "prog_bankselect", color="btnGray", led=False)
-notes((682, 356, "BANK"), (682, 368, "SELECT"))
+notes((682, 362, "BANK"), (682, 374, "SELECT"))
 display(714, 306, 150, 48, inner_texts=((762, 368, "BANK"), (836, 368, "PROGRAM")))
 for i in range(8):
     btn(886 + i * 46, 330, f"program_{i+1}", color="btnGray", num_above=str(i + 1))

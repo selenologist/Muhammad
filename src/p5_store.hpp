@@ -58,12 +58,12 @@ bool buildScaleDev(const double *p, int degrees, uint16_t mask, int root, int16_
 bool saveTuningScl(const char *name, const double *tones, int n);
 bool tuningFileExists(const char *name);   // case-insensitive, .scl/.kbm probe                 // sorted, name without extension
 
-bool savePatch(const std::string &name, const uint8_t raw[133]);
+bool savePatch(const std::string &name, const uint8_t raw[134]);
 // Case-insensitive collision on purpose: filenames stay faithful to the typed
 // case, but "peace" and "PEACE" must confirm as an overwrite even on a
 // case-sensitive fs, because they collide the moment the folder is copied.
 std::string foldCollision(const std::string &name);   // existing name or ""
-bool loadPatch(const std::string &name, uint8_t raw[133]);
+bool loadPatch(const std::string &name, uint8_t raw[134]);
 
 // bank/program retrieval map (persisted in baseDir/bank-program.map)
 void setSlot(int slot, const Source &src);             // slot = bank*8 + program

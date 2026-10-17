@@ -260,19 +260,57 @@ int main()
         p5::Engine en; en.setDriftDepth(80);
         return en.rawValue(p5::P5_VINTAGE) == 80 && en.driftDepth() == 80; }());
     check("drift: patch load delivers depth", [&]{
-        uint8_t raw[133]; std::memset(raw, 0, sizeof raw); raw[p5::P5_VINTAGE] = 66;
-        p5::Patch p{}; std::memcpy(p.raw, raw, 133);
+        uint8_t raw[134]; std::memset(raw, 0, sizeof raw); raw[p5::P5_VINTAGE] = 66;
+        p5::Patch p{}; std::memcpy(p.raw, raw, 134);
         p5::Engine en; en.setPatch(p);
         return en.driftDepth() == 66; }());
     check("drift: file round-trip keeps it", [&]{
-        uint8_t raw[133]; std::memset(raw, 0, sizeof raw); raw[p5::P5_VINTAGE] = 100;
-        p5::Patch p{}; std::memcpy(p.raw, raw, 133);
+        uint8_t raw[134]; std::memset(raw, 0, sizeof raw); raw[p5::P5_VINTAGE] = 100;
+        p5::Patch p{}; std::memcpy(p.raw, raw, 134);
         p5::Engine en; en.setPatch(p);
         if (!p5store::savePatch("DRIFT RT", en.patch().raw)) return false;
-        uint8_t back[133] = {}; if (!p5store::loadPatch("DRIFT RT", back)) return false;
-        p5::Patch q{}; std::memcpy(q.raw, back, 133);
+        uint8_t back[134] = {}; if (!p5store::loadPatch("DRIFT RT", back)) return false;
+        p5::Patch q{}; std::memcpy(q.raw, back, 134);
         p5::Engine e2; e2.setPatch(q);
         return e2.driftDepth() == 100; }());
+
+    // ---- FEEDBACK: VCA -> per-voice filter-in regeneration ----
+    // same patch, one note, 1 block of render: byte 0 must be identical to
+    // the silent-loop build; high byte must be alive and BOUNDED; scalar and
+    // wide kernels must agree sample-for-sample at any depth (same float law).
+    auto renderFb = [](int fb, p5::KernelMode mode, std::vector<int32_t> &buf) -> double {
+        p5::Engine e(mode);
+        e.activate(44100.0);
+        p5::Patch p{}; std::memset(p.raw, 0, sizeof p.raw);
+        p.raw[p5::P5_CUTOFF] = 60; p.raw[p5::P5_RESONANCE] = 90;
+        p.raw[p5::P5_LEVEL_A] = 100; p.raw[p5::P5_SAW_A] = 1;
+        p.raw[p5::P5_ENV_FILTER] = 80; p.raw[p5::P5_ATTACK_AMP] = 2; p.raw[p5::P5_SUSTAIN_AMP] = 96;
+        p.raw[p5::P5_UNISON] = 0;
+        p.raw[p5::P5_FEEDBACK] = (uint8_t)fb;
+        e.setPatch(p);
+        e.noteOn(60, 100);
+        buf.assign(32 * 200, 0);
+        for (int b = 0; b < 200; b++) e.process(&buf[b * 32], 32);
+        double pk = 0; for (int32_t v : buf) pk = std::max(pk, (double)std::abs(v));
+        return pk;
+    };
+    {
+        std::vector<int32_t> a, b, c, d2;
+        const double pk0S = renderFb(0,   p5::KernelMode::Scalar, a);
+        const double pk0W = renderFb(0,   p5::KernelMode::Wide,   b);
+        const double pk90S = renderFb(90, p5::KernelMode::Scalar, c);
+        const double pk90W = renderFb(90, p5::KernelMode::Wide,   d2);
+        check("fb0: byte 0 silent loop (both kernels)", pk0S > 1000.0 && a == b);
+        check("fb: loop regenerates (peak rises at 90)", pk90W > pk0W * 1.03);
+        check("fb: bounded at extreme (no runaway/inf)", pk90S < pk0S * 8.0 && pk90S < 2.2e9);
+        bool same = (c.size() == d2.size());
+        for (size_t i = 0; same && i < c.size(); i++) if (c[i] != d2[i]) same = false;
+        check("fb: scalar == SIMD sample-for-sample at depth 90", same);
+        std::vector<int32_t> x127;
+        const double pkMax = renderFb(127, p5::KernelMode::Wide, x127);
+        check("fb: 127 saturating but finite (desired distortion)",
+              pkMax > pk0W * 1.05 && pkMax < 4.3e9 && x127 != a);
+    }
 
     std::printf("%s\n", fails ? "MPE/TUNING: FAILED" : "mpe/tuning: all ok");
     return fails ? 1 : 0;

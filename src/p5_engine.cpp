@@ -151,7 +151,8 @@ void Engine::loadFactory(uint32_t k)
     Patch p;
     if (k >= PW_FACTORY_N) { patchInit(p); setPatch(p); return; }
     std::memset(&p, 0, sizeof p);
-    std::memcpy(p.raw, PW_FACTORY_RAW[k], RAW_MAX);
+    std::memcpy(p.raw, PW_FACTORY_RAW[k], WIRE_SIZE);
+    p.raw[P5_FEEDBACK] = 0;
     p.size = RAW_MAX; p.model = 0x32; p.command = 2;
     p.group = (uint8_t)(k / 40u); p.program = (uint8_t)(k % 40u);
     setPatch(p);
@@ -176,6 +177,7 @@ void Engine::silenceReset()
     }
     for (int i = 0; i < MAXV; i++) {
         phaseA_[i] = phaseB_[i] = noise_[i] = 0;
+        fbState_[i] = 0.f;
         for (int j = 0; j < 4; j++) z_[j][i] = 0.0f;
         triangle_[i] = 0.0f; syncTail_[i] = 0.0f;
     }
@@ -203,6 +205,7 @@ void Engine::synthNoteOn(int lane, int voiceWas)
         l.filterPrev = l.ampPrev = 0.0f;
         l.glidePitch = 0; l.lastPcm = 0;
         l.drift = l.filterDrift = l.ampDrift = l.envDrift = 0;
+        fbState_[lane] = 0.f;                          // fresh voice: loop silent
         phaseA_[lane] = l.vph[0];
         phaseB_[lane] = l.vph[1];
         for (int j = 0; j < 4; j++) z_[j][lane] = 0.0f;
@@ -670,6 +673,14 @@ bool Engine::renderLane(Lane &l, int32_t mPitch16, int32_t mFine, int32_t mCutof
     c.la = (float)la / 32768.0f;
     c.lb = (float)lb / 32768.0f;
     c.ln = (float)ln / 32768.0f;
+    // FEEDBACK: VCA -> filter input, per voice, like plugging the output
+    // jack into the external input. The tap keeps its real envelope depth
+    // (a quiet voice feeds back quietly - the hardware behaves exactly so);
+    // the byte calibrates the cable: 3/127 puts FULL envelope sustain at
+    // byte 127 at the edge of loop unity - the ladder sings and the
+    // pre-ladder softclip distorts, which is the whole point at extreme
+    // settings. Mid bytes sing less; byte 0 adds an exact +-0 (bit-exact).
+    c.fb = (float)p[P5_FEEDBACK] * (3.0f / 127.0f);
     c.ia = ia;
     c.ib = ib;
     c.amp0 = (float)mAmp0;

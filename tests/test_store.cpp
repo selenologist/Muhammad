@@ -15,17 +15,17 @@ int main()
         std::printf("%-40s %s\n", what, ok ? "ok" : "FAIL");
         if (!ok) fails++;
     };
-    uint8_t raw[133]; std::memset(raw, 7, sizeof raw);
+    uint8_t raw[134]; std::memset(raw, 7, sizeof raw);
     std::memcpy(raw + 65, "TEST PATCH", 10);
     check("save", p5store::savePatch("TEST PATCH", raw));
     check("list contains it", [&]{ auto v = p5store::listPatches();
         for (auto &s : v) if (s == "TEST PATCH") return true; return false; }());
-    uint8_t back[133] = {};
-    check("load roundtrip", p5store::loadPatch("TEST PATCH", back) && !std::memcmp(raw, back, 133));
+    uint8_t back[134] = {};
+    check("load roundtrip", p5store::loadPatch("TEST PATCH", back) && !std::memcmp(raw, back, 134));
     check("sanitize keeps case", p5store::sanitize("a/b\\c*?") == "abc");
     check("sanitize faithful mixed", p5store::sanitize("Peace Be 5") == "Peace Be 5");
     check("foldCollision finds PEACE vs peace", [&]{
-        uint8_t r2[133]; std::memset(r2, 3, sizeof r2);
+        uint8_t r2[134]; std::memset(r2, 3, sizeof r2);
         if (!p5store::savePatch("peace", r2)) return false;
         const std::string hit = p5store::foldCollision("PEACE");
         return hit == "peace" && p5store::foldCollision("brave").empty();

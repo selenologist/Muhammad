@@ -38,7 +38,7 @@ struct Plugin {
     int32_t scratch[32] = {0};
     int bendRaw = 0;
     int program = -1;                   // factory program loaded (-1: edited/INIT)
-    uint8_t slotRaw_[PW_FACTORY_N][133] = {};
+    uint8_t slotRaw_[PW_FACTORY_N][134] = {};
     int16_t slotCode_[PW_FACTORY_N];                  // -1 init, -2 default, -3 file, else factory idx
     bool slotReady_ = false;
     // Rev4 MIDI performance layer: CC7 volume * CC13 expression (linear,
@@ -56,7 +56,7 @@ struct Plugin {
     uint8_t heldFlag_[128] = {}, heldNotes_[128] = {};
     int heldCnt_ = 0;
     bool hasSrc_ = false;
-    uint8_t srcRaw_[133] = {};
+    uint8_t srcRaw_[134] = {};
     bool floatValid_ = false;                 // presetRecall() may toggle back once
     uint8_t floatSnap_[133] = {};
     std::string srcFile_;
@@ -95,7 +95,7 @@ struct Plugin {
     bool loadUserPatch(const std::string &name);      // false if missing
     void savePatchNamed(const std::string &name);     // writes file + becomes source
     void assignSlotFromText(int slot, const std::string &text);
-    bool panelDirty() const { return hasSrc_ && std::memcmp(engine.patch().raw, srcRaw_, 133) != 0; }
+    bool panelDirty() const { return hasSrc_ && std::memcmp(engine.patch().raw, srcRaw_, 134) != 0; }
     void presetRecall();                              // PRESET: back to loaded source
     const std::string &currentFile() const { return srcFile_; }
     void markSource(int kind, int idx, const std::string &file);  // after any load
