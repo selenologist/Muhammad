@@ -525,8 +525,10 @@ void switchToFloat(Ctx &c)
         if (c.hostGui && c.hostGui->request_hide && hh && c.hostGui->request_hide(hh))
             std::fprintf(stderr, "[p5gui] asked host to hide the empty wrapper\n");
         else if (c.hostGui && c.hostGui->closed && hh)
-        {   std::fprintf(stderr, "[p5gui] request_hide unavailable -> closed(host)\n");
-            c.hostGui->closed(hh, true);
+        {   // was_destroyed=false: "connection lost, GUI still alive" - do NOT
+            // invite a gui_destroy (its teardown would kill the live float).
+            std::fprintf(stderr, "[p5gui] request_hide refused -> closed(host,false)\n");
+            c.hostGui->closed(hh, false);
         }
     }
     else std::fprintf(stderr, "[p5gui] mid-session float setup FAILED (blank slot)\n");
