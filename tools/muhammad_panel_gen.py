@@ -104,7 +104,7 @@ DEFS = f'''
 body = []
 knobs, btns, texts, boxes, rules, displays = [], [], [], [], [], []
 
-def knob(x, y, param, label=None, angle=-60, white=False, label_dy=34, extra=None, ticks=(0, 10)):
+def knob(x, y, param, label=None, angle=-60, white=False, label_dy=34, extra=None, ticks=(0, 10), label2=None, label2_dy=44.5):
     dial = "knobDialWhite" if white else "knobDial"
     scale = ('<use xlink:href="#knobScale" href="#knobScale"/>' if tuple(ticks) == (0, 10)
              else '<g class="scale">' + knob_scale_parts(*ticks) + '</g>')
@@ -113,6 +113,8 @@ def knob(x, y, param, label=None, angle=-60, white=False, label_dy=34, extra=Non
          f'<g class="dial" transform="rotate({f(angle)})"><use xlink:href="#{dial}" href="#{dial}"/></g>']
     if label:
         s.append(f'<text class="lbl" y="{label_dy}">{label}</text>')
+    if label2:
+        s.append(f'<text class="lbl" y="{label2_dy}">{label2}</text>')
     if extra:
         s.append(extra)
     s.append('</g>')
@@ -120,6 +122,8 @@ def knob(x, y, param, label=None, angle=-60, white=False, label_dy=34, extra=Non
     knobs.append(dict(pid=PID[param], x=x, y=y, white=white, ticks=ticks))
     if label:
         texts.append(dict(x=x, y=y + label_dy, style="lbl", text=label))
+    if label2:
+        texts.append(dict(x=x, y=y + label2_dy, style="lbl", text=label2))
 
 def btn(x, y, param, color="btnDark", label=None, glyph=None, led=True,
         num_above=None, label_dy=29, label_above=None):
@@ -281,8 +285,7 @@ btn(1196, 196, "flt_keyboard", label="KEYBD", label_dy=42)
 # --- MASTER TUNE / VOLUME (white knobs, unbordered, right) ---
 knob(1360, 66, "master_tune", label="MASTER TUNE", white=True, label_dy=40)
 knob(1292, 66, "feedback", label="FEEDBACK", label_dy=40)
-knob(1430, 66, "vel_amp", label="AMP", label_dy=40)
-notes((1430, 118, "VELOCITY"))
+knob(1430, 66, "vel_amp", label="AMP", label_dy=34, label2="VELOCITY", label2_dy=44.5)
 knob(1498, 66, "volume", label="VOLUME", white=True, label_dy=40)
 
 # --- AMPLIFIER (right, r2) ---

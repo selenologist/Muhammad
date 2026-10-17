@@ -121,8 +121,7 @@
   <g class="button" data-param="flt_keyboard" transform="translate(1196,196)"><use xlink:href="#btnDark" href="#btnDark"/><text class="lbl" y="42">KEYBD</text></g>
   <g class="knob" data-param="master_tune" transform="translate(1360,66)"><use xlink:href="#knobScale" href="#knobScale"/><g class="dial" transform="rotate(-60)"><use xlink:href="#knobDialWhite" href="#knobDialWhite"/></g><text class="lbl" y="40">MASTER TUNE</text></g>
   <g class="knob" data-param="feedback" transform="translate(1292,66)"><use xlink:href="#knobScale" href="#knobScale"/><g class="dial" transform="rotate(-60)"><use xlink:href="#knobDial" href="#knobDial"/></g><text class="lbl" y="40">FEEDBACK</text></g>
-  <g class="knob" data-param="vel_amp" transform="translate(1430,66)"><use xlink:href="#knobScale" href="#knobScale"/><g class="dial" transform="rotate(-60)"><use xlink:href="#knobDial" href="#knobDial"/></g><text class="lbl" y="40">AMP</text></g>
-  <text class="lbl" x="1430" y="118">VELOCITY</text>
+  <g class="knob" data-param="vel_amp" transform="translate(1430,66)"><use xlink:href="#knobScale" href="#knobScale"/><g class="dial" transform="rotate(-60)"><use xlink:href="#knobDial" href="#knobDial"/></g><text class="lbl" y="34">AMP</text><text class="lbl" y="44.5">VELOCITY</text></g>
   <g class="knob" data-param="volume" transform="translate(1498,66)"><use xlink:href="#knobScale" href="#knobScale"/><g class="dial" transform="rotate(-60)"><use xlink:href="#knobDialWhite" href="#knobDialWhite"/></g><text class="lbl" y="40">VOLUME</text></g>
   <rect class="box" data-box="MASTER" rx="8" x="1240" y="14" width="312" height="116"/><rect class="hdrbg" x="1369.8" y="8" width="52.4" height="12"/><text class="hdr" x="1396" y="17.6">MASTER</text>
   <rect class="box" data-box="AMPLIFIER" rx="8" x="1240" y="138" width="312" height="120"/><rect class="hdrbg" x="1358.7" y="132" width="74.6" height="12"/><text class="hdr" x="1396" y="141.6">AMPLIFIER</text>
