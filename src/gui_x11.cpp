@@ -487,9 +487,19 @@ void pump(Ctx &c)
             static int mirrorLogged = 0;
             if (!mirrorLogged++)
                 std::fprintf(stderr, "[p5gui] mirroring parent geometry -> %dx%d\n", pa.width, pa.height);
-            XResizeWindow(c.dpy, c.win, pa.width, pa.height);
-            c.w = (uint32_t)pa.width; c.h = (uint32_t)pa.height;
+            // Never copy a too-tall parent: our own window is exactly panel-aspect
+            // of the slot's width (hosts hand out square slots until asked).
+            const uint32_t wantH = (uint32_t)((uint64_t)pa.width * p5ui::kPanelH / p5ui::kPanelW);
+            XResizeWindow(c.dpy, c.win, (uint32_t)pa.width, wantH);
+            c.w = (uint32_t)pa.width; c.h = wantH;
             dirty = true;
+            if (pa.height > wantH + 20 && c.hostGui && c.hostGui->request_resize &&
+                c.resizeRequests < 3)
+            {   c.resizeRequests++;
+                std::fprintf(stderr, "[p5gui] slot %dx%d too tall; request_resize(%d,%u)\n",
+                             pa.width, pa.height, pa.width, wantH);
+                c.hostGui->request_resize(c.plugin->host, pa.width, wantH);
+            }
         }
     }
     // Bitwig sizes our immediate container to the aspect we report; wasted
