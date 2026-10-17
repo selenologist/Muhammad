@@ -93,6 +93,13 @@ struct GuiCore
     // keyboard focus request: set when a text-entry modal opens; the shim
     // consumes it (XSetInputFocus / SetFocus) in the same frame.
     bool needFocus = false;
+
+    // debug page (modal 10): platform shims install copyText (CLIPBOARD
+    // owner on X11, CF_UNICODETEXT on win32, NSPasteboard on cocoa) and
+    // record the api the host asked for.
+    bool (*copyText)(const char *text) = nullptr;
+    char guiApi[8] = "x11";
+    char dbg[1200] = {};
 };
 
 // ---- neutral input API (called by both platform pumps) ----------------------

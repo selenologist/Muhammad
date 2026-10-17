@@ -350,6 +350,26 @@ into a `.clap` bundle.
 executes the Linux test suite + golden images there, and publishes a GitHub
 Release with all artifacts when a `v*` tag is pushed.
 
+## Window sizing & debug page (v1.13.3)
+
+Hosts hand out slots that do not match the panel aspect (Bitwig on Linux
+gives 1280x1280 until asked — and often keeps not asking back). Policy:
+**the slot is always filled** — a taller window renders the panel pinned to
+the top plus a gradient well with the MUHAMMAD wordmark beneath, never host
+black letterbox. In parallel we still `request_resize` the host toward the
+exact aspect (budget 3 attempts, renegotiated whenever any configure
+arrives), so cooperating hosts get the tight window automatically.
+
+Clicking the status/build strip (bottom edge, right side) opens the
+Surge-style **DEBUG INFO page**: build stamp, gui api + host clap.gui
+service + timer state + resize-request counter, window/parent/ancestor
+sizes, sample rate, oversample, polyphony and live voice count, SIMD path,
+patch source + name, tuning state, store path — with a **COPY** button that
+places the whole block on the system clipboard (X11 CLIPBOARD selection
+owner with TARGETS/UTF8_STRING serving, CF_UNICODETEXT on Windows,
+NSPasteboard on macOS). Click anywhere else or press Escape to close;
+the page is also a golden (`debug`).
+
 ## Microtuning workstation (v1.13.0-scales)
 
 The TUNING page is now a full editor, not just a file loader:

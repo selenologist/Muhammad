@@ -30,6 +30,54 @@ namespace pw {
 
 namespace {
 
+// ---- CLIPBOARD selection owner (debug COPY) -------------------------------
+namespace clip {
+Display *dpy = nullptr;                 // set by setupEmbedded (one GUI per process)
+Window win = 0;
+char text[1200] = {};
+int len = 0;
+Atom aCLIPBOARD = None, aUTF8 = None, aTARGETS = None;
+}
+
+static bool x11CopyText(const char *t)
+{
+    if (!clip::dpy || !clip::win) return false;
+    const size_t n = std::strlen(t);
+    if (n >= sizeof clip::text) return false;
+    std::memcpy(clip::text, t, n + 1);
+    clip::len = (int)n;
+    if (!clip::aCLIPBOARD)
+    {   clip::aCLIPBOARD = XInternAtom(clip::dpy, "CLIPBOARD", False);
+        clip::aUTF8      = XInternAtom(clip::dpy, "UTF8_STRING", False);
+        clip::aTARGETS   = XInternAtom(clip::dpy, "TARGETS", False); }
+    XSetSelectionOwner(clip::dpy, clip::aCLIPBOARD, clip::win, CurrentTime);
+    if (XGetSelectionOwner(clip::dpy, clip::aCLIPBOARD) != clip::win)
+    {   std::fprintf(stderr, "[p5gui] CLIPBOARD: could not acquire ownership\n"); return false; }
+    return true;
+}
+
+static void serveSelectionRequest(const XSelectionRequestEvent &rq)
+{
+    if (rq.selection != clip::aCLIPBOARD || rq.property == None) return;
+    XEvent nt{};
+    nt.xselection.type = SelectionNotify;
+    nt.xselection.requestor = rq.requestor;
+    nt.xselection.selection = rq.selection;
+    nt.xselection.target = rq.target;
+    nt.xselection.property = rq.property;
+    nt.xselection.time = rq.time;
+    if (rq.target == clip::aTARGETS)
+    {   const Atom list[2] = { clip::aTARGETS, clip::aUTF8 };
+        XChangeProperty(clip::dpy, rq.requestor, rq.property, XA_ATOM, 32,
+                        PropModeReplace, (const unsigned char *)list, 2); }
+    else if (rq.target == clip::aUTF8 || rq.target == XA_STRING)
+    {   XChangeProperty(clip::dpy, rq.requestor, rq.property, rq.target, 8,
+                        PropModeReplace, (const unsigned char *)clip::text, clip::len); }
+    else
+    {   nt.xselection.property = None; }          // unsupported target
+    XSendEvent(clip::dpy, rq.requestor, False, 0, &nt);
+}
+
 struct Ctx : GuiCore
 {
     explicit Ctx(Plugin *p) : GuiCore(p) {}
@@ -126,6 +174,9 @@ void pump(Ctx &c)
     while (XPending(c.dpy))
     {
         XNextEvent(c.dpy, &ev);
+        if (ev.type == SelectionRequest)
+        {   serveSelectionRequest(ev.xselectionrequest); continue; }
+        if (ev.type == SelectionClear) { clip::len = 0; continue; }
         if (ev.xany.window != c.win) continue;
         switch (ev.type)
         {
@@ -219,6 +270,7 @@ bool setupEmbedded(Ctx &c, Window parent)
     c.parent = parent;                       // pump/mirror/grow all key off this
     c.dpy = XOpenDisplay(nullptr);
     if (!c.dpy) return false;
+    clip::dpy = c.dpy;
     const int screen = DefaultScreen(c.dpy);
 
     static const int fbAttrs[] = { GLX_RGBA, GLX_DOUBLEBUFFER, GLX_RED_SIZE, 4, GLX_GREEN_SIZE, 4,
@@ -250,6 +302,7 @@ bool setupEmbedded(Ctx &c, Window parent)
     std::fprintf(stderr, "[p5gui] child window created: 0x%lx parent 0x%lx size %ux%u\n",
                  (unsigned long)c.win, (unsigned long)c.parent, c.w, c.h);
     c.wmDelete = XInternAtom(c.dpy, "WM_DELETE_WINDOW", False);
+    clip::win = c.win;
 
     // Announce XEmbed (the clap spec's x11 embedding protocol) so the host
     // manages us as an embedded window, and pin the aspect in WM hints.
@@ -306,11 +359,13 @@ bool gui_create(const clap_plugin_t *p, const char *api, bool is_floating)
 {
     std::fprintf(stderr, "[p5gui] create api=%s floating=%d\n", api ? api : "(null)", (int)is_floating);
     if (!gui_is_api_supported(p, api, is_floating)) return false;
+    if (auto *cc = ctxFrom(p)) if (api) std::strncpy(cc->guiApi, api, sizeof cc->guiApi - 1);
     auto *s = static_cast<Plugin *>(p->plugin_data);
     if (!s->gui)
     {
         s->gui = new Ctx(s);
         Ctx &c = *static_cast<Ctx *>(s->gui);
+        c.copyText = x11CopyText;
         if (s->host && s->host->get_extension)
             c.hostGui = (const clap_host_gui_t *)s->host->get_extension(s->host, CLAP_EXT_GUI);
         std::fprintf(stderr, "[p5gui] host clap.gui service %s\n", c.hostGui ? "present" : "absent");

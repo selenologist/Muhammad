@@ -21,6 +21,8 @@ struct State
     int bank = 1, program = 1;     // shown on the programmer display
     const char *build = nullptr;   // version+hash, drawn dim in the panel corner
     const char *diag = nullptr;    // live gui diagnostics (host service, negotiation, size)
+    bool debugOpen = false;        // modal 10: full debug info page (click status strip)
+    const char *debugText = nullptr;   // pre-wrapped lines, '\n' separated
     // text-entry modal over the programmer (RECORD save / PRESET assign)
     // preset picker (programmer PRESET): tabs Factory|User, 10 rows, paged
     const char *pickerTitle = nullptr;   // non-null ONLY while picker is open
@@ -140,6 +142,14 @@ void nodePos(const float *c, int n, int i, float &x, float &y);   // tone i (1..
 int nodeAt(const float *c, int n, float lx, float ly);            // nearest node within 10 px, else -1
 float clampTone(const float *c, int n, int i, float v);           // strictly monotone neighbours
 int hitControl(float lx, float ly);   // 1 LOAD 2 RESET 3/4 rails 5 SAVE 6 root- 7 root+ 0 miss
+}
+
+// full debug info page (Surge's about-overlay analogue): text + COPY + X
+namespace dbgpg {
+constexpr float x = 210, y = 16, w = 1140, h = 398;
+constexpr float copyX = 236, copyY = 368, copyW = 120, copyH = 26;   // page coords
+bool hitCopy(float lx, float ly);
+bool hitClose(float lx, float ly);
 }
 void pointToLayout(float px, float py, float w, float h, float &lx, float &ly);
 int knobAt(const State &s, float px, float py, float w, float h);

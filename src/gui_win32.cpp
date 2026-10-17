@@ -109,6 +109,28 @@ GLTHUNK(void, glStencilOpSeparate, (GLenum face, GLenum sfail, GLenum dpfail, GL
 
 // ---- embedding context --------------------------------------------------------
 
+// ---- CF_UNICODETEXT clipboard (debug COPY) ---------------------------------
+namespace clip {
+HWND hwnd = nullptr;                 // set by setupWin32
+}
+
+static bool win32CopyText(const char *t)
+{
+    if (!clip::hwnd) return false;
+    const int wn = MultiByteToWideChar(CP_UTF8, 0, t, -1, nullptr, 0);
+    if (wn <= 0) return false;
+    HGLOBAL mem = GlobalAlloc(GMEM_MOVEABLE, (size_t)wn * sizeof(wchar_t));
+    if (!mem) return false;
+    auto *dst = static_cast<wchar_t *>(GlobalLock(mem));
+    MultiByteToWideChar(CP_UTF8, 0, t, -1, dst, wn);
+    GlobalUnlock(mem);
+    if (!OpenClipboard(clip::hwnd)) { GlobalFree(mem); return false; }
+    EmptyClipboard();
+    if (!SetClipboardData(CF_UNICODETEXT, mem)) { GlobalFree(mem); CloseClipboard(); return false; }
+    CloseClipboard();                              // ownership transferred
+    return true;
+}
+
 struct Ctx : GuiCore
 {
     explicit Ctx(Plugin *p) : GuiCore(p) {}
@@ -346,6 +368,7 @@ bool setupWin32(Ctx &c, HWND parent)
     c.win = CreateWindowExW(0, kClassName, L"Muhammad", WS_CHILD | WS_CLIPCHILDREN,
                             0, 0, (int)w, (int)h, parent, nullptr, g_inst, &c);
     if (!c.win) return false;
+    clip::hwnd = c.win;
     SetWindowLongPtrW(c.win, GWL_STYLE, WS_CHILD | WS_CLIPCHILDREN);
     SetWindowPos(c.win, nullptr, 0, 0, (int)w, (int)h, SWP_NOZORDER | SWP_NOACTIVATE);
     std::fprintf(stderr, "[p5gui] win32 child window created: %p parent %p size %ux%u\n",
@@ -422,11 +445,13 @@ bool gui_create(const clap_plugin_t *p, const char *api, bool is_floating)
 {
     std::fprintf(stderr, "[p5gui] create api=%s floating=%d\n", api ? api : "(null)", (int)is_floating);
     if (!gui_is_api_supported(p, api, is_floating)) return false;
+    if (auto *cc = ctxFrom(p)) if (api) std::strncpy(cc->guiApi, api, sizeof cc->guiApi - 1);
     auto *s = static_cast<Plugin *>(p->plugin_data);
     if (!s->gui)
     {
         s->gui = new Ctx(s);
         Ctx &c = *static_cast<Ctx *>(s->gui);
+        c.copyText = win32CopyText;
         if (s->host && s->host->get_extension)
             c.hostGui = (const clap_host_gui_t *)s->host->get_extension(s->host, CLAP_EXT_GUI);
         std::fprintf(stderr, "[p5gui] host clap.gui service %s\n", c.hostGui ? "present" : "absent");

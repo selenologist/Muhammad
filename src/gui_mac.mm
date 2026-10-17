@@ -58,6 +58,15 @@ static unsigned eventMods(NSEvent *e)
 // platform context
 // ---------------------------------------------------------------------------
 
+// ---- NSPasteboard (debug COPY) ----------------------------------------------
+static bool macCopyText(const char *t)
+{
+    NSPasteboard *pb = [NSPasteboard generalPasteboard];
+    [pb clearContents];
+    NSString *str = [NSString stringWithUTF8String:t];
+    return str && [pb setString:str forType:NSPasteboardTypeString];
+}
+
 struct Ctx : GuiCore
 {
     explicit Ctx(Plugin *p) : GuiCore(p) {}
@@ -355,11 +364,13 @@ static bool gui_create(const clap_plugin_t *p, const char *api, bool is_floating
 {
     std::fprintf(stderr, "[p5gui] create api=%s floating=%d\n", api ? api : "(null)", (int)is_floating);
     if (!gui_is_api_supported(p, api, is_floating)) return false;
+    if (auto *cc = ctxFrom(p)) if (api) std::strncpy(cc->guiApi, api, sizeof cc->guiApi - 1);
     auto *s = static_cast<Plugin *>(p->plugin_data);
     if (!s->gui)
     {
         s->gui = new Ctx(s);
         Ctx &c = *static_cast<Ctx *>(s->gui);
+        c.copyText = macCopyText;
         if (s->host && s->host->get_extension)
             c.hostGui = (const clap_host_gui_t *)s->host->get_extension(s->host, CLAP_EXT_GUI);
         std::fprintf(stderr, "[p5gui] host clap.gui service %s\n", c.hostGui ? "present" : "absent");

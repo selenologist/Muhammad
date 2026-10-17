@@ -17,6 +17,8 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstdarg>
+#include <cstdio>
 #include <cstring>
 
 #include "muhammad_plugin.hpp"
@@ -191,6 +193,8 @@ void fillState(GuiCore &c, p5ui::State &st)
             st.led[i] = v > 1.5 ? 2 : v > 0.5 ? 1 : 0;                     // red / amber / off
         }
     }
+    st.debugOpen = (c.modal == 10);
+    st.debugText = c.modal == 10 ? c.dbg : nullptr;
 #ifdef P5_BUILD_INFO
     st.build = P5_BUILD_INFO;
 #endif
@@ -397,11 +401,44 @@ void actuate(GuiCore &c, int btnIdx, unsigned mods)
 
 // ---- pointer / wheel / keyboard state machines --------------------------------
 
+void buildDebugText(GuiCore &c);
+
 bool onPointerPress(GuiCore &c, float px, float py, unsigned mods, unsigned timeMs)
 {
     bool dirty = false;
     float lx, ly;
     p5ui::pointToLayout(px, py, (float)c.w, (float)c.h, lx, ly);
+
+    if (c.modal == 10)                       // debug page: COPY button or dismiss
+    {
+        if (p5ui::dbgpg::hitCopy(lx, ly))
+        {   if (!c.dbg[0]) return true;
+            const bool ok = c.copyText && c.copyText(c.dbg);
+            std::fprintf(stderr, "[p5gui] debug COPY: %s (%u chars)\n",
+                         ok ? "clipboard owned" : "FAILED", (unsigned)std::strlen(c.dbg));
+            return true;
+        }
+        c.modal = 0;
+        return true;
+    }
+
+    if (!c.modal && !(mods & P5_MOD_RIGHT) && timeMs != 0u)
+    {   // clicking the status/build strip opens the debug page (Surge-style)
+        float sc, xo, yo;
+        p5ui::fitWindow((float)c.w, (float)c.h, sc, xo, yo);
+        const float winBot = ((float)c.h - yo) / sc, winRight = ((float)c.w - xo) / sc;
+        const bool overPanel = p5ui::kPanelH * sc + yo >= (float)c.h - 1.f;
+        const bool strip = (lx >= winRight - 640.f) &&
+            ((overPanel && ly >= p5ui::kPanelH - 20.f && ly <= p5ui::kPanelH + 2.f) ||
+             (!overPanel && ly >= winBot - 24.f && ly <= winBot));
+        if (strip)
+        {   buildDebugText(c);
+            c.modal = 10;
+            std::fprintf(stderr, "[p5gui] debug page opened (win %ux%u, chassis %d)\n",
+                         c.w, c.h, (int)!overPanel);
+            return true;
+        }
+    }
 
     if (mods & P5_MOD_RIGHT)
     {   // right-click: trim-rail centring on the EDIT page, BANK step-down elsewhere
@@ -690,6 +727,10 @@ bool onWheel(GuiCore &c, float px, float py, int dir)   // dir: -1 up, +1 down/n
 
 bool onKey(GuiCore &c, GuiKey key, unsigned mods)
 {
+    if (c.modal == 10)
+    {   if (key == K_ESCAPE) c.modal = 0;
+        return true;                     // the page swallows everything else
+    }
     if (!c.modal) return false;
     if (key == K_ESCAPE)
     {   if (c.modal == 3) c.modal = 1;
@@ -776,19 +817,56 @@ bool coreMirrorSlot(GuiCore &c, int slotW, int slotH, uint32_t &outW, uint32_t &
     static int mirrorLogged = 0;
     if (!mirrorLogged++)
         std::fprintf(stderr, "[p5gui] mirroring parent geometry -> %dx%d\n", slotW, slotH);
-    // Never copy a too-tall parent: our own window is exactly panel-aspect
-    // of the slot's width (hosts hand out square slots until asked).
+    // Fill whatever the host gave us: a taller-than-aspect slot is OURS and
+    // the renderer paints the extra as chassis (gradient well + wordmark),
+    // not host-black letterbox. We still ask the host to shrink to the panel
+    // aspect (budget 3) — compliant hosts get the tight window, Bitwig-style
+    // hosts get a clean rack card instead of a black band.
     const uint32_t wantH = (uint32_t)((uint64_t)slotW * p5ui::kPanelH / p5ui::kPanelW);
-    outW = (uint32_t)slotW; outH = wantH;
+    outW = (uint32_t)slotW; outH = (uint32_t)slotH;
     c.w = outW; c.h = outH;
     if (slotH > (long)wantH + 20 && c.hostGui && c.hostGui->request_resize &&
         c.resizeRequests < 3)
     {   c.resizeRequests++;
-        std::fprintf(stderr, "[p5gui] slot %dx%d too tall; request_resize(%d,%u)\n",
-                     slotW, slotH, slotW, wantH);
+        std::fprintf(stderr, "[p5gui] slot %dx%d taller than aspect; asked host for %dx%u (rr %d)\n",
+                     slotW, slotH, slotW, wantH, c.resizeRequests);
         c.hostGui->request_resize(c.plugin->host, slotW, wantH);
     }
     return true;
+}
+
+void buildDebugText(GuiCore &c)
+{
+    Plugin *P = c.plugin;
+    int n = 0;
+    auto line = [&](const char *fmt, ...)
+    {
+        if (n >= (int)sizeof c.dbg - 8) return;
+        va_list ap; va_start(ap, fmt);
+        n += std::vsnprintf(c.dbg + n, sizeof c.dbg - (size_t)n, fmt, ap);
+        va_end(ap);
+        if (n > 0 && c.dbg[n - 1] == '\n') {} else if (n < (int)sizeof c.dbg - 8) { c.dbg[n++] = '\n'; }
+    };
+    const char *name = "";
+    {   const std::string cur = P->currentFile();
+        name = cur.empty() ? (const char *)P->engine.patch().raw + p5::P5_NAME : cur.c_str(); }
+    line("Muhammad build: %s", P5_BUILD_INFO);
+    line("gui: api %s  host clap.gui svc %s  timer %s  rr %d/3  scale %.2f",
+         c.guiApi, c.hostGui ? "present" : "absent",
+         c.timerRegistered ? "registered" : "none", c.resizeRequests, c.scale);
+    line("window: win %ux%u  parent %ux%u  ancestor %ux%u",
+         c.w, c.h, c.parW, c.parH, c.ancW, c.ancH);
+    line("audio: sr %.0f  oversample %d  polyphony %d  live voices %u  simd %s",
+         P->sr, P->engine.oversample(), P->engine.polyphony(),
+         (unsigned)P->engine.liveVoices(), P->engine.simdPath());
+    line("patch: src %s  name %.20s", P->loadTag_, name);
+    line("tuning: %.60s  tones %d  root %d  mask %03x  walk %d",
+         P->tuneName_, (int)P->tuneToneCount_, P->tuneRoot_, (unsigned)P->tuneMask_,
+         P->tuneWalk_);
+    line("state: modal %d  tuneFocus %d  wheelN %d  pickerTab %d page %d",
+         c.modal, c.tuneFocus, c.wheelN, c.pickerTab, c.pickerPage);
+    line("store: %s", p5store::baseDir().c_str());
+    if (n < (int)sizeof c.dbg - 1) c.dbg[n] = 0;
 }
 
 void coreAncestorAsk(GuiCore &c, uint32_t parW, uint32_t parH,

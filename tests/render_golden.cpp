@@ -34,7 +34,8 @@ static p5ui::State stateFor(const char *name, p5::Engine &e, int &programOut)
     int program = -1;                 // -1 == INIT
     const bool trimMode = !std::strcmp(name, "trim");
     const bool tuneMode = !std::strcmp(name, "tune");
-    if (!std::strcmp(name, "init") || trimMode || tuneMode) { p5::patchInit(p); }
+    const bool debugMode = !std::strcmp(name, "debug");
+    if (!std::strcmp(name, "init") || trimMode || tuneMode || debugMode) { p5::patchInit(p); }
     else if (!std::strcmp(name, "pad"))  program = 1;
     else if (!std::strcmp(name, "arp"))  program = 42;
     else if (!std::strcmp(name, "bass")) program = 91;
@@ -48,6 +49,18 @@ static p5ui::State stateFor(const char *name, p5::Engine &e, int &programOut)
     const p5::Patch &pp = e.patch();
 
     p5ui::State s;
+    if (debugMode)
+    {   s.debugOpen = true;
+        s.debugText =
+            "Muhammad build: 1.13.3-platformgui aabbccd-d 2026-10-17 12:00\n"
+            "gui: api x11  host clap.gui svc present  timer registered  rr 2/3  scale 1.00\n"
+            "window: win 1280x352  parent 1280x352  ancestor 1400x352\n"
+            "audio: sr 44100  oversample 2  polyphony 8  live voices 3  simd avx2\n"
+            "patch: src fac  name Peace Be Upon Him\n"
+            "tuning: D Pent Test  tones 5  root 2  mask 15  walk 0\n"
+            "state: modal 10  tuneFocus 0  wheelN 5  pickerTab 0 page 0\n"
+            "store: /home/user/Documents/Muhammad Synth\n";
+    }
     if (tuneMode)
     {   // polar editor: melodee's PYTH chromatic dial + matching dev table
         s.tuneOpen = true;
