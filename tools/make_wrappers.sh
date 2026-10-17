@@ -75,12 +75,19 @@ cd "$WORK/clap-wrapper/build"
 for cand in Release/muhammad.vst3 muhammad.vst3 Release/muhammad.component muhammad.component; do
     [ -e "$cand" ] && cp -R "$cand" "$DIST/" && say "collected $cand"
 done
-for cand in muhammad Release/muhammad Release/muhammad.app muhammad.app Debug/muhammad; do
+for cand in muhammad muhammad.exe Release/muhammad Release/muhammad.exe \
+             Release/muhammad.app muhammad.app Debug/muhammad; do
     [ -x "$cand" ] && [ ! -d "$cand" ] && cp "$cand" "$DIST/" && say "collected standalone $cand"
 done
 # the vst3 bundle dir vs the standalone exe can share a name on some builds;
 # keep whatever arrived, then zip for a single upload artifact
 cd "$DIST"
-zip -qr "muhammad-$VER-$(uname -s | tr A-Z a-z)-wrappers.zip" \
-    muhammad.vst3 muhammad.component muhammad muhammad.app 2>/dev/null || true
+case "$(uname -s)" in
+    Linux)                  PLAT=linux ;;
+    Darwin)                 PLAT=macos ;;
+    MINGW*|MSYS*|CYGWIN*)   PLAT=win ;;
+    *)                      PLAT="$(uname -s | tr A-Z a-z)" ;;
+esac
+zip -qr "muhammad-$VER-$PLAT-wrappers.zip" \
+    muhammad.vst3 muhammad.component muhammad muhammad.exe muhammad.app 2>/dev/null || true
 say "done: $(ls -1 "$DIST")"
