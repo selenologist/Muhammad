@@ -1,4 +1,4 @@
-/* dlopen the built prophet.clap and drive it through the CLAP surface the way
+/* dlopen the built muhammad.clap and drive it through the CLAP surface the way
  * a host would: entry, factory, init, activate, events, process, params,
  * preset-load, state save/load. Fails loudly on any contract violation. */
 #include <clap/clap.h>

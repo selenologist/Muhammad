@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// CLAP entry point for Prophet (structure follows the vasynth CLAP reference:
+// CLAP entry point for Muhammad (structure follows the vasynth CLAP reference:
 // one shared library, plugin factory + preset discovery factory).
 #include <clap/clap.h>
 #include <cstring>
-#include "prophet_plugin.hpp"
-#include "p5_prophet_discovery.h"
+#include "muhammad_plugin.hpp"
+#include "muhammad_discovery.h"
 
 namespace {
 
@@ -20,7 +20,7 @@ const clap_plugin_t *factory_create_plugin(const clap_plugin_factory *, const cl
 {
     if (!clap_version_is_compatible(host->clap_version)) return nullptr;
     if (std::strcmp(plugin_id, pw::kDescriptor.id) != 0) return nullptr;
-    return pw::prophet_create(host);
+    return pw::muhammad_create(host);
 }
 
 const clap_plugin_factory_t gFactory = {
@@ -37,7 +37,7 @@ const void *entry_get_factory(const char *factory_id)
     if (!std::strcmp(factory_id, CLAP_PLUGIN_FACTORY_ID)) return &gFactory;
     if (!std::strcmp(factory_id, CLAP_PRESET_DISCOVERY_FACTORY_ID) ||
         !std::strcmp(factory_id, CLAP_PRESET_DISCOVERY_FACTORY_ID_COMPAT))
-        return p5ProphetDiscoveryFactory();
+        return muhammadDiscoveryFactory();
     return nullptr;
 }
 

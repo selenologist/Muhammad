@@ -21,7 +21,7 @@
 #include <cstring>
 #include <ctime>
 
-#include "prophet_plugin.hpp"
+#include "muhammad_plugin.hpp"
 #include "p5_common.hpp"
 #include "p5_gui.hpp"
 #include "p5_store.hpp"

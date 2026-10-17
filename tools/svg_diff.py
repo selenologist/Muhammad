@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Diff a hand-edited panel SVG against the generated base, in LAYOUT UNITS.
 
-Workflow: open prophet5_panel.svg in Inkscape, drag whole groups (Tab selects
+Workflow: open muhammad_panel.svg in Inkscape, drag whole groups (Tab selects
 groups; the Objects dock Ctrl+Shift+O names them by data-param), resize boxes,
 File > Save As > Plain SVG, then:
 
-    python3 tools/svg_diff.py prophet5_panel.svg your_edits.svg
+    python3 tools/svg_diff.py muhammad_panel.svg your_edits.svg
 
 Read the reported deltas as INTENT (weighting / gutters / margin balance), not
 as literal coordinates to paste into the generator — the generator owns the

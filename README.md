@@ -1,6 +1,6 @@
 # Muhammad
 
-*A P5 clone — the PROPHET engine ported from the Melodee firmware to CLAP.*
+*Muhammad — a polyphonic subtractive synth; its engine is ported from the Melodee firmware to CLAP.*
 
 A port of the **PROPHET** engine from [Melodee](https://keremimo.github.io/melodee/)
 (`eng_prophet_test.c`, bespoke to Melodee) to PC-like platforms, packaged as a [CLAP](https://clap.audio) plugin. The per-sample
@@ -49,7 +49,7 @@ and SSE2 as the fallback.
 
     Machine: x86-64 with AVX2, gcc 13, -O3.
 
-    tests/clap_smoke.cpp dlopens the built prophet.clap and drives the CLAP
+    tests/clap_smoke.cpp dlopens the built muhammad.clap and drives the CLAP
     surface: factory, extensions, process, params, preset-load, state round-trip.
 
 ## Layout
@@ -62,9 +62,9 @@ and SSE2 as the fallback.
     src/p5_tables.h             DSP tables generated verbatim from melodee's
                                 build/gen headers (tools/gen_tables.sh)
     src/p5_common.hpp           the 133-byte wire patch + SyX frame codec
-    src/prophet_plugin.*        the CLAP plugin (params 1:1 with the wire
+    src/muhammad_plugin.*        the CLAP plugin (params 1:1 with the wire
                                 patch bytes, state, factory preset-load)
-    src/p5_prophet_discovery.*  preset-discovery provider: INIT + the 200
+    src/muhammad_discovery.*     preset-discovery provider: INIT + the 200
                                 Sequential v1.03 programs, built in
     external/simde/             SIMDe 0.8.2 amalgamated (vendored, MIT)
     vendor/clap/                the CLAP SDK headers as vendored by the
@@ -150,7 +150,7 @@ is documented in [`docs/THIRD_PARTY_NOTICES.md`](docs/THIRD_PARTY_NOTICES.md).
 
 ## GUI (Linux-first NanoVG panel)
 
-`prophet5_panel_gen.py` emits **both** `prophet5_panel.svg` (the design doc) and
+`tools/muhammad_panel_gen.py` emits **both** `muhammad_panel.svg` (the design doc) and
 `src/panel_layout.h` (the machine layout) from one set of emitter calls — they
 cannot drift. The renderer (`src/p5_gui.cpp`) is a pure function of
 (layout, state): the embedded plugin and the headless golden test call the
@@ -190,7 +190,7 @@ Other platforms: Windows (`win32` HWND reparenting) is next when a display is
 available; macOS would add an NSView+GL3 shim (~150 lines, CI-built). The
 draw code is platform-neutral; only the embedding file changes.
 
-Disable with `-DPROPHET_GUI=OFF` for headless engine-only builds.
+Disable with `-DMUHAMMAD_GUI=OFF` for headless engine-only builds.
 
 ## Patch store & retrieval
 
@@ -321,14 +321,14 @@ editor range defaults; v6 blobs still load (standard tuning, wire ranges).
 Linux is the primary target (full plugin + NanoVG/X11 panel + golden tests).
 The engine, store and CLAP core are portable; the panel embedding shim
 (`gui_x11.cpp`) is the only OS-bound piece, so other platforms build
-**headless** (`-DPROPHET_GUI=OFF`) — the plugin loads, sounds, and takes state;
+**headless** (`-DMUHAMMAD_GUI=OFF`) — the plugin loads, sounds, and takes state;
 it just does not advertise a GUI until a per-OS shim exists.
 
 Windows x64, cross-compiled from Linux (no Windows box needed):
 
 ```sh
 sudo apt install mingw-w64
-cmake -B build-win -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64-x64.cmake -DPROPHET_GUI=OFF
+cmake -B build-win -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64-x64.cmake -DMUHAMMAD_GUI=OFF
 cmake --build build-win -j
 ```
 
@@ -338,7 +338,7 @@ exported. POSIX-only dev tools (hostsim ref_dump, LD_PRELOAD allocwatch,
 dlopen smoke, bench clock_gettime) are gated to Linux; test_mpe / test_engine_ab
 / test_store / clap_smoke also compile and run on macOS.
 
-macOS: build universal with `-DPROPHET_GUI=OFF -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"`,
+macOS: build universal with `-DMUHAMMAD_GUI=OFF -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"`,
 then `tools/make_mac_bundle.sh build/muhammad.clap muhammad.clap` wraps the dylib
 into a `.clap` bundle.
 

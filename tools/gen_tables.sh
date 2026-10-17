@@ -4,6 +4,9 @@
 # factory programs as hex bytes), so the port and the firmware share one source
 # of numeric truth. Usage: MELODEE=/path/to/melodee tools/gen_tables.sh
 set -e
+# WARNING: p5_tables.h carries a HAND-EXTENDED cutoff->g block (indices 128-159,
+# 21 kHz headroom) that the dump does not emit. After running this, restore that
+# block (git diff will show it deleted) or the cutoff cap silently reverts to 16 kHz.
 cd "$(dirname "$0")/.."
 MELODEE=${MELODEE:-/home/user/build/melodee}
 [ -f "$MELODEE/build/gen/melodee_tables.h" ] || {

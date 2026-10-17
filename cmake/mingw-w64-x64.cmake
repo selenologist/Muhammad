@@ -1,5 +1,5 @@
 # Cross-compile Muhammad for Windows x64 from Linux (apt: mingw-w64)
-# cmake --toolchain cmake/mingw-w64-x64.cmake -DPROPHET_GUI=OFF ..
+# cmake --toolchain cmake/mingw-w64-x64.cmake -DMUHAMMAD_GUI=OFF ..
 set(CMAKE_SYSTEM_NAME Windows)
 set(CMAKE_SYSTEM_PROCESSOR x86_64)
 set(CMAKE_C_COMPILER   x86_64-w64-mingw32-gcc)

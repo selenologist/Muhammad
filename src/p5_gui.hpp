@@ -1,4 +1,5 @@
-// Prophet-5 panel renderer: pure function of (layout, state). Used identically
+// Muhammad panel renderer (Prophet-5-era layout): pure function of (layout, state).
+// Used identically
 // by the embedded plugin GUI and the headless golden-image test, so CI proves
 // the shipped drawing code, not a reimplementation.
 #pragma once

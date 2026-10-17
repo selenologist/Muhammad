@@ -1,4 +1,4 @@
-/* Renders the shared note scripts through the two Prophet kernels (scalar
+/* Renders the shared note scripts through the two engine kernels (scalar
  * reference vs the SIMDe wide kernel) and, when present, against the melodee
  * firmware reference dump. Prints exact-match statistics. */
 #include <cstdio>
@@ -138,7 +138,7 @@ int main(int argc, char **argv)
             if (rc != 0) failures++;
         }
 
-        if (s == 0) writeWav("prophet_ab_simd.wav", b);
+        if (s == 0) writeWav("muhammad_ab_simd.wav", b);
     }
 
     // ---- 2x oversample: the halfband path must agree scalar<->SIMD too ----

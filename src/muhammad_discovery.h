@@ -5,5 +5,5 @@
 #pragma once
 #include <clap/clap.h>
 #ifdef __cplusplus
-extern "C" const clap_preset_discovery_factory_t *p5ProphetDiscoveryFactory();
+extern "C" const clap_preset_discovery_factory_t *muhammadDiscoveryFactory();
 #endif

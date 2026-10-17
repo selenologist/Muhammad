@@ -2,7 +2,7 @@
 #include <clap/clap.h>
 #include <cstring>
 #include <cstdlib>
-#include "p5_prophet_discovery.h"
+#include "muhammad_discovery.h"
 #include "p5_engine.hpp"
 #include "p5_store.hpp"
 #include <string>
@@ -130,7 +130,7 @@ const clap_preset_discovery_factory_t kFactory = {
 
 } // namespace
 
-extern "C" const clap_preset_discovery_factory_t *p5ProphetDiscoveryFactory()
+extern "C" const clap_preset_discovery_factory_t *muhammadDiscoveryFactory()
 {
     return &kFactory;
 }

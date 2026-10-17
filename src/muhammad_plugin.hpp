@@ -121,6 +121,6 @@ extern const clap_plugin_descriptor_t kDescriptor;
 extern const clap_plugin_gui_t kGuiX11;
 extern const clap_plugin_timer_support_t kTimerSupport;
 
-const clap_plugin_t *prophet_create(const clap_host_t *host);
+const clap_plugin_t *muhammad_create(const clap_host_t *host);
 
 } // namespace pw

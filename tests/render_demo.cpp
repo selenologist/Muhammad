@@ -75,7 +75,7 @@ int main()
         { 14*B,1,39},{ 14*B,1,41},{ 14*B,1,43} };
     section(33, s4, 11, 26 * B);
 
-    renderWav("prophet-demo.wav", pcm);
-    printf("prophet-demo.wav: %.1f s, %zu mono frames\n", pcm.size() / 44100.0, pcm.size());
+    renderWav("muhammad-demo.wav", pcm);
+    printf("muhammad-demo.wav: %.1f s, %zu mono frames\n", pcm.size() / 44100.0, pcm.size());
     return 0;
 }

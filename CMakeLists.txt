@@ -1,6 +1,6 @@
-# Prophet CLAP: the melodee Prophet-5 engine, vectorized with SIMDe.
+# Muhammad CLAP: the Melodee engine port, vectorized with SIMDe.
 cmake_minimum_required(VERSION 3.16)
-project(ProphetClap LANGUAGES CXX C)
+project(MuhammadClap LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -26,7 +26,7 @@ find_program(GIT_EXE git)
 execute_process(COMMAND ${GIT_EXE} rev-parse --short HEAD OUTPUT_VARIABLE P5_GIT OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
 execute_process(COMMAND ${GIT_EXE} status --porcelain OUTPUT_VARIABLE P5_DIRTY OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
 string(TIMESTAMP P5_BUILDDATE "%Y-%m-%d %H:%M")
-set(P5_VERSION "1.13.1-picker")
+set(P5_VERSION "1.13.2-muhammad")
 set(P5_DIRTY_MARK "")
 if(P5_DIRTY)
     set(P5_DIRTY_MARK "-d")
@@ -41,9 +41,9 @@ set(ENGINE_SOURCES
 
 # ---- GUI (NanoVG panel; Linux/X11 is the primary target) ---------------------
 # draw_panel + layout are platform-neutral; the embedding shim is per-OS.
-option(PROPHET_GUI "Build the NanoVG panel (needs OpenGL; X11 embedding on Linux)" ON)
+option(MUHAMMAD_GUI "Build the NanoVG panel (needs OpenGL; X11 embedding on Linux)" ON)
 set(NANOVG_DIR external/nanovg)
-if(PROPHET_GUI)
+if(MUHAMMAD_GUI)
     find_library(EGL_LIBRARY EGL)
     find_library(GL_LIBRARY GL)
     find_package(X11 MODULE)
@@ -51,7 +51,7 @@ if(PROPHET_GUI)
     target_include_directories(nanovg PUBLIC ${NANOVG_DIR}/src)
     target_compile_options(nanovg PRIVATE -w)
     target_compile_definitions(nanovg PUBLIC GL_GLEXT_PROTOTYPES=1)
-    set(PROPHET_GL_LIBS ${GL_LIBRARY} ${EGL_LIBRARY} ${CMAKE_DL_LIBS})
+    set(MUHAMMAD_GL_LIBS ${GL_LIBRARY} ${EGL_LIBRARY} ${CMAKE_DL_LIBS})
 
     add_library(p5_gui STATIC src/p5_gui.cpp)
     target_include_directories(p5_gui PUBLIC src ${NANOVG_DIR}/src)
@@ -79,35 +79,36 @@ add_executable(render_golden tests/render_golden.cpp ${ENGINE_SOURCES})
     target_include_directories(render_golden PRIVATE src vendor/clap external ${NANOVG_DIR}/src
                                      external/stb ${X11_INCLUDE_DIR})
     target_compile_definitions(render_golden PRIVATE GL_GLEXT_PROTOTYPES=1 P5_BUILD_INFO="${P5_BUILD_INFO}")
-    target_link_libraries(render_golden PRIVATE p5_gui ${PROPHET_GL_LIBS} ${MATH_LIBRARY})
+    target_link_libraries(render_golden PRIVATE p5_gui ${MUHAMMAD_GL_LIBS} ${MATH_LIBRARY})
 endif()
 
 # ---- the CLAP plugin ----------------------------------------------------------
-add_library(prophet_clap MODULE
+add_library(muhammad_clap MODULE
     src/clap_entry.cpp
-    src/prophet_plugin.cpp
-    src/p5_prophet_discovery.cpp
+    src/muhammad_plugin.cpp
+    src/muhammad_discovery.cpp
     src/p5_store.cpp
     ${GUI_PLUGIN_SOURCES}
     ${ENGINE_SOURCES}
 )
-target_include_directories(prophet_clap PRIVATE src vendor/clap external ${X11_INCLUDE_DIR})
+target_include_directories(muhammad_clap PRIVATE src vendor/clap external ${X11_INCLUDE_DIR})
+target_compile_definitions(muhammad_clap PRIVATE P5_BUILD_INFO="${P5_BUILD_INFO}" P5_VERSION="${P5_VERSION}")
 if(GUI_DEFINES)
-    target_compile_definitions(prophet_clap PRIVATE ${GUI_DEFINES} P5_BUILD_INFO="${P5_BUILD_INFO}")
-    target_link_libraries(prophet_clap PRIVATE p5_gui ${X11_LIBRARIES} ${PROPHET_GL_LIBS})
+    target_compile_definitions(muhammad_clap PRIVATE ${GUI_DEFINES} P5_BUILD_INFO="${P5_BUILD_INFO}" P5_VERSION="${P5_VERSION}")
+    target_link_libraries(muhammad_clap PRIVATE p5_gui ${X11_LIBRARIES} ${MUHAMMAD_GL_LIBS})
 endif()
 if(WIN32)
 # MinGW MODULE targets ignore SHARED_LINKER_FLAGS_INIT; bake the C++ runtime in so
 # muhammad.clap loads on a bare Windows box (kernel32/msvcrt/advapi only).
-target_link_options(prophet_clap PRIVATE -static -static-libgcc -static-libstdc++)
+target_link_options(muhammad_clap PRIVATE -static -static-libgcc -static-libstdc++)
 endif()
-set_target_properties(prophet_clap PROPERTIES
+set_target_properties(muhammad_clap PROPERTIES
     PREFIX ""
     OUTPUT_NAME "muhammad"
     SUFFIX ".clap"
 )
 if(MATH_LIBRARY)
-    target_link_libraries(prophet_clap PRIVATE ${MATH_LIBRARY})
+    target_link_libraries(muhammad_clap PRIVATE ${MATH_LIBRARY})
 endif()
 
 # ---- engine A/B test (scalar reference vs the SIMD kernel) ---------------------
@@ -169,7 +170,7 @@ if(X11_LIBRARY)
     target_link_libraries(gui_probe PRIVATE ${X11_LIBRARY} ${CMAKE_DL_LIBS} m)
 endif()
 
-if(PROPHET_GUI AND NOT WIN32)   # links the X11-era GL panel lib
+if(MUHAMMAD_GUI AND NOT WIN32)   # links the X11-era GL panel lib
 add_executable(test_tune tests/test_tune.cpp src/p5_store.cpp)
 target_include_directories(test_tune PRIVATE src external ${NANOVG_DIR}/src ${NANOVG_DIR})
 target_link_libraries(test_tune PRIVATE p5_gui nanovg)
@@ -198,5 +199,5 @@ if(NOT WIN32)
 add_executable(clap_smoke tests/clap_smoke.cpp)
 target_include_directories(clap_smoke PRIVATE vendor/clap)
 target_link_libraries(clap_smoke PRIVATE ${CMAKE_DL_LIBS})
-add_dependencies(clap_smoke prophet_clap)
+add_dependencies(clap_smoke muhammad_clap)
 endif()

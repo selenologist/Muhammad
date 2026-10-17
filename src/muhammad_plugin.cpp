@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// CLAP plugin wrapper for the Prophet engine (see prophet_plugin.hpp).
-#include "prophet_plugin.hpp"
+// CLAP plugin wrapper for the Muhammad engine (see muhammad_plugin.hpp).
+#include "muhammad_plugin.hpp"
 #include "p5_store.hpp"
 
 #include <cstdio>
@@ -83,8 +83,8 @@ const clap_plugin_descriptor_t kDescriptor = {
     "selenologist",
     "https://github.com/keremimo/melodee",
     nullptr, nullptr,
-    "1.13.0-scales",   // bump per shipped build: the version Bitwig shows proves which binary is loaded
-    "P5 clone (PROPHET engine ported from the Melodee firmware)",
+    P5_VERSION,        // from CMake (single source); the version Bitwig shows proves which binary is loaded
+    "8-voice subtractive synth - engine ported from the Melodee firmware",
     kFeatures
 };
 
@@ -1007,7 +1007,7 @@ static void seedDefaultPatch(Plugin *s)
 }
 
 // ---- instance creation ----------------------------------------------------------
-const clap_plugin_t *prophet_create(const clap_host_t *host)
+const clap_plugin_t *muhammad_create(const clap_host_t *host)
 {
     auto *data = new Plugin(host);
     seedDefaultPatch(data);
