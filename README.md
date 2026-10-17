@@ -109,8 +109,9 @@ its A/B build standalone.
   P5_OVERSAMPLE=2 design — oscillators/noise/filter integrate at twice the
   host rate with halved increments, the CTL-wheel covers 2 entries per
   sub-sample, the cutoff table rebuilds at the internal rate — but each
-  voice's 2x stream is decimated by the **Surge XT cascaded-allpass halfband**
-  (M=6 soft, the same coefficients vasynth uses; ~82 dB into the stopband)
+  voice's 2x stream is decimated by a transcription of the **sst-filters
+  HalfRateFilter** soft order-12 chain (as bundled by Surge XT; ~82 dB into
+  the stopband)
   instead of the firmware's 2-tap box average. Not bit-exact by design (the
   decimator IS the difference); the 1x path remains bit-exact. Reports 3
   samples via the CLAP latency extension; state blob v2 carries the flag.
@@ -129,10 +130,14 @@ its A/B build standalone.
 
 ## License
 
-GPL-3.0-only, same as the melodee firmware (the engine files are a derivative
-work of `firmware/src/eng_prophet_test.c`, `voice.c` and `prophet_patch.c`,
-Copyright Leo Kuroshita / Hügelton Instruments). SIMDe is MIT (vendored under
-external/), the CLAP headers are their own BSD-style license.
+GPL-3.0-only, same terms as the melodee firmware (the engine files are a
+derivative work of `firmware/src/eng_prophet_test.c`, `voice.c` and
+`prophet_patch.c`, Copyright Leo Kuroshita / Hügelton Instruments).
+
+Full third-party lineage — including everything taken from the Surge
+ecosystem (MIT tuning-library, GPL sst-filters halfband coefficients, the
+Surge RadialScaleGraph-derived tuning dial) and the permissive/vendor items —
+is documented in [`docs/THIRD_PARTY_NOTICES.md`](docs/THIRD_PARTY_NOTICES.md).
 
 ## References
 

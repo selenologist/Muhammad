@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// Surge XT's cascaded-allpass halfband decimator (the same structure and the
-// same M=6 "soft" coefficients vasynth uses), 2x -> 1x, mono. Stopband ~150 dB
-// past host Nyquist; group delay ~2.73 host samples at M=6.
+// Cascaded-allpass halfband decimator, 2x -> 1x, mono. Structure and the six
+// even/odd "soft, order==12" coefficient pairs are transcribed from
+// sst-filters' HalfRateFilter.h (class sst::filters::HalfRateFilter,
+// GPL v3, https://github.com/surge-synthesizer/sst-filters) as bundled by
+// Surge XT under libs/sst/sst-filters. See docs/THIRD_PARTY_NOTICES.md.
+// Stopband ~150 dB past host Nyquist; group delay ~2.73 host samples.
 #pragma once
 
 namespace p5 {
