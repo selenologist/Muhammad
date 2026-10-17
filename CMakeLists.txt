@@ -50,6 +50,15 @@ if(MUHAMMAD_GUI)
         # wglGetProcAddress before any nanovg call).
         find_package(OpenGL REQUIRED)
         set(MUHAMMAD_GL_LIBS opengl32 gdi32 user32 dwmapi)
+    elseif(APPLE)
+        # macOS: desktop GL and Cocoa arrive as FRAMEWORKS. A plain
+        # find_library(EGL/GL) resolves NOTFOUND there and poisons the link
+        # line - the CI generate step failed exactly on that (the shared
+        # else() branch was X11/Mesa-shaped, as our primary target is Linux).
+        enable_language(OBJCXX)
+        find_library(COCOA_LIBRARY Cocoa REQUIRED)
+        find_library(OPENGLF_LIBRARY OpenGL REQUIRED)
+        set(MUHAMMAD_GL_LIBS ${COCOA_LIBRARY} ${OPENGLF_LIBRARY})
     else()
         find_library(EGL_LIBRARY EGL)
         find_library(GL_LIBRARY GL)
@@ -74,19 +83,16 @@ if(MUHAMMAD_GUI)
         set(GUI_PLUGIN_SOURCES src/gui_win32.cpp src/gui_core.cpp)
         set(GUI_DEFINES P5_GUI=1)
     elseif(APPLE)
-        enable_language(OBJCXX)
-        find_library(COCOA_LIBRARY Cocoa REQUIRED)
-        find_library(OPENGLF_LIBRARY OpenGL REQUIRED)
         set(GUI_PLUGIN_SOURCES src/gui_mac.mm src/gui_core.cpp)
         set(GUI_DEFINES P5_GUI=1)
-        list(APPEND MUHAMMAD_GL_LIBS ${COCOA_LIBRARY} ${OPENGLF_LIBRARY})
     elseif(X11_FOUND)
         set(GUI_PLUGIN_SOURCES src/gui_x11.cpp src/gui_core.cpp)
         set(GUI_DEFINES P5_GUI=1)
     endif()
 
     # headless golden-image test (see tools/check_goldens.sh)
-if(NOT WIN32)   # goldens need Mesa/EGL surfaces; Windows ships no golden target
+if(UNIX AND NOT APPLE)   # goldens need Mesa/EGL surfaces: Linux only
+# (macOS has no EGL at all - neither headers nor runtime)
     # x86 ships the wide kernel twice: portable baseline + true AVX2 (SIMDe maps to
 # native instructions under -mavx2 -mfma). Engine::activate selects by cpuid;
 # contract stays OFF so both paths are bit-identical to the firmware reference.
