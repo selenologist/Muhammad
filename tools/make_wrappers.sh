@@ -56,15 +56,16 @@ case "$(uname -s)" in
         # deprecation gate, nothing else.
                 # -D, NOT /D: git-bash's MSYS layer rewrites arguments that begin with a
         # slash into C:/Program Files/Git/... - the previous /D form arrived at
-        # cl.exe as a (nonexistent) SOURCE FILE and broke the compiler check.
-        EXTRA+=(-DCMAKE_CXX_FLAGS="-D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS")
-        ;;
-esac
-if [ "$(uname)" = "Darwin" ]; then
-    if [ ! -d "$WORK/AudioUnitSDK" ]; then
-        git clone -q --depth 1 https://github.com/apple/AudioUnitSDK "$WORK/AudioUnitSDK"
-    fi
-    EXTRA+=(-DCLAP_WRAPPER_BUILD_AUV2=ON -DAUDIOUNIT_SDK_ROOT="$WORK/AudioUnitSDK")
+        # VS "18"-era MSVC (14.5x) hard-errors (C2338) on the deprecated
+        # <experimental/coroutine> WIL pulls in for the standalone. The compiler's
+        # own message names the opt-out. Delivered via cl.exe's _CL_ ENVIRONMENT
+        # variable, deliberately NOT via -DCMAKE_CXX_FLAGS: seeding that cache
+        # variable destroys CMake's MSVC default flags (/EHsc /GR /D_WINDOWS
+        # ...) - the last CI run proved it (a C4530 wall + WIL's
+        # exception-dependent com_ptr/err_exception_policy failing to compile).
+        # _CL_ reaches every cl.exe invocation through MSBuild, MSYS cannot
+        # mangle environment *contents*, and the defaults stay intact.
+        export _CL_="/D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS"
 fi
 
 VER="$(grep -m1 'set(P5_VERSION' "$REPO/CMakeLists.txt" | sed 's/.*"\(.*\)".*/\1/')"

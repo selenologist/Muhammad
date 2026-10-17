@@ -15,6 +15,7 @@
 #include <OpenGL/gl.h>
 
 #include <nanovg.h>
+#define NANOVG_GL3 1        // nanovg_gl.h's GL3 API is behind this guard (same as gui_x11)
 #include <nanovg_gl.h>
 
 #include "gui_core.hpp"
