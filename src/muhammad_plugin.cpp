@@ -10,7 +10,22 @@
 #include <cctype>
 #include <ctime>
 #if !defined(_WIN32)
+#include <pthread.h>
 #include <unistd.h>     // getpid (gui_trail.log breadcrumb)
+
+// gui_trail breadcrumbs log the calling THREAD too (the delete-crash forensics
+// needed proof of which thread touched the GUI). glibc and mingw-w64/winpthreads
+// export gettid(); macOS has no such call - pthread_threadid_np() is its answer.
+static inline long muhTid()
+{
+#if defined(__APPLE__)
+    unsigned long long t = 0;
+    pthread_threadid_np(nullptr, &t);
+    return (long)t;
+#else
+    return (long)gettid();
+#endif
+}
 #endif
 #if defined(__SSE__) || defined(__SSE2__)
 #include <xmmintrin.h>          // MXCSR FTZ/DAZ: denormals must never tax the audio thread
@@ -394,7 +409,7 @@ void Plugin::trail(const char *ev)
         // fopen/X11/mutex there is a realtime violation worth of a crash.
         std::fprintf(f, "%02d:%02d:%02d.%03ld pid %ld tid %ld  %s\n",
                      bt.tm_hour, bt.tm_min, bt.tm_sec, ts.tv_nsec / 1000000,
-                     (long)getpid(), (long)gettid(), ev);
+                     (long)getpid(), muhTid(), ev);
         std::fclose(f);
     }
 #else

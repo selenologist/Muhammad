@@ -48,6 +48,15 @@ EOF
 
 # ---- macOS: AUv2 needs Apple's AudioUnitSDK (BSD-3) ----------------------
 EXTRA=()
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*)
+        # VS "18"-era MSVC (14.5x) turned the deprecated <experimental/coroutine>
+        # - pulled in by WIL for the standalone host - into a hard C2338. The
+        # compiler's own message prescribes this opt-out define; it silences a
+        # deprecation gate, nothing else.
+        EXTRA+=(-DCMAKE_CXX_FLAGS="/D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS")
+        ;;
+esac
 if [ "$(uname)" = "Darwin" ]; then
     if [ ! -d "$WORK/AudioUnitSDK" ]; then
         git clone -q --depth 1 https://github.com/apple/AudioUnitSDK "$WORK/AudioUnitSDK"
