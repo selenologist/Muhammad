@@ -319,16 +319,20 @@ editor range defaults; v6 blobs still load (standard tuning, wire ranges).
 ## Cross-compiling & CI nightlies
 
 Linux is the primary target (full plugin + NanoVG/X11 panel + golden tests).
-The engine, store and CLAP core are portable; the panel embedding shim
-(`gui_x11.cpp`) is the only OS-bound piece, so other platforms build
-**headless** (`-DMUHAMMAD_GUI=OFF`) — the plugin loads, sounds, and takes state;
-it just does not advertise a GUI until a per-OS shim exists.
+The panel is split into a platform-neutral core (`gui_core.*` — all
+interaction state) and a thin embedding shim per OS: `gui_x11.cpp`,
+`gui_win32.cpp` (WGL + HWND child window, GL>=1.2 entry points loaded at
+runtime via a thunk table), `gui_mac.mm` (cocoa NSView + 3.2-core NSOpenGL).
+Windows and macOS nightlies ship with the panel (`-DMUHAMMAD_GUI=ON` is now
+the CI default); `-DMUHAMMAD_GUI=OFF` still builds engine-only everywhere.
+The win32/mac shims are build- and link-verified in CI; first-run behavior
+lives or dies with the external testers on real hosts.
 
 Windows x64, cross-compiled from Linux (no Windows box needed):
 
 ```sh
 sudo apt install mingw-w64
-cmake -B build-win -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64-x64.cmake -DMUHAMMAD_GUI=OFF
+cmake -B build-win -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64-x64.cmake
 cmake --build build-win -j
 ```
 
@@ -338,7 +342,7 @@ exported. POSIX-only dev tools (hostsim ref_dump, LD_PRELOAD allocwatch,
 dlopen smoke, bench clock_gettime) are gated to Linux; test_mpe / test_engine_ab
 / test_store / clap_smoke also compile and run on macOS.
 
-macOS: build universal with `-DMUHAMMAD_GUI=OFF -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"`,
+macOS: build universal with `-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"`,
 then `tools/make_mac_bundle.sh build/muhammad.clap muhammad.clap` wraps the dylib
 into a `.clap` bundle.
 

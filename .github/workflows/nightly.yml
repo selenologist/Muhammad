@@ -1,9 +1,10 @@
 # Muhammad CLAP — multi-platform nightlies
 # Free on public repos. Produces:
 #   linux-x64  : full plugin WITH GUI + runs the whole test suite + golden images
-#   win-x64    : headless plugin (cross-compiled with MinGW-w64; the X11 GUI shim
-#                does not exist for Windows yet -> GUI extension stays unadvertised)
-#   macos      : universal (arm64+x86_64) headless plugin wrapped as a .clap bundle
+#   win-x64    : full panel, cross-compiled with MinGW-w64 (WGL shim; runtime
+#                validation happens on tester machines, build+exports gate here)
+#   macos      : universal (arm64+x86_64) plugin with the cocoa NSView shim,
+#                wrapped as a .clap bundle (compile-gated in CI)
 # On tags v* it additionally publishes a GitHub Release with all three artifacts.
 
 name: build
@@ -70,7 +71,7 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mingw-w64
       - run: >
           cmake -B build-win -DCMAKE_BUILD_TYPE=Release
-          -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64-x64.cmake -DMUHAMMAD_GUI=OFF
+          -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64-x64.cmake -DMUHAMMAD_GUI=ON
       - run: cmake --build build-win -j"$(nproc)"
       - name: sanity (PE exports clap_entry, no stray DLL deps)
         run: |
@@ -88,7 +89,7 @@ jobs:
       - uses: actions/checkout@v4
       - run: >
           cmake -B build -DCMAKE_BUILD_TYPE=Release
-          -DMUHAMMAD_GUI=OFF -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+          -DMUHAMMAD_GUI=ON -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
       - run: cmake --build build -j"$(sysctl -n hw.ncpu)"
       - name: tests
         working-directory: build
