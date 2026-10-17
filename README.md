@@ -311,6 +311,42 @@ from the status nibble.
 State blob v7 persists the 128-key deviation table, tuning name, and the
 editor range defaults; v6 blobs still load (standard tuning, wire ranges).
 
+## Microtuning workstation (v1.13.0-scales)
+
+The TUNING page is now a full editor, not just a file loader:
+
+- **Polar dial** (Surge-inspired, bottom-left): each scale degree is a node on a
+  ring; radial distance = deviation from equal temperament in ET units (auto-ranged).
+  Drag to edit, double-click snaps a tone to its equal-temperament slot. Blue nodes
+  sit below equal, amber above; the hot node wears a white ring.
+- **Stock library**: 74 scales generated from the Melodee firmware tables
+  (`tools/gen_muhammad_scales.py` -> `src/p5_stock_scales.hpp`) plus Wendy Carlos
+  alpha/beta/gamma, harmonic-series and just intonation sets. LOAD picker has
+  STOCK / USER tabs.
+- **Scale quantizer** (Melodee semantics, `p5store::buildScaleDev`): scales with
+  <= 12 tones map every chromatic key to the *nearest scale degree* (black keys
+  snap down/up to white - playable in any key); the root spinner (ROOT +/-)
+  transposes the lattice. Scales with > 12 tones per octave have more outputs
+  than inputs - nothing to quantize - so they **walk** like Melodee's ALL mode:
+  key k plays degree (k-root) mod n, period-extended.
+- **`.scl` round-trip**: SAVE writes the dial degrees as a standard `.scl` into
+  `~/Documents/Muhammad Synth/Tunings/` (filename prompt, are-you-sure on
+  overwrite). A plain `.scl` carries degrees only, so on load the key positions
+  are re-derived by rounding (`p5store::deriveMask`) and quantized through the
+  same builder - the table and the audio always agree with the dial. Real `.kbm`
+  pairs keep the library's mapping untouched.
+- **Verified, not assumed**: `test_mpe` measures the actual engine output with a
+  fine lock-in: a loaded pythagorean chromatic plays C#3 at +12.5 cents (the
+  wheel depicts +12.5), a quantized C-major plays the C# key at exactly C's
+  frequency (-100 c), and 19-EDO key 61 lands at -36.8 c per the walk law.
+  Note: chromatic *temperaments* are a +-13 c subtlety - if loading Pythagorean
+  "sounded like nothing", that is the correct small deviation; scales and EDOs
+  are the dramatic cases.
+- Bend-range rails moved to the top of the page (shift-snap, arrow-key nudge
+  unchanged); the KEY / FREQUENCY / CENTS text panel is back, below the dial's
+  row on the right, always visible next to it. Session blob v9 persists dial
+  tones, root, mask and walk flag alongside the deviation table.
+
 ## Filter cutoff headroom & rail UX (v1.12.1-cut21k)
 
 The firmware's cutoff->g table spans 30 Hz..16 kHz over 128 indices and both

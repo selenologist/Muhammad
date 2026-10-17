@@ -522,27 +522,104 @@ void draw(const Gui &g, const State &s, float w, float h)
         nvgStroke(g.vg);
         nvgFontFaceId(g.vg, g.fontId);
         nvgTextAlign(g.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
-        nvgFontSize(g.vg, 17.f);
+        nvgFontSize(g.vg, 16.f);
         nvgFillColor(g.vg, col(kColInk));
-        nvgText(g.vg, sxp(tune::x + 285), syp(tune::y + 22), "MICROTUNING", nullptr);
+        nvgText(g.vg, sxp(tune::x + tune::w / 2), syp(tune::y + 20), "MICROTUNING", nullptr);
         nvgFontSize(g.vg, 12.f);
-        nvgText(g.vg, sxp(tune::x + 285), syp(tune::y + 42), s.tuneName, nullptr);
-        nvgFontSize(g.vg, 11.f);
-        // ---- polar dial: degrees as spokes, radius = deviation from equal ----
+        nvgText(g.vg, sxp(tune::x + tune::w / 2), syp(tune::y + 38), s.tuneName, nullptr);
+
+        // ---- bend-range rails, top ----
+        static const char *const kRailLbl[2] = { "BEND UP (st)", "BEND DOWN (st)" };
+        const float rval[2] = { s.tuneUp, s.tuneDn };
+        const float rrow[2] = { tune::railY, tune::railY2 };
+        for (int k = 0; k < 2; k++)
+        {
+            nvgTextAlign(g.vg, NVG_ALIGN_RIGHT | NVG_ALIGN_MIDDLE);
+            nvgFontSize(g.vg, 12.f);
+            nvgFillColor(g.vg, col(kColInk));
+            nvgText(g.vg, sxp(tune::railX - 12), syp(rrow[k]), kRailLbl[k], nullptr);
+            nvgBeginPath(g.vg);
+            nvgRect(g.vg, tune::railX, rrow[k] - 1.5f, tune::railW, 3);
+            nvgFillColor(g.vg, nvgRGBA(70, 70, 78, 255));
+            nvgFill(g.vg);
+            for (int q = 0; q <= 24; q += 2)
+            {
+                nvgBeginPath(g.vg);
+                nvgRect(g.vg, tune::railX + (q / 24.f) * tune::railW - 0.5f,
+                        rrow[k] + (q % 12 ? 4 : 6), 1.f, q % 12 ? 3.f : 4.f);
+                nvgFillColor(g.vg, nvgRGBA(120, 120, 130, 255));
+                nvgFill(g.vg);
+            }
+            nvgBeginPath(g.vg);
+            nvgCircle(g.vg, tune::railHandleX(k, rval[k]), rrow[k], 6);
+            nvgFillColor(g.vg, nvgRGBA(240, 160, 30, 255));
+            nvgFill(g.vg);
+            if (k == s.tuneFocus)
+            {   nvgBeginPath(g.vg);
+                nvgCircle(g.vg, tune::railHandleX(k, rval[k]), rrow[k], 9.f);
+                nvgStrokeColor(g.vg, nvgRGBA(240, 240, 246, 220));
+                nvgStrokeWidth(g.vg, 1.4f);
+                nvgStroke(g.vg);
+            }
+            char vt[10];
+            std::snprintf(vt, sizeof vt, "%.1f", rval[k]);
+            nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
+            nvgFontSize(g.vg, 13.f);
+            nvgFillColor(g.vg, col(kColInk));
+            nvgText(g.vg, sxp(tune::railX + tune::railW + 10), syp(rrow[k]), vt, nullptr);
+        }
+
+        // ---- root spinner, top right ----
+        nvgTextAlign(g.vg, NVG_ALIGN_RIGHT | NVG_ALIGN_MIDDLE);
+        nvgFontSize(g.vg, 12.f);
+        nvgText(g.vg, sxp(tune::spinMinusX - 18), syp(tune::spinY), "ROOT", nullptr);
+        for (int k = 0; k < 2; k++)
+        {
+            const float bx = k ? tune::spinPlusX : tune::spinMinusX;
+            nvgBeginPath(g.vg);
+            nvgRoundedRect(g.vg, bx - 12, tune::spinY - 11, 24, 22, 3);
+            nvgFillColor(g.vg, nvgRGBA(52, 52, 58, 255));
+            nvgFill(g.vg);
+            nvgStrokeColor(g.vg, col(kColBox));
+            nvgStrokeWidth(g.vg, 1.f);
+            nvgStroke(g.vg);
+            nvgTextAlign(g.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
+            nvgFontSize(g.vg, 16.f);
+            nvgFillColor(g.vg, col(kColInk));
+            nvgText(g.vg, sxp(bx), syp(tune::spinY + 1), k ? "+" : "-", nullptr);
+        }
+        {   static const char *const kNote[12] = { "C", "C#", "D", "D#", "E", "F",
+                                                   "F#", "G", "G#", "A", "A#", "B" };
+            char rt[16];
+            std::snprintf(rt, sizeof rt, "%s  (%d)", kNote[((s.tuneRoot % 12) + 12) % 12], s.tuneRoot);
+            nvgBeginPath(g.vg);
+            nvgRoundedRect(g.vg, tune::spinBoxX, tune::spinY - 11, tune::spinBoxW, 22, 3);
+            nvgFillColor(g.vg, col(kColDispBg));
+            nvgFill(g.vg);
+            nvgStrokeColor(g.vg, col(kColDispStroke));
+            nvgStrokeWidth(g.vg, 1.f);
+            nvgStroke(g.vg);
+            nvgTextAlign(g.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
+            nvgFontSize(g.vg, 14.f);
+            nvgFillColor(g.vg, col(kColDispText));
+            nvgText(g.vg, sxp(tune::spinBoxX + tune::spinBoxW / 2), syp(tune::spinY), rt, nullptr);
+        }
+
+        // ---- polar dial, bottom left ----
         {
             float wc[64]; int wn = 0;
             if (s.wheelN >= 2 && s.wheelN <= 64 && s.wheelC)
             {   wn = s.wheelN; for (int i = 0; i < wn; i++) wc[i] = s.wheelC[i]; }
-            else { wn = 12; for (int i = 0; i < wn; i++) wc[i] = 100.f * (i + 1); }   // 12-TET grid
+            else { wn = 12; for (int i = 0; i < wn; i++) wc[i] = 100.f * (i + 1); }
             const bool grid = s.wheelN < 2;
             const float et = tune::etCents(wc, wn);
             const float rs = tune::ringScale(wc, wn);
-            nvgBeginPath(g.vg);                   // the equal reference circle
+            nvgBeginPath(g.vg);
             nvgCircle(g.vg, tune::wheelCX, tune::wheelCY, tune::wheelR);
             nvgStrokeColor(g.vg, nvgRGBA(130, 130, 140, 220));
             nvgStrokeWidth(g.vg, 1.2f);
             nvgStroke(g.vg);
-            for (int q = -6; q <= 3; q++)         // deviation rings, Surge style R + q*rs
+            for (int q = -6; q <= 3; q++)
             {   if (!q) continue;
                 const float rad = tune::wheelR + q * rs;
                 if (rad < 10.f || rad > tune::wheelR * 1.42f) continue;
@@ -553,7 +630,7 @@ void draw(const Gui &g, const State &s, float w, float h)
                 nvgStroke(g.vg);
             }
             const float rOut = tune::wheelR * 1.16f;
-            for (int k = 0; k < wn; k++)          // spokes + index labels
+            for (int k = 0; k < wn; k++)
             {
                 const float a = -1.5707963f + (float)k * (6.2831853f / (float)wn);
                 nvgBeginPath(g.vg);
@@ -564,17 +641,21 @@ void draw(const Gui &g, const State &s, float w, float h)
                 nvgStroke(g.vg);
                 if (wn <= 24)
                 {   char lab[4]; std::snprintf(lab, sizeof lab, "%d", k);
+                    nvgTextAlign(g.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
+                    nvgFontSize(g.vg, 10.f);
                     nvgFillColor(g.vg, col(kColInk));
-                    nvgText(g.vg, sxp(tune::wheelCX + (rOut + 9.f) * std::cos(a)),
-                            syp(tune::wheelCY + (rOut + 9.f) * std::sin(a)), lab, nullptr); }
+                    nvgText(g.vg, sxp(tune::wheelCX + (rOut + 8.f) * std::cos(a)),
+                            syp(tune::wheelCY + (rOut + 8.f) * std::sin(a)), lab, nullptr); }
             }
-            for (int i = 1; i <= wn; i++)         // interval text + nodes
+            for (int i = 1; i <= wn; i++)
             {
                 float x, y; tune::nodePos(wc, wn, i, x, y);
                 if (wn <= 24)
                 {   const float a = -1.5707963f + (float)(i - 1) * (6.2831853f / (float)wn);
                     const float ri = tune::wheelR - 20.f;
                     char iv[8]; std::snprintf(iv, sizeof iv, "%.0f", wc[i - 1] - (i > 1 ? wc[i - 2] : 0.f));
+                    nvgTextAlign(g.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
+                    nvgFontSize(g.vg, 10.f);
                     nvgFillColor(g.vg, nvgRGBA(200, 200, 206, 255));
                     nvgText(g.vg, sxp(tune::wheelCX + ri * std::cos(a)),
                             syp(tune::wheelCY + ri * std::sin(a)), iv, nullptr);
@@ -595,64 +676,53 @@ void draw(const Gui &g, const State &s, float w, float h)
                 }
             }
             if (grid)
-            {   nvgFontSize(g.vg, 11.f);
+            {   nvgFontSize(g.vg, 10.f);
                 nvgTextAlign(g.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
                 nvgFillColor(g.vg, nvgRGBA(150, 150, 158, 255));
-                nvgText(g.vg, sxp(tune::wheelCX), syp(tune::wheelCY + tune::wheelR + 26.f),
-                        "12-TET grid - drag a node to start editing", nullptr);
+                nvgText(g.vg, sxp(tune::wheelCX), syp(tune::wheelCY + tune::wheelR * 1.16f + 20.f),
+                        "12-TET grid - drag a node to edit", nullptr);
             }
         }
-        static const char *const kRailLbl[2] = { "BEND UP (st)", "BEND DOWN (st)" };
-        const float rval[2] = { s.tuneUp, s.tuneDn };
-        for (int k = 0; k < 2; k++)
+
+        // ---- chromatic text panel, bottom right ----
         {
-            nvgTextAlign(g.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
-            nvgFontSize(g.vg, 12.f);
-            nvgFillColor(g.vg, col(kColInk));
-            nvgText(g.vg, sxp(tune::railX[k] + tune::railW / 2), syp(tune::railY - 26), kRailLbl[k], nullptr);
-            nvgBeginPath(g.vg);
-            nvgRect(g.vg, tune::railX[k], tune::railY - 1.5f, tune::railW, 3);
-            nvgFillColor(g.vg, nvgRGBA(70, 70, 78, 255));
-            nvgFill(g.vg);
-            for (int t = 0; t <= 24; t += 2)
-            {
-                nvgBeginPath(g.vg);
-                nvgRect(g.vg, tune::railX[k] + (t / 24.f) * tune::railW - 0.5f,
-                        tune::railY + (t % 12 ? 5 : 8), 1.f, t % 12 ? 3.f : 5.f);
-                nvgFillColor(g.vg, nvgRGBA(120, 120, 130, 255));
-                nvgFill(g.vg);
-            }
-            nvgBeginPath(g.vg);
-            nvgCircle(g.vg, tune::railHandleX(k, rval[k]), tune::railY, 7);
-            nvgFillColor(g.vg, nvgRGBA(240, 160, 30, 255));
-            nvgFill(g.vg);
-            if (k == s.tuneFocus)
-            {   nvgBeginPath(g.vg);
-                nvgCircle(g.vg, tune::railHandleX(k, rval[k]), tune::railY, 10.5f);
-                nvgStrokeColor(g.vg, nvgRGBA(240, 240, 246, 220));
-                nvgStrokeWidth(g.vg, 1.5f);
-                nvgStroke(g.vg);
-            }
-            char vt[10];
-            std::snprintf(vt, sizeof vt, "%.1f", rval[k]);
             nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
-            nvgFontSize(g.vg, 13.f);
-            nvgFillColor(g.vg, col(kColInk));
-            nvgText(g.vg, sxp(tune::railX[k] + tune::railW + 8), syp(tune::railY), vt, nullptr);
+            nvgFontSize(g.vg, 10.f);
+            nvgFillColor(g.vg, nvgRGBA(150, 150, 158, 255));
+            nvgText(g.vg, sxp(tune::tblX), syp(tune::tblTop - 16), "KEY", nullptr);
+            nvgTextAlign(g.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
+            nvgText(g.vg, sxp(tune::tblX + 150), syp(tune::tblTop - 16), "FREQUENCY", nullptr);
+            nvgText(g.vg, sxp(tune::tblX + 330), syp(tune::tblTop - 16), "CENTS vs 12-TET", nullptr);
+            static const char *const kNote[12] = { "C", "C#", "D", "D#", "E", "F",
+                                                   "F#", "G", "G#", "A", "A#", "B" };
+            nvgFontSize(g.vg, 11.f);
+            for (int i = 0; i < tune::rows; i++)
+            {
+                const int key = 48 + i;
+                const float ry = tune::tblTop + i * tune::tblRowH;
+                const int dev = s.tuneDev[key];
+                const double f = 440.0 * std::pow(2.0, (key - 69 + dev / 16.0) / 12.0);
+                char lab[8]; std::snprintf(lab, sizeof lab, "%s3", kNote[i]);
+                nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
+                nvgFillColor(g.vg, col(kColInk));
+                nvgText(g.vg, sxp(tune::tblX), syp(ry), lab, nullptr);
+                char ft[16]; std::snprintf(ft, sizeof ft, "%.2f Hz", f);
+                nvgTextAlign(g.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
+                nvgText(g.vg, sxp(tune::tblX + 150), syp(ry), ft, nullptr);
+                char ct[12]; std::snprintf(ct, sizeof ct, dev ? "%+.1f" : "%.1f", dev * 6.25f);
+                nvgFillColor(g.vg, dev ? nvgRGBA(240, 160, 30, 255) : col(kColInk));
+                nvgText(g.vg, sxp(tune::tblX + 330), syp(ry), ct, nullptr);
+                nvgFillColor(g.vg, col(kColInk));
+            }
         }
-        nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
-        nvgFontSize(g.vg, 11.f);
-        nvgFillColor(g.vg, col(kColInk));
-        nvgText(g.vg, sxp(tune::x + 14), syp(tune::y + tune::h - 24),
-                "tunings load from Documents/Muhammad Synth/Tunings (.scl / .kbm)  -  "
-                "arrows adjust the ringed rail, shift snaps to whole steps", nullptr);
-        for (int k = 0; k < 2; k++)
+
+        // ---- LOAD / SAVE / RESET ----
+        for (int k = 0; k < 3; k++)
         {
-            const float bx = k ? tune::resetX : tune::loadX;
-            const float bw = k ? tune::resetW : tune::loadW;
-            const char *lbl = k ? "RESET" : "LOAD";
+            const float bx = k == 0 ? tune::loadX : k == 1 ? tune::saveX : tune::resetX;
+            const char *lbl = k == 0 ? "LOAD" : k == 1 ? "SAVE" : "RESET";
             nvgBeginPath(g.vg);
-            nvgRoundedRect(g.vg, bx, tune::btnY, bw, tune::btnH, 3);
+            nvgRoundedRect(g.vg, bx, tune::btnY, tune::loadW, tune::btnH, 3);
             nvgFillColor(g.vg, nvgRGBA(52, 52, 58, 255));
             nvgFill(g.vg);
             nvgStrokeColor(g.vg, col(kColBox));
@@ -661,8 +731,13 @@ void draw(const Gui &g, const State &s, float w, float h)
             nvgTextAlign(g.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
             nvgFontSize(g.vg, 13.f);
             nvgFillColor(g.vg, col(kColInk));
-            nvgText(g.vg, sxp(bx + bw / 2), syp(tune::btnY + tune::btnH / 2), lbl, nullptr);
+            nvgText(g.vg, sxp(bx + tune::loadW / 2), syp(tune::btnY + tune::btnH / 2), lbl, nullptr);
         }
+        nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
+        nvgFontSize(g.vg, 10.f);
+        nvgFillColor(g.vg, col(kColInk));
+        nvgText(g.vg, sxp(tune::x + 14), syp(tune::y + tune::h - 12),
+                "drag nodes to edit - dbl-click snaps a tone to equal  -  arrows on ringed rail", nullptr);
         nvgTextAlign(g.vg, NVG_ALIGN_LEFT | NVG_ALIGN_BASELINE);
     }
 
@@ -681,10 +756,22 @@ void draw(const Gui &g, const State &s, float w, float h)
         nvgStrokeWidth(g.vg, 1.5f);
         nvgStroke(g.vg);
         nvgFontFaceId(g.vg, g.fontId);
+        for (int tt = 0; tt < 2; tt++)          // STOCK | USER tabs (patch-picker geometry)
+        {
+            const float tx = pick::x + 12 + tt * 150;
+            nvgBeginPath(g.vg);
+            nvgRoundedRect(g.vg, tx, pick::y + 10, 144, 30, 3);
+            nvgFillColor(g.vg, s.tuneTab == tt ? col(kColDispBg) : nvgRGBA(52, 52, 58, 255));
+            nvgFill(g.vg);
+            nvgTextAlign(g.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
+            nvgFontSize(g.vg, 14.f);
+            nvgFillColor(g.vg, s.tuneTab == tt ? col(kColDispText) : col(kColInk));
+            nvgText(g.vg, sxp(tx + 72), syp(pick::y + 25), tt ? "USER" : "STOCK", nullptr);
+        }
         nvgTextAlign(g.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
-        nvgFontSize(g.vg, 16.f);
+        nvgFontSize(g.vg, 14.f);
         nvgFillColor(g.vg, col(kColInk));
-        nvgText(g.vg, sxp(pick::x + pick::w / 2), syp(pick::y + 24), "LOAD TUNING", nullptr);
+        nvgText(g.vg, sxp(pick::x + pick::w - 120), syp(pick::y + 25), "LOAD TUNING", nullptr);
         nvgFontSize(g.vg, 15.f);
         for (int i = 0; i < pick::rows; i++)
         {
@@ -856,31 +943,50 @@ int hitBar(float lx, float ly, int *row, int *col)
 
 namespace tune {
 float railValAt(int k, float lx)
-{   float t = (lx - railX[k]) / railW; t = t < 0.f ? 0.f : t > 1.f ? 1.f : t; return t * 24.f; }
+{   float t = (lx - railX) / railW; t = t < 0.f ? 0.f : t > 1.f ? 1.f : t; return t * 24.f; }
 bool inside(float lx, float ly) { return lx >= x && ly >= y && lx <= x + w && ly <= y + h; }
+int hitControl(float lx, float ly)
+{
+    if (ly >= btnY - 2 && ly <= btnY + btnH + 2)
+    {
+        if (lx >= loadX && lx <= loadX + loadW) return 1;
+        if (lx >= saveX && lx <= saveX + saveW) return 5;
+        if (lx >= resetX && lx <= resetX + resetW) return 2;
+    }
+    if (ly >= spinY - 12 && ly <= spinY + 12)
+    {
+        if (lx >= spinMinusX - 13 && lx <= spinMinusX + 13) return 6;
+        if (lx >= spinPlusX - 13 && lx <= spinPlusX + 13) return 7;
+    }
+    if (lx >= railX - 10 && lx <= railX + railW + 44)
+    {
+        if (ly >= railY - 12 && ly <= railY + 12) return 3;
+        if (ly >= railY2 - 12 && ly <= railY2 + 12) return 4;
+    }
+    return 0;
+}
 float etCents(const float *c, int n) { return n > 0 ? c[n - 1] / n : 100.f; }
 float ringScale(const float *c, int n)
-{   // Surge: iRange = ceil(max |dev| in ET units); ring spacing = 0.4 of the dial
-    // per range step. We keep a constant dial and scale the ring to its 60 % zoom.
-    if (n < 2) return wheelRing;
-    const float et = etCents(c, n);
-    float mx = 0.f;
-    for (int i = 1; i <= n; i++) { float d = std::fabs(c[i - 1] - et * i) / et; if (d > mx) mx = d; }
-    const float range = std::max(0.2f, std::ceil(mx * 5.f) / 5.f);   // floor: gentle tunings still bend the dial
+{   float mx = 0.2f;
+    if (n >= 2)
+    {   const float et = etCents(c, n);
+        for (int i = 1; i <= n; i++) { float d = std::fabs(c[i - 1] - et * i) / et; if (d > mx) mx = d; }
+    }
+    const float range = std::max(0.2f, std::ceil(mx * 5.f) / 5.f);   // 0.2-ET floor
     return 0.6f * wheelR / range;
 }
 static float nodeRadiusPx(const float *c, int n, int i)
 {   const float et = etCents(c, n);
     return wheelR + ((c[i - 1] - et * i) / et) * ringScale(c, n); }
-void nodePos(const float *c, int n, int i, float &x, float &y)
+void nodePos(const float *c, int n, int i, float &ox, float &oy)
 {   const float a = -1.5707963f + (float)(i - 1) * (6.2831853f / (float)n);
     const float r = nodeRadiusPx(c, n, i);
-    x = wheelCX + r * std::cos(a); y = wheelCY + r * std::sin(a); }
+    ox = wheelCX + r * std::cos(a); oy = wheelCY + r * std::sin(a); }
 int nodeAt(const float *c, int n, float lx, float ly)
 {   float best = 10.f; int idx = -1;
     for (int i = 1; i <= n; i++)
-    {   float x, y; nodePos(c, n, i, x, y);
-        const float d = std::hypot(lx - x, ly - y);
+    {   float px, py; nodePos(c, n, i, px, py);
+        const float d = std::hypot(lx - px, ly - py);
         if (d < best) { best = d; idx = i; }
     }
     return idx; }
@@ -889,18 +995,6 @@ float clampTone(const float *c, int n, int i, float v)
     const float hi = (i < n ? c[i] : 1e9f) - 1.f;
     if (v < lo) v = lo; if (v > hi) v = hi;
     return v; }
-int hitControl(float lx, float ly)
-{
-    if (ly >= btnY && ly <= btnY + btnH)
-    {
-        if (lx >= loadX && lx <= loadX + loadW) return 1;
-        if (lx >= resetX && lx <= resetX + resetW) return 2;
-    }
-    for (int k = 0; k < 2; k++)
-        if (ly >= railY - 14 && ly <= railY + 14 && lx >= railX[k] - 10 && lx <= railX[k] + railW + 10)
-            return 3 + k;
-    return 0;
-}
 } // namespace tune
 
 

@@ -36,9 +36,11 @@ struct State
     const float *wheelC = nullptr;         // cumulative cents per tone (Surge-style dial)
     int wheelN = 0, wheelHot = -1;         // tone count incl. octave; hovered/dragged tone (1..N)
     float tuneUp = 2.f, tuneDn = 2.f;           // editor default ranges, semitones
+    int tuneRoot = 0;                           // scale root key position (C..B)
     int tuneFocus = 0;                          // which bend-range rail the arrows adjust
     const char *tuneRows[8] = {};               // "standard" + Tunings files
     int tuneRowCount = 0, tunePage = 0, tunePages = 1, tuneSel = -1;
+    int tuneTab = 0;                            // picker: 0 stock library, 1 user files
     short trimV[32] = {};
     const char *modalTitle = nullptr;
     const char *modalPrompt = nullptr;
@@ -115,24 +117,28 @@ inline int valueAt(int col, float lx)
 // ---- microtuning editor page geometry (renderer draws, gui_x11 hit-tests) ----
 namespace tune {
 constexpr float x = 250, y = 20, w = 1060, h = 408;
-constexpr int rows = 12;                        // octave window C3..B3
-inline float rowTop(int i) { return y + 76 + i * 22; }
-constexpr float btnY = 360, btnH = 26;
-constexpr float loadX = 280, loadW = 140, resetX = 440, resetW = 140;
-constexpr float railX[2] = { 780, 1040 };       // BEND UP / BEND DOWN (0..24 st)
-constexpr float railW = 160, railY = 250;
-inline float railHandleX(int k, float v) { return railX[k] + (v / 24.f) * railW; }
+// bend-range rails across the top, stacked
+constexpr float railX = 430, railW = 260, railY = 76, railY2 = 106;
+inline float railHandleX(int k, float v) { return railX + (v / 24.f) * railW; }
 float railValAt(int k, float lx);               // 0..24 semitones, clamped
 bool inside(float lx, float ly);
-int hitControl(float lx, float ly);             // 1 LOAD 2 RESET 3/4 rails, 0 miss
-// ---- polar dial (Surge RadialScaleGraph law, ported) ----
-constexpr float wheelCX = 520, wheelCY = 208, wheelR = 114;
-constexpr float wheelRing = 16.f;               // px per ET deviation unit at full range
+// root spinner (top right)
+constexpr float spinY = 91, spinMinusX = 940, spinPlusX = 1150, spinBoxX = 970, spinBoxW = 180;
+// polar dial (bottom left)
+constexpr float wheelCX = 490, wheelCY = 276, wheelR = 98;
+// chromatic text panel (bottom right): key / Hz / cents rows
+constexpr int rows = 12;
+constexpr float tblX = 775, tblTop = 158, tblRowH = 19;
+// action buttons under the table
+constexpr float btnY = 392, btnH = 24;
+constexpr float loadX = 775, loadW = 120, saveX = 915, saveW = 120, resetX = 1055, resetW = 120;
+inline float railHandleX2(float v) { return railX + (v / 24.f) * railW; }
 float etCents(const float *c, int n);           // cents of one equal step
 float ringScale(const float *c, int n);         // px per ET unit, auto-ranged like Surge
 void nodePos(const float *c, int n, int i, float &x, float &y);   // tone i (1..n)
 int nodeAt(const float *c, int n, float lx, float ly);            // nearest node within 10 px, else -1
 float clampTone(const float *c, int n, int i, float v);           // strictly monotone neighbours
+int hitControl(float lx, float ly);   // 1 LOAD 2 RESET 3/4 rails 5 SAVE 6 root- 7 root+ 0 miss
 }
 void pointToLayout(float px, float py, float w, float h, float &lx, float &ly);
 int knobAt(const State &s, float px, float py, float w, float h);

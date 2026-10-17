@@ -8,6 +8,7 @@
 #include <vector>
 #include "p5_common.hpp"
 #include "p5_engine.hpp"
+#include "p5_store.hpp"
 
 static int fails = 0;
 static void check(const char *name, bool ok)
@@ -177,6 +178,65 @@ int main()
     const double want = std::pow(2.0, -8.0 / 16.0 / 12.0);   // dev -8 xics = -0.5 semitone
     std::printf("  qtone: zc neutral %ld dev %ld ratio %.4f want %.4f\n", zN, zD, ratio, want);
     check("quarter-tone dev shifts by 50 cents", std::fabs(ratio / want - 1.0) < 0.015);
+
+    // 7) MEASURED validation: the engine really plays what the wheel depicts.
+    //    Fine lock-in: |sum x[i] e^{-i 2 pi f i/fs}| over ~0.9 s; peak on a 1-cent grid.
+    auto centsOf = [](const std::vector<float> &buf, double fRef, double lo, double hi)
+    {
+        double best = lo, bm = -1;
+        for (double c = lo; c <= hi; c += 0.5)
+        {
+            const double w = 6.283185307179586 * fRef * (std::pow(2.0, c / 1200.0)) / 44100.0;
+            const double cw = 2.0 * std::cos(w);
+            double s1 = 0, s2 = 0;
+            for (size_t i = 9000; i < 49000 && i < buf.size(); i++)
+            {   const double s0 = buf[i] + cw * s1 - s2; s2 = s1; s1 = s0; }
+            const double m = s1 * s1 + s2 * s2 - cw * s1 * s2;
+            if (m > bm) { bm = m; best = c; }
+        }
+        return best;
+    };
+    auto renderTuned = [](const p5::Patch &p, const int16_t *dev, int note)
+    {
+        p5::Engine e(p5::KernelMode::Scalar); e.activate(44100); e.setPolyphony(8); e.setPatch(p);
+        if (dev) e.setTuningDeviation(dev);
+        e.noteOn(note, 100);
+        return render(e, 1600);
+    };
+    {
+        static const double pyth[13] = { 0, 113.69, 203.91, 294.13, 407.82, 498.04, 611.73,
+                                         701.96, 815.64, 905.87, 996.09, 1109.78, 1200.0 };
+        static int16_t devP[128];
+        const bool okb = p5store::buildScaleDev(pyth, 12, 0x0fff, 0, devP);
+        check("buildScaleDev pythagorean returns ok", okb);
+        const auto et = renderTuned(p, nullptr, 61);
+        const auto tp = renderTuned(p, devP, 61);
+        const double cET = centsOf(et, 440.0 * std::pow(2.0, (61 - 69) / 12.0), -30, 30);
+        const double cPY = centsOf(tp, 440.0 * std::pow(2.0, (61 - 69) / 12.0), -30, 30);
+        std::printf("  measured C#: ET %+0.1f c, pythagorean %+0.1f c (table says %+0.1f)\n",
+                    cET, cPY, devP[61] * 6.25);
+        check("ET renders at ET (sanity)", std::fabs(cET) < 4.0);
+        check("pythagorean C# really sounds +12.5c (depicted)", std::fabs(cPY - devP[61] * 6.25) < 4.0);
+
+        // 8) quantizer: C major mask snaps C# DOWN to C (dev -100c), E stays put
+        static const double maj[8] = { 0, 200, 400, 500, 700, 900, 1100, 1200 };
+        static int16_t devM[128];
+        check("buildScaleDev major quantizes", p5store::buildScaleDev(maj, 7, 0x0ab5, 0, devM));
+        check("C major: C# key plays C (-100c)", devM[61] == -16);
+        check("C major: white keys unshifted", devM[60] == 0 && devM[64] == 0 && devM[67] == 0);
+        const auto q1 = renderTuned(p, devM, 61);
+        const double cQ = centsOf(q1, 440.0 * std::pow(2.0, (61 - 69) / 12.0), -150, 150);
+        std::printf("  measured quantized C#: %+0.1f c (expect -100 = C)\n", cQ);
+        check("quantized C# sounds at C's pitch", std::fabs(cQ + 100.0) < 4.0);
+
+        // 9) walk (>12 tones): 19-EDO key61 = +63.16c
+        double e19[20]; for (int i = 1; i <= 19; i++) e19[i] = 1200.0 * i / 19.0;
+        static int16_t devW[128];
+        check("buildScaleDev 19-EDO walk", p5store::buildScaleDev(e19, 19, 0, 0, devW));
+        // walk semantics: key 61 plays degree 2 of nineteen (63.16c) = ET minus 36.8c
+        check("19-EDO key61 = -36.8c (-6 units)", devW[61] == -6);
+        check("19-EDO key79 wraps to octave (+1200c over 19 ET keys = -700c)", devW[79] == -112);
+    }
 
     std::printf("%s\n", fails ? "MPE/TUNING: FAILED" : "mpe/tuning: all ok");
     return fails ? 1 : 0;

@@ -326,9 +326,9 @@ int main(int argc, char **argv)
         bool ok7 = st7->save(plugin, &os7);
         uint32_t ver = 0;
         if (ok7 && blob7.size() >= 8) std::memcpy(&ver, blob7.data() + 4, 4);
-        check("state blob version 8", ok7 && ver == 8);
+        check("state blob version 9", ok7 && ver == 9);
         std::vector<char> blob6 = blob7;
-        const size_t tail = 2 * 128 + 2 * 2 + 40 + 4 + 8 * 64;   // dev + ranges + name + tones
+        const size_t tail = 2 * 128 + 2 * 2 + 40 + 4 + 8 * 64 + 3 * 4;   // + tones meta (root/mask/walk)
         bool sizes = blob6.size() > tail;
         if (sizes)
         {   blob6.resize(blob6.size() - tail);

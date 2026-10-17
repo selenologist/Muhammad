@@ -49,13 +49,15 @@ static p5ui::State stateFor(const char *name, p5::Engine &e, int &programOut)
 
     p5ui::State s;
     if (tuneMode)
-    {   // polar editor: the pythagorean chromatic dial, hot node on tone 5
+    {   // polar editor: melodee's PYTH chromatic dial + matching dev table
         s.tuneOpen = true;
-        std::snprintf(s.tuneName, sizeof s.tuneName, "Example Pythagorean tuning *");
-        static const float demo[12] = { 90.2f, 203.9f, 294.2f, 407.8f, 498.0f, 612.1f,
-                                        702.0f, 792.2f, 905.9f, 996.1f, 1109.9f, 1200.0f };
+        std::snprintf(s.tuneName, sizeof s.tuneName, "Pythagorean");
+        static const float demo[12] = { 113.69f, 203.91f, 294.13f, 407.82f, 498.04f, 611.73f,
+                                        701.96f, 815.64f, 905.87f, 996.09f, 1109.78f, 1200.0f };
+        static const short devd[12] = { 2, 1, -1, 1, 0, 2, 0, 3, 1, -1, 2, 0 };
         s.wheelC = demo; s.wheelN = 12; s.wheelHot = 5;
-        s.tuneUp = 5.f; s.tuneDn = 2.f;
+        for (int i = 0; i < 12; i++) s.tuneDev[48 + i] = devd[i];
+        s.tuneUp = 5.f; s.tuneDn = 2.f; s.tuneRoot = 7;
     }
     if (trimMode)
     {   // voice trim page, partly deflected, for the golden

@@ -253,8 +253,23 @@ bool buildScaleTones(const double *tones, int n, int16_t *dev16)
     catch (...) { return false; }
 }
 
+uint16_t deriveMask(const double *tones, int n)
+{   // chromatic positions of scale degrees, same law as the stock generator:
+    // round(cents/100) mod 12, unison owns key 0, collisions shift up, period skipped.
+    if (n <= 0 || n > 12) return 0;
+    uint16_t mask = 1;
+    for (int i = 0; i + 1 < n; i++)                 // last entry is the closing period
+    {
+        int pos = (int)(tones[i] / 100.0 + 0.5) % 12;
+        if (pos <= 0) pos = 1;                       // never collide with the root slot
+        while (mask & (1u << pos)) pos = (pos + 1) % 12;
+        mask |= (uint16_t)(1u << pos);
+    }
+    return mask;
+}
+
 bool loadTuningDev(const std::string &fileName, int16_t *dev16, char *nameOut, int nameCap,
-                   double *tonesOut, int *tonesN)
+                   double *tonesOut, int *tonesN, bool *kbmUsed)
 {
     const std::string path = tuningsDir() + "/" + fileName;
     const size_t dot = path.rfind('.');
@@ -264,6 +279,7 @@ bool loadTuningDev(const std::string &fileName, int16_t *dev16, char *nameOut, i
     if (ext == ".kbm") { kbmT = slurp(path); if (FILE *alt = fopen((stem + ".scl").c_str(), "r")) { fclose(alt); sclT = slurp(stem + ".scl"); } }
     else { sclT = slurp(path); if (FILE *alt = fopen((stem + ".kbm").c_str(), "r")) { fclose(alt); kbmT = slurp(stem + ".kbm"); } }
     if (sclT.empty() && kbmT.empty()) return false;
+    if (kbmUsed) *kbmUsed = !kbmT.empty();
     try
     {
         using namespace Tunings;
@@ -305,6 +321,93 @@ bool loadTuningDev(const std::string &fileName, int16_t *dev16, char *nameOut, i
         return true;
     }
     catch (...) { return false; }
+}
+
+} // namespace p5store
+
+// ---- quantizer & save --------------------------------------------------------
+#include <sys/stat.h>
+namespace p5store {
+
+bool buildScaleDev(const double *p, int degrees, uint16_t mask, int root, int16_t *dev16)
+{
+    if (!p || degrees < 2 || degrees > 66 || root < -24 || root > 24) return false;
+    const double period = p[degrees];
+    root = ((root % 12) + 12) % 12;          // key position within the octave
+    const bool quantize = mask != 0 && degrees <= 12;
+    int pos[12];
+    if (quantize)
+    {   int k = 0;
+        for (int b = 0; b < 12 && k < degrees; b++)
+            if (mask >> b & 1) pos[k++] = b;
+        if (k != degrees) return false;      // mask must carry exactly one slot per degree
+    }
+    for (int key = 0; key < 128; key++)
+    {
+        const int u = key - 60 - root;           // distance above the root at middle C (melodee's n-60)
+        int d, o;
+        double q;
+        if (quantize)
+        {
+            o = (int)std::floor((double)u / 12.0);
+            const int r = u - 12 * o;
+            int best = 0, bd = 99;
+            for (int i = 0; i < degrees; i++)
+            {   const int dd = std::abs(pos[i] - r);
+                if (dd < bd) { bd = dd; best = i; }    // ties: lower degree wins (loop order)
+            }
+            d = best;
+        }
+        else
+        {
+            const int n = degrees;
+            o = (int)std::floor((double)u / n);
+            d = u - n * o;
+        }
+        q = p[d] + period * o - 100.0 * u;
+        if (q > 6400.0) q = 6400.0; if (q < -6400.0) q = -6400.0;
+        long v = lround(q / 6.25);                     // engine units: 1/16 semitone
+        if (v < -512) v = -512; if (v > 512) v = 512;
+        dev16[key] = (int16_t)v;
+    }
+    return true;
+}
+
+static std::string sclSanitize(const std::string &in)
+{
+    std::string out;
+    for (char c : in)
+        out.push_back((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+                      c == ' ' || c == '.' || c == '_' || c == '-' ? c : '_');
+    while (!out.empty() && out.back() == ' ') out.pop_back();
+    if (out.empty()) out = "untitled";
+    if (out.size() > 48) out.resize(48);
+    return out;
+}
+
+bool tuningFileExists(const char *name)
+{
+    const std::string stem = tuningsDir() + "/" + sclSanitize(name);
+    for (const char *ext : {".scl", ".kbm", ".SCL", ".KBM"})
+    {   FILE *f = fopen((stem + ext).c_str(), "r");
+        if (f) { fclose(f); return true; } }
+    return false;
+}
+
+bool saveTuningScl(const char *name, const double *tones, int n)
+{
+    if (!tones || n < 2 || n > 64) return false;
+    const std::string label = sclSanitize(name);
+    std::string dir = tuningsDir();
+    mkdir(dir.c_str(), 0777);
+    std::ofstream f(dir + "/" + label + ".scl", std::ios::trunc);
+    if (!f) return false;
+    char buf[96];
+    std::snprintf(buf, sizeof buf, "%s\n", label.c_str());   f << buf;   // description line
+    std::snprintf(buf, sizeof buf, " %d\n!\n", n);          f << buf;   // count = tones incl. period
+    for (int i = 0; i < n; i++)
+    {   std::snprintf(buf, sizeof buf, " %.4f\n", tones[i]); f << buf; }
+    return (bool)f;
 }
 
 } // namespace p5store

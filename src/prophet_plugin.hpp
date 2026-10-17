@@ -47,6 +47,9 @@ struct Plugin {
     char tuneName_[40] = "12-TET";
     double tuneTones_[64] = {};                      // wheel-editable scale (cumulative cents)
     int tuneToneCount_ = 0;
+    int tuneRoot_ = 0;                               // scale root key position (0..11)
+    uint16_t tuneMask_ = 0;                          // chromatic degree positions, 0 = walk (ALL)
+    int tuneWalk_ = 0;                               // degrees>12: every key advances one degree
     float ccVol = 1.0f, ccExp = 1.0f;
     bool sustain_ = false;
     uint8_t heldFlag_[128] = {}, heldNotes_[128] = {};

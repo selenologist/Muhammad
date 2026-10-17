@@ -83,7 +83,7 @@ const clap_plugin_descriptor_t kDescriptor = {
     "selenologist",
     "https://github.com/keremimo/melodee",
     nullptr, nullptr,
-    "1.12.2-wheel",   // bump per shipped build: the version Bitwig shows proves which binary is loaded
+    "1.13.0-scales",   // bump per shipped build: the version Bitwig shows proves which binary is loaded
     "P5 clone (PROPHET engine ported from the Melodee firmware)",
     kFeatures
 };
@@ -839,7 +839,7 @@ const clap_plugin_params_t kParams = { par_count, par_get_info, par_get_value,
 
 // ---- state (versioned binary blob) --------------------------------------------
 #define PW_STATE_MAGIC 0x5035434Cu            // "P5CL"
-#define PW_STATE_VERSION 8u
+#define PW_STATE_VERSION 9u
 static bool wr(const clap_ostream_t *o, const void *b, size_t n)
 { return o->write(o, b, (uint64_t)n) == (int64_t)n; }
 static bool state_save(const clap_plugin_t *p, const clap_ostream_t *out)
@@ -864,13 +864,14 @@ static bool state_save(const clap_plugin_t *p, const clap_ostream_t *out)
     int32_t tn = s->tuneToneCount_;
     double tt[64] = {};
     for (int i = 0; i < s->tuneToneCount_ && i < 64; i++) tt[i] = s->tuneTones_[i];
+    int32_t tmeta[3] = { s->tuneRoot_, (int32_t)s->tuneMask_, s->tuneWalk_ };
     return wr(out, head, sizeof head) && wr(out, s->engine.patch().raw, 133) &&
            wr(out, ov, sizeof ov) && wr(out, &trim, sizeof trim) && wr(out, &os, sizeof os) &&
            wr(out, gui, sizeof gui) && wr(out, &pan, sizeof pan) &&
            wr(out, &dr, sizeof dr) && wr(out, tr, sizeof tr) &&
            wr(out, dev, sizeof dev) && wr(out, br, sizeof br) &&
            wr(out, s->tuneName_, sizeof s->tuneName_) &&
-           wr(out, &tn, sizeof tn) && wr(out, tt, sizeof tt);
+           wr(out, &tn, sizeof tn) && wr(out, tt, sizeof tt) && wr(out, tmeta, sizeof tmeta);
 }
 static bool rd(const clap_istream_t *i, void *b, size_t n)
 { return i->read(i, b, (uint64_t)n) == (int64_t)n; }
@@ -932,6 +933,11 @@ static bool state_load(const clap_plugin_t *p, const clap_istream_t *in)
                         if (tn >= 2 && tn <= 64)
                         {   s->tuneToneCount_ = tn;
                             for (int i = 0; i < tn; i++) s->tuneTones_[i] = tt[i]; }
+                        if (head[1] >= 9u)
+                        {   int32_t tmeta[3];
+                            if (!rd(in, tmeta, sizeof tmeta)) return false;
+                            s->tuneRoot_ = tmeta[0]; s->tuneMask_ = (uint16_t)tmeta[1]; s->tuneWalk_ = tmeta[2];
+                        }
                     }
                 }
             }

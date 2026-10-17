@@ -34,14 +34,29 @@ std::vector<std::string> listPatches();
 std::string tuningsDir();
 std::vector<std::string> listTunings();
 bool loadTuningDev(const std::string &fileName, int16_t *dev16, char *nameOut, int nameCap,
-                   double *tonesOut = nullptr, int *tonesN = nullptr);
+                   double *tonesOut = nullptr, int *tonesN = nullptr,
+                   bool *kbmUsed = nullptr);
+uint16_t deriveMask(const double *tones, int n);   // chromatic key positions for a <=12-tone scale
 
 // Surge-style polar editor round trip: tones[] are cumulative cents of degrees
 // 1..n (the last entry is the octave). Rebuild the per-key deviation table from
 // an edited scale. kMaxTones bounds editable scale complexity; bigger files load
 // for playback but the wheel starts from the 12-TET grid.
 constexpr int kMaxTones = 64;
-bool buildScaleTones(const double *tones, int n, int16_t *dev16);                 // sorted, name without extension
+bool buildScaleTones(const double *tones, int n, int16_t *dev16);
+
+// Scale-quantizer deviation table (Melodee semantics, playable form): with a
+// chromatic mask and <=12 degrees every key snaps to the NEAREST scale degree
+// (positions from the mask) at that degree's cents; mask==0 or >12 degrees is
+// Melodee's ALL mode — every key advances one degree of the dial. root is the
+// scale's key position (0..11 semitones), p[] carries degrees + period.
+bool buildScaleDev(const double *p, int degrees, uint16_t mask, int root, int16_t *dev16);
+
+// Persist an edited wheel as a .scl in the Tunings dir (cents lines; the file
+// exchange format — chromatic positions of quantized scales live in the DAW
+// session, not the .scl). Returns false on I/O error.
+bool saveTuningScl(const char *name, const double *tones, int n);
+bool tuningFileExists(const char *name);   // case-insensitive, .scl/.kbm probe                 // sorted, name without extension
 
 bool savePatch(const std::string &name, const uint8_t raw[133]);
 // Case-insensitive collision on purpose: filenames stay faithful to the typed

@@ -25,6 +25,7 @@
 #include "p5_common.hpp"
 #include "p5_gui.hpp"
 #include "p5_store.hpp"
+#include "p5_stock_scales.hpp"
 
 namespace pw {
 
@@ -59,6 +60,8 @@ struct Ctx
     std::vector<std::string> tuneFiles;  // Tunings dir listing (TUNING page)
     int tuneDrag = 0, tunePage = 0;      // 3/4 = which bend-range rail
     int tuneFocus = 0;                   // arrow-adjusted rail (0 up, 1 down)
+    int tuneTab = 0;                     // picker: 0 stock library, 1 user files
+    uint16_t wheelMask = 0; int wheelWalk = 0, wheelRoot = 0;
     float wheelC[64] = {};               // live editable scale (cumulative cents)
     int wheelN = 0, wheelHot = -1, wheelDragIdx = 0;
     float wheelDragC0 = 0.f, wheelDragDist0 = 0.f;
@@ -112,21 +115,41 @@ void applyTrimDrag(Ctx &c, float lx)
 {   applyTrimSet(c, c.trimRow, c.trimCol, p5ui::trim::valueAt(c.trimCol, lx));
 }
 
+void wheelApply(Ctx &c);
+
 void wheelSeed(Ctx &c)
 {   const Plugin *P = c.plugin;
     c.wheelN = (P->tuneToneCount_ >= 2 && P->tuneToneCount_ <= 64) ? P->tuneToneCount_ : 0;
     for (int i = 0; i < c.wheelN; i++) c.wheelC[i] = (float)P->tuneTones_[i];
+    c.wheelMask = P->tuneMask_; c.wheelWalk = P->tuneWalk_; c.wheelRoot = P->tuneRoot_;
 }
 
-void wheelCommit(Ctx &c)
+void applyStock(Ctx &c, int si)
+{   const StockScale &sc = P5_STOCK[si];
+    c.wheelN = sc.degrees;
+    for (int i = 0; i < sc.degrees; i++) c.wheelC[i] = sc.p[i + 1];   // drop unison, keep period
+    c.wheelMask = sc.mask; c.wheelWalk = sc.walk;
+    wheelApply(c);
+    std::snprintf(c.plugin->tuneName_, sizeof c.plugin->tuneName_, "%s", sc.title);
+    std::fprintf(stderr, "[p5gui] stock scale: %s (%d tones, mask %03x, %s)\n",
+                 sc.title, sc.degrees, sc.mask, sc.walk ? "ALL-walk" : "quantized");
+}
+
+void wheelApply(Ctx &c)
 {   if (c.wheelN < 2) return;
-    static double cum[64];
-    for (int i = 0; i < c.wheelN; i++) cum[i] = c.wheelC[i];
+    double p[66]; p[0] = 0.0;
+    for (int i = 0; i < c.wheelN; i++) p[i + 1] = c.wheelC[i];
     int16_t dev[128];
-    if (!p5store::buildScaleTones(cum, c.wheelN, dev)) return;
+    if (!p5store::buildScaleDev(p, c.wheelN, c.wheelMask, c.wheelRoot, dev)) return;
     c.plugin->engine.setTuningDeviation(dev);
     c.plugin->tuneToneCount_ = c.wheelN;
+    c.plugin->tuneMask_ = c.wheelMask; c.plugin->tuneWalk_ = c.wheelWalk;
+    c.plugin->tuneRoot_ = c.wheelRoot;
     for (int i = 0; i < c.wheelN; i++) c.plugin->tuneTones_[i] = c.wheelC[i];
+}
+
+void wheelCommit(Ctx &c)         // user edited: apply + mark the name
+{   wheelApply(c);
     char *n = c.plugin->tuneName_;
     if (!std::strchr(n, '*') && std::strlen(n) + 3 < sizeof c.plugin->tuneName_)
         std::strncat(n, " *", sizeof c.plugin->tuneName_ - std::strlen(n) - 1);
@@ -162,23 +185,26 @@ void fillState(Ctx &c, p5ui::State &st)
             st.trimV[4*i+2*k] = (short)sc; st.trimV[4*i+2*k+1] = (short)of; }     // audio-thread PC applied bytes; pull identity here
     st.tuneOpen = (c.modal == 6);
     st.tunePick = (c.modal == 7);
+    st.tuneTab = c.tuneTab;
     std::snprintf(st.tuneName, sizeof st.tuneName, "%s", c.plugin->tuneName_);
     for (int k = 0; k < 128; k++) st.tuneDev[k] = c.plugin->engine.tuningDeviation()[k];
     st.tuneUp = (float)c.plugin->engine.bendRangeUpDefault();
     st.tuneDn = (float)c.plugin->engine.bendRangeDownDefault();
     st.tuneFocus = c.tuneFocus;
     st.wheelC = c.wheelC; st.wheelN = c.wheelN; st.wheelHot = c.wheelHot;
+    st.tuneRoot = c.wheelRoot;
     {
         const int per = p5ui::pick::rows;
-        const int total = 1 + (int)c.tuneFiles.size();
+        const int total = 1 + (c.tuneTab ? (int)c.tuneFiles.size() : P5_STOCK_N);
         st.tunePages = (total + per - 1) / per;
         if (c.tunePage >= st.tunePages) c.tunePage = st.tunePages - 1;
         if (c.tunePage < 0) c.tunePage = 0;
         st.tunePage = c.tunePage;
         int sel = 0;                                  // row index of the loaded tuning (0 = standard)
         const std::string nm(c.plugin->tuneName_);
-        for (size_t i = 0; i < c.tuneFiles.size(); i++)
-            if (c.tuneFiles[i] == nm) sel = 1 + (int)i;
+        if (c.tuneTab == 0)
+        {   for (int i = 0; i < P5_STOCK_N; i++) if (nm == P5_STOCK[i].title) sel = 1 + i; }
+        else for (size_t i = 0; i < c.tuneFiles.size(); i++) if (c.tuneFiles[i] == nm) sel = 1 + (int)i;
         st.tuneSel = sel - c.tunePage * per;
         if (st.tuneSel < 0 || st.tuneSel >= per) st.tuneSel = -1;
         for (int i = 0; i < per; i++)
@@ -186,11 +212,13 @@ void fillState(Ctx &c, p5ui::State &st)
             const int idx = c.tunePage * per + i;
             if (idx >= total) { st.tuneRows[i] = nullptr; continue; }
             if (idx == 0) std::snprintf(c.tuneRowBuf[i], 64, "12-TET (standard)");
+            else if (c.tuneTab == 0)
+                std::snprintf(c.tuneRowBuf[i], 64, "%s  -  %s", P5_STOCK[idx - 1].group, P5_STOCK[idx - 1].title);
             else
-            {   std::string s = c.tuneFiles[idx - 1];
-                const size_t dot = s.rfind('.');
-                if (dot != std::string::npos) s = s.substr(0, dot);   // stem, not file, is the identity
-                std::snprintf(c.tuneRowBuf[i], 64, "%s", s.c_str());
+            {   std::string s2 = c.tuneFiles[idx - 1];
+                const size_t dot = s2.rfind('.');
+                if (dot != std::string::npos) s2 = s2.substr(0, dot);   // stem, not file, is the identity
+                std::snprintf(c.tuneRowBuf[i], 64, "%s", s2.c_str());
             }
             st.tuneRows[i] = c.tuneRowBuf[i];
         }
@@ -266,16 +294,32 @@ void fillState(Ctx &c, p5ui::State &st)
             st.pickerCount++;
         }
     }
-    else if (c.modal == 1 || c.modal == 2 || c.modal == 3)   // 5 = trim page, not a text modal
+    else if (c.modal == 1 || c.modal == 2 || c.modal == 3 ||
+             c.modal == 8 || c.modal == 9)          // 5/6 = pages, not text modals
     {
         st.modalTitle = c.modal == 2 ? "ASSIGN BANK/PROGRAM"
-                          : c.modal == 3 ? "OVERWRITE ?" : "SAVE PATCH";
+                          : c.modal == 3 || c.modal == 9 ? "OVERWRITE ?"
+                          : c.modal == 8 ? "SAVE TUNING" : "SAVE PATCH";
         if (c.modal == 3)
         {
             static char prompt[128];
             std::snprintf(prompt, sizeof prompt,
                           "\"%s\" already exists (name differs only by case)  -  ENTER overwrites",
                           c.modalHit);
+            st.modalPrompt = prompt;
+        }
+        else if (c.modal == 9)
+        {
+            static char prompt[128];
+            std::snprintf(prompt, sizeof prompt,
+                          "\"%s\" exists in Tunings  -  ENTER overwrites", c.modalHit);
+            st.modalPrompt = prompt;
+        }
+        else if (c.modal == 8)
+        {
+            static char prompt[96];
+            std::snprintf(prompt, sizeof prompt, "write to  %s/<name>.scl",
+                          p5store::tuningsDir().c_str());
             st.modalPrompt = prompt;
         }
         else if (c.modal == 1)
@@ -607,7 +651,10 @@ void pump(Ctx &c)
                     p5ui::pointToLayout((float)ev.xbutton.x, (float)ev.xbutton.y,
                                         (float)c.w, (float)c.h, lx, ly);
                     if (!p5ui::pick::inside(lx, ly)) { c.modal = 6; dirty = true; break; }
-                    const int pages = (int)((c.tuneFiles.size() + p5ui::pick::rows) / p5ui::pick::rows);
+                    const int tab = p5ui::pick::hitTab(lx, ly);
+                    if (tab >= 0) { c.tuneTab = tab; c.tunePage = 0; dirty = true; break; }
+                    const int totalRows = 1 + (c.tuneTab ? (int)c.tuneFiles.size() : P5_STOCK_N);
+                    const int pages = (totalRows + p5ui::pick::rows - 1) / p5ui::pick::rows;
                     const int pg = p5ui::pick::hitPage(lx, ly);
                     if (pg)
                     {   c.tunePage += pg;
@@ -615,22 +662,39 @@ void pump(Ctx &c)
                         if (c.tunePage >= pages) c.tunePage = pages - 1;
                         dirty = true; break; }
                     const int r = p5ui::pick::hitRow(lx, ly);
-                    std::fprintf(stderr, "[p5gui] tune picker hitRow=%d at (%.0f,%.0f)\n", r, lx, ly);
+                    std::fprintf(stderr, "[p5gui] tunepicker press (%.0f,%.0f) tab=%d r=%d\n", lx, ly, c.tuneTab, r);
                     if (r >= 0)
                     {   const int idx = c.tunePage * p5ui::pick::rows + r;
                         if (idx == 0)
                         {   c.plugin->engine.setTuningDeviation(nullptr);
                             std::snprintf(c.plugin->tuneName_, sizeof c.plugin->tuneName_, "12-TET");
                             c.plugin->tuneToneCount_ = 0; c.wheelN = 0; c.wheelHot = -1;
+                            c.wheelMask = 0; c.wheelWalk = 0;
                             std::fprintf(stderr, "[p5gui] tuning: standard 12-TET selected\n"); }
-                        else if (idx - 1 < (int)c.tuneFiles.size())
+                        else if (c.tuneTab == 0 && idx - 1 < P5_STOCK_N)
+                        {   applyStock(c, idx - 1); c.modal = 6; dirty = true; break; }
+                        else if (c.tuneTab == 1 && idx - 1 < (int)c.tuneFiles.size())
                         {   static int16_t dev[128]; char nm[40];
                             static double tn2[64]; int tnn = 0;
-                            if (p5store::loadTuningDev(c.tuneFiles[idx - 1], dev, nm, sizeof nm, tn2, &tnn))
-                            {   c.plugin->engine.setTuningDeviation(dev);
-                                std::snprintf(c.plugin->tuneName_, sizeof c.plugin->tuneName_, "%s", nm);
+                            bool kbm = false;
+                            if (p5store::loadTuningDev(c.tuneFiles[idx - 1], dev, nm, sizeof nm, tn2, &tnn, &kbm))
+                            {   std::snprintf(c.plugin->tuneName_, sizeof c.plugin->tuneName_, "%s", nm);
                                 c.plugin->tuneToneCount_ = tnn;
                                 for (int k = 0; k < tnn && k < 64; k++) c.plugin->tuneTones_[k] = tn2[k];
+                                if (!kbm)
+                                {   // .scl carries degrees only - re-apply melodee semantics ourselves:
+                                    // <=12 tones quantize to the nearest degree, >12 walk (ALL mode).
+                                    double p[66]; p[0] = 0.0;
+                                    for (int k = 0; k < tnn && k < 64; k++) p[k + 1] = tn2[k];
+                                    const uint16_t m = p5store::deriveMask(tn2, tnn);
+                                    static int16_t devQ[128];
+                                    if (p5store::buildScaleDev(p, tnn, m, c.wheelRoot, devQ))
+                                    {   std::memcpy(dev, devQ, sizeof dev);
+                                        c.plugin->tuneMask_ = m;
+                                        c.plugin->tuneWalk_ = (m == 0);
+                                    }
+                                }
+                                c.plugin->engine.setTuningDeviation(dev);
                                 wheelSeed(c);
                                 std::fprintf(stderr, "[p5gui] tuning loaded: %s (%d tones editable)\n", nm, tnn); }
                             else std::fprintf(stderr, "[p5gui] tuning LOAD failed: %s\n",
@@ -675,11 +739,29 @@ void pump(Ctx &c)
                         }
                     }
                     const int ctl = p5ui::tune::hitControl(lx, ly);
-                    if (ctl == 1) { c.modal = 7; c.tunePage = 0; dirty = true; }
+                    if (ctl == 1) { c.modal = 7; c.tunePage = 0; c.tuneTab = 0; dirty = true; }
+                    else if (ctl == 5)
+                    {   c.modal = 8; c.modalLen = 0; c.modalBuf[0] = 0;
+                        std::string seed(c.plugin->tuneName_);
+                        if (!seed.empty() && seed.back() == '*') seed.pop_back();
+                        while (!seed.empty() && seed.back() == ' ') seed.pop_back();
+                        if (seed.empty()) seed = "my tuning";
+                        std::strncpy(c.modalBuf, seed.c_str(), sizeof c.modalBuf - 1);
+                        c.modalBuf[sizeof c.modalBuf - 1] = 0;
+                        c.modalLen = (int)std::strlen(c.modalBuf);
+                        XSetInputFocus(c.dpy, c.win, RevertToParent, CurrentTime);
+                        dirty = true; }
+                    else if (ctl == 6 || ctl == 7)
+                    {   c.wheelRoot = (c.wheelRoot + (ctl == 7 ? 1 : -1) + 12) % 12;
+                        wheelApply(c);
+                        std::fprintf(stderr, "[p5gui] tuning root -> %d\n", c.wheelRoot);
+                        dirty = true; }
                     else if (ctl == 2)
                     {   c.plugin->engine.setTuningDeviation(nullptr);
                         std::snprintf(c.plugin->tuneName_, sizeof c.plugin->tuneName_, "12-TET");
-                        c.plugin->tuneToneCount_ = 0; c.wheelN = 0; c.wheelHot = -1;
+                        c.plugin->tuneToneCount_ = 0; c.wheelHot = -1;
+                        c.wheelN = 12; c.wheelMask = 0x0fff; c.wheelWalk = 0;
+                        for (int i = 0; i < 12; i++) c.wheelC[i] = 100.f * (i + 1);  // editable grid
                         std::fprintf(stderr, "[p5gui] tuning RESET to 12-TET\n");
                         dirty = true; }
                     else if (ctl >= 3)
@@ -769,7 +851,12 @@ void pump(Ctx &c)
                 if (!c.modal) break;
                 char xb[8]; KeySym ks = NoSymbol;
                 const int n = XLookupString(&ev.xkey, xb, sizeof xb - 1, &ks, nullptr);
-                if (ks == XK_Escape) { if (c.modal == 3) c.modal = 1; else c.modal = 0; dirty = true; break; }
+                if (ks == XK_Escape)
+                {   if (c.modal == 3) c.modal = 1;
+                    else if (c.modal == 9) c.modal = 8;
+                    else if (c.modal == 8) c.modal = 6;
+                    else c.modal = 0;
+                    dirty = true; break; }
                 if (ks == XK_BackSpace) { if (c.modalLen > 0) c.modalBuf[--c.modalLen] = 0; dirty = true; break; }
                 if (ks == XK_Return || ks == XK_KP_Enter)
                 {
@@ -787,6 +874,25 @@ void pump(Ctx &c)
                     }
                     else if (c.modal == 2) { c.plugin->assignSlotFromText(c.modalSlot, c.modalBuf); c.modal = 0; c.modalLen = 0; }
                     else if (c.modal == 3) { c.plugin->savePatchNamed(c.modalBuf); c.modal = 0; c.modalLen = 0; }
+                    else if (c.modal == 8)
+                    {   if (p5store::tuningFileExists(c.modalBuf))
+                        {   std::snprintf(c.modalHit, sizeof c.modalHit, "%s", c.modalBuf);
+                            c.modal = 9; dirty = true; break; }
+                        static double tt[64];
+                        for (int i = 0; i < c.wheelN && i < 64; i++) tt[i] = c.wheelC[i];
+                        if (p5store::saveTuningScl(c.modalBuf, tt, c.wheelN))
+                        {   std::snprintf(c.plugin->tuneName_, sizeof c.plugin->tuneName_, "%s", c.modalBuf);
+                            std::fprintf(stderr, "[p5gui] tuning saved: %s.scl\n", c.modalBuf);
+                            c.tuneFiles = p5store::listTunings(); }
+                        c.modal = 6; c.modalLen = 0; }
+                    else if (c.modal == 9)
+                    {   static double tt[64];
+                        for (int i = 0; i < c.wheelN && i < 64; i++) tt[i] = c.wheelC[i];
+                        if (p5store::saveTuningScl(c.modalBuf, tt, c.wheelN))
+                        {   std::snprintf(c.plugin->tuneName_, sizeof c.plugin->tuneName_, "%s", c.modalBuf);
+                            std::fprintf(stderr, "[p5gui] tuning saved (overwrite): %s.scl\n", c.modalBuf);
+                            c.tuneFiles = p5store::listTunings(); }
+                        c.modal = 6; c.modalLen = 0; }
                     dirty = true; break;
                 }
                 if (c.modal == 6)                     // tuning page: arrows adjust the focused range rail
