@@ -576,7 +576,13 @@ static Plugin *fromPlugin(const clap_plugin_t *p)
 
 static bool plugin_init(const clap_plugin_t *p)
 {
-    std::fprintf(stderr, "[p5] plugin init: Muhammad build %s (gui-x11, 7-bit law, coalesced gestures, xembed)\n",
+    std::fprintf(stderr, "[p5] plugin init: Muhammad build %s ("
+#if defined(_WIN32)
+                 "gui-win32"
+#else
+                 "gui-x11"
+#endif
+                 ", 7-bit law, coalesced gestures, xembed)\n",
                  kDescriptor.version);
     auto *s = fromPlugin(p);
     if (!s) return false;
@@ -701,7 +707,7 @@ static const void *plugin_get_extension(const clap_plugin_t *, const char *id)
     if (!std::strcmp(id, CLAP_EXT_PRESET_LOAD)) return &kPresetLoad;
     if (!std::strcmp(id, CLAP_EXT_LATENCY)) return &kLatency;
 #ifdef P5_GUI
-    if (!std::strcmp(id, CLAP_EXT_GUI)) return &kGuiX11;
+    if (!std::strcmp(id, CLAP_EXT_GUI)) return &kGui;
     if (!std::strcmp(id, CLAP_EXT_TIMER_SUPPORT)) return &kTimerSupport;
 #endif
     return nullptr;
