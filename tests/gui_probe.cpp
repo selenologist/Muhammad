@@ -55,11 +55,13 @@ int main(int argc, char **argv)
 
     auto *gui = (const clap_plugin_gui_t *)plugin->get_extension(plugin, CLAP_EXT_GUI);
     if (!gui) { std::printf("no gui ext\n"); return 4; }
-    gui->create(plugin, CLAP_WINDOW_API_X11, false);
+    const bool floatMode = getenv("P5_GUI_MODE") && !strcmp(getenv("P5_GUI_MODE"), "float");
+    gui->create(plugin, CLAP_WINDOW_API_X11, floatMode);
     clap_window_t w{};
     w.api = CLAP_WINDOW_API_X11;
     w.x11 = (decltype(w.x11))parent;
-    if (!gui->set_parent(plugin, &w)) { std::printf("set_parent failed\n"); return 5; }
+    if (floatMode) { if (gui->set_transient) gui->set_transient(plugin, &w); }
+    else if (!gui->set_parent(plugin, &w)) { std::printf("set_parent failed\n"); return 5; }
     gui->show(plugin);
 
     auto *timer = (const clap_plugin_timer_support_t *)plugin->get_extension(plugin, CLAP_EXT_TIMER_SUPPORT);

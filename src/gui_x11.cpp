@@ -87,6 +87,7 @@ struct Ctx : GuiCore
     Atom xembed = None, xembedInfo = None;
     GLXContext gl = nullptr;
     Atom wmDelete = None;
+    bool floating = false;                    // clap gui floating mode: we own the window
     NVGcontext *vg = nullptr;
     p5ui::Gui gui{};
     bool hasGui = false;
@@ -136,7 +137,7 @@ void afterPress(Ctx &c)
 void pump(Ctx &c)
 {
     bool dirty = false;
-    if (c.parent && c.win)
+    if (!c.floating && c.parent && c.win)
     {
         XWindowAttributes pa{};
         if (XGetWindowAttributes(c.dpy, c.parent, &pa))
@@ -153,7 +154,8 @@ void pump(Ctx &c)
             // trim the ancestor's excess ourselves. Budget 2, re-armed by
             // any configure.
             const long wantH = (long)(pa.width * p5ui::kPanelH / p5ui::kPanelW);
-            if (pa.height > wantH + 40 && c.topTries < 10 && coreShouldTrimNow(c, t))
+            if (pa.height > wantH + 40 && c.topTries < 10 &&
+                c.trimIneffective < 2 && coreShouldTrimNow(c, t))
             {
                 if (t >= c.topNextMs)
                 {
@@ -190,7 +192,12 @@ void pump(Ctx &c)
                         XWindowAttributes va{};
                         if (XGetWindowAttributes(c.dpy, top, &va))
                         {   c.trimWid = (unsigned long)top;
-                            c.trimAfterW = (uint32_t)va.width; c.trimAfterH = (uint32_t)va.height; }
+                            c.trimAfterW = (uint32_t)va.width; c.trimAfterH = (uint32_t)va.height;
+                            // Bitwig measured: the window came back LARGER (1308).
+                            // Two consecutive ineffective trims stop the fight -
+                            // an embedded host owns its slot; float mode is the answer.
+                            if (c.trimAfterH + 8 >= (uint32_t)ta.height) c.trimIneffective++;
+                            else c.trimIneffective = 0; }
                         std::fprintf(stderr, "[p5gui] trim readback: top 0x%lx now %dx%d\n",
                                      (unsigned long)top, va.width, va.height);
                     }
@@ -284,6 +291,18 @@ void pump(Ctx &c)
                 break;
             case ClientMessage:
                 if (ev.xclient.message_type == c.xembed) { /* EMBEDDED/FOCUS/CONFIGURE lifecycle */ }
+                else if (c.floating && ev.xclient.window == c.win && c.wmDelete != None)
+                {   const Atom wmProtos = XInternAtom(c.dpy, "WM_PROTOCOLS", True);
+                    if (ev.xclient.message_type == wmProtos &&
+                        (Atom)ev.xclient.data.l[0] == c.wmDelete)
+                    {   std::fprintf(stderr, "[p5gui] floating window closed by user\n");
+                        if (c.hostGui && c.hostGui->closed && c.plugin && c.plugin->host)
+                            c.hostGui->closed(c.plugin->host, false);   // host stays in sync
+                        unregisterTimer(c);
+                        XUnmapWindow(c.dpy, c.win);
+                        c.mapped = false;
+                    }
+                }
                 break;
             case KeyPress:
             {
@@ -325,6 +344,62 @@ void teardown(Ctx &c)
     if (c.win && c.dpy) { XDestroyWindow(c.dpy, c.win); c.win = 0; }
     if (c.dpy) { XCloseDisplay(c.dpy); c.dpy = nullptr; }
     c.mapped = false;
+}
+
+bool setupFloating(Ctx &c)
+{
+    c.dpy = XOpenDisplay(nullptr);
+    if (!c.dpy) return false;
+    clip::dpy = c.dpy;
+    const int screen = DefaultScreen(c.dpy);
+
+    static const int fbAttrs[] = { GLX_RGBA, GLX_DOUBLEBUFFER, GLX_RED_SIZE, 4, GLX_GREEN_SIZE, 4,
+                                   GLX_BLUE_SIZE, 4, GLX_ALPHA_SIZE, 4, GLX_STENCIL_SIZE, 8, None };
+    XVisualInfo *vi = glXChooseVisual(c.dpy, screen, (int *)fbAttrs);
+    if (!vi) { XCloseDisplay(c.dpy); c.dpy = nullptr; return false; }
+    c.gl = glXCreateContext(c.dpy, vi, nullptr, True);
+    if (!c.gl) { XFree(vi); XCloseDisplay(c.dpy); c.dpy = nullptr; return false; }
+
+    XSetWindowAttributes swa{};
+    swa.colormap = XCreateColormap(c.dpy, DefaultRootWindow(c.dpy), vi->visual, AllocNone);
+    swa.event_mask = ExposureMask | ButtonPressMask | ButtonReleaseMask | PointerMotionMask |
+                     StructureNotifyMask | KeyPressMask;
+    const uint32_t w = (uint32_t)(p5ui::kPanelW * 0.75 * (c.scale > 0.0 ? c.scale : 1.0));
+    const uint32_t h = (uint32_t)(w * p5ui::kPanelH / p5ui::kPanelW);
+    c.w = w; c.h = h;
+    c.win = XCreateWindow(c.dpy, DefaultRootWindow(c.dpy), 0, 0, (int)w, (int)h, 0,
+                          vi->depth, InputOutput, vi->visual, CWColormap | CWEventMask, &swa);
+    XFree(vi);
+    if (!c.win) { teardown(c); return false; }
+    clip::win = c.win;
+
+    XStoreName(c.dpy, c.win, "Muhammad");
+    XClassHint ch{};
+    ch.res_name = const_cast<char *>("muhammad");
+    ch.res_class = const_cast<char *>("Muhammad");
+    XSetClassHint(c.dpy, c.win, &ch);
+    c.wmDelete = XInternAtom(c.dpy, "WM_DELETE_WINDOW", False);
+    XSetWMProtocols(c.dpy, c.win, &c.wmDelete, 1);
+    if (c.parent) XSetTransientForHint(c.dpy, c.win, c.parent);
+    XSizeHints *sh = XAllocSizeHints();
+    sh->flags = PAspect | PMinSize | PSize;
+    sh->width = (int)w; sh->height = (int)h;
+    sh->min_aspect.x = sh->max_aspect.x = (int)p5ui::kPanelW;   // drags stay panel-true
+    sh->min_aspect.y = sh->max_aspect.y = (int)p5ui::kPanelH;
+    sh->min_width = 520; sh->min_height = 139;
+    XSetWMNormalHints(c.dpy, c.win, sh);
+    XFree(sh);
+    // NanoVG must be initialised against THIS window (the embedded path does
+    // it at the end of setupEmbedded): render() early-outs on !c.vg, so
+    // without this the floating window mapped white-on-white.
+    if (!glXMakeCurrent(c.dpy, c.win, c.gl)) { teardown(c); return false; }
+    c.vg = nvgCreateGL3(NVG_ANTIALIAS | NVG_STENCIL_STROKES);
+    if (!c.vg) { teardown(c); return false; }
+    c.gui = p5ui::create(c.vg);
+    c.hasGui = c.gui.fontId >= 0;
+    std::fprintf(stderr, "[p5gui] FLOATING window 0x%lx %ux%u, panel aspect WM-locked, vg %s\n",
+                 (unsigned long)c.win, c.w, c.h, c.hasGui ? "ok" : "FONT FAIL");
+    return c.hasGui;
 }
 
 bool setupEmbedded(Ctx &c, Window parent)
@@ -426,11 +501,25 @@ bool setupEmbedded(Ctx &c, Window parent)
 
 bool gui_is_api_supported(const clap_plugin_t *, const char *api, bool is_floating)
 {
-    return !is_floating && api && !std::strcmp(api, CLAP_WINDOW_API_X11);
+    (void)is_floating;   // BOTH embedded and floating X11 windows are supported
+    return api && !std::strcmp(api, CLAP_WINDOW_API_X11);
+}
+static bool modeFloat()
+{
+    const char *m = std::getenv("P5_GUI_MODE");
+    return m && !std::strcmp(m, "float");
 }
 bool gui_get_preferred_api(const clap_plugin_t *, const char **api, bool *is_floating)
 {
-    *api = CLAP_WINDOW_API_X11; *is_floating = false; return true;
+    // Default embedded (polite citizen). P5_GUI_MODE=float declares a
+    // PLUGIN-FLOATING preference: hosts like Bitwig 5.0.4 (measured: get_size
+    // called 0 times, request_resize answered "ACCEPTED" but re-asserted,
+    // programmatic shrinks undone by their own layout) own the embedded
+    // slot's size utterly - inside such a slot the panel can only be SCALED
+    // (chassis), never sized right. A floating window is OURS: exact panel
+    // aspect locked via WM_NORMAL_HINTS, WM decorations, correct drag,
+    // user-close -> hostGui->closed so the host stays in sync.
+    *api = CLAP_WINDOW_API_X11; *is_floating = modeFloat(); return true;
 }
 bool gui_create(const clap_plugin_t *p, const char *api, bool is_floating)
 {
@@ -446,7 +535,12 @@ bool gui_create(const clap_plugin_t *p, const char *api, bool is_floating)
             c.hostGui = (const clap_host_gui_t *)s->host->get_extension(s->host, CLAP_EXT_GUI);
         std::fprintf(stderr, "[p5gui] host clap.gui service %s\n", c.hostGui ? "present" : "absent");
     }
-    if (auto *cc = ctxFrom(p)) if (api) std::strncpy(cc->guiApi, api, sizeof cc->guiApi - 1);
+    if (auto *cc = ctxFrom(p))
+    {   if (api) std::strncpy(cc->guiApi, api, sizeof cc->guiApi - 1);
+        cc->floating = is_floating || modeFloat();  // env can FORCE float
+        std::fprintf(stderr, "[p5gui] create mode: %s\n",
+                     cc->floating ? (is_floating ? "FLOATING" : "FLOATING (forced)")
+                                  : "embedded"); }
     return true;
 }
 void gui_destroy(const clap_plugin_t *p)
@@ -513,16 +607,35 @@ bool gui_set_parent(const clap_plugin_t *p, const clap_window_t *window)
     std::fprintf(stderr, "[p5gui] set_parent api=%s\n", window ? window->api : "(null)");
     auto *c = ctxFrom(p);
     if (!c || !window || std::strcmp(window->api, CLAP_WINDOW_API_X11) != 0) return false;
+    if (c->floating)
+    {   // P5_GUI_MODE=float with a host that still requested embedded (Bitwig
+        // may ignore get_preferred_api): accept politely, remember their window
+        // as the transient anchor, and let show() create OUR OWN top-level.
+        c->parent = (Window)window->x11;
+        std::fprintf(stderr, "[p5gui] set_parent absorbed: FLOATING forced\n");
+        return true;
+    }
     return setupEmbedded(*c, (Window)window->x11);
 }
-bool gui_set_transient(const clap_plugin_t *, const clap_window_t *) { return false; }
+bool gui_set_transient(const clap_plugin_t *p, const clap_window_t *window)
+{
+    auto *c = ctxFrom(p);
+    std::fprintf(stderr, "[p5gui] set_transient api=%s\n", window ? window->api : "(null)");
+    if (!c || !window || std::strcmp(window->api, CLAP_WINDOW_API_X11) != 0) return false;
+    c->parent = (Window)window->x11;      // grouping anchor; float setup applies the hint
+    if (c->win) XSetTransientForHint(c->dpy, c->win, c->parent);
+    return true;
+}
 void gui_suggest_title(const clap_plugin_t *, const char *) {}
 bool gui_show(const clap_plugin_t *p)
 {
     std::fprintf(stderr, "[p5gui] show\n");
     auto *c = ctxFrom(p);
-    if (!c || !c->win) return false;
+    if (!c) return false;
+    if (c->floating && !c->win && !setupFloating(*c)) return false;
+    if (!c->win) return false;
     XMapWindow(c->dpy, c->win);
+    XMapRaised(c->dpy, c->win);
     c->mapped = true;
     registerTimer(*c);
     render(*c);

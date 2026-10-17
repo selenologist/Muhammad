@@ -369,24 +369,37 @@ into a `.clap` bundle.
 executes the Linux test suite + golden images there, and publishes a GitHub
 Release with all artifacts when a `v*` tag is pushed.
 
-## Window sizing & debug page (v1.13.3)
+## Window sizing & floating mode & debug page (v1.13.3)
 
-Hosts hand out slots that do not match the panel aspect — Bitwig on Linux
-opens 1280x1280 and its aspect-locked drag can never escape that launch
-ratio. The window is therefore **made right-sized**, in layers:
+Hosts hand out slots that do not match the panel aspect. What Bitwig 5.0.4
+on X11 actually does (measured via the debug page, not assumed): it never
+calls `get_size`, answers `request_resize` with ACCEPTED and re-asserts the
+oversized slot anyway, resizes the embedded child to exactly the slot from
+the first tick, and undoes programmatic shrinks of its top-level window.
+Inside such a slot the panel can only be **scaled** — never sized right —
+so the layers are:
 
-1. `request_resize` toward the exact panel aspect (budget 3, re-armed by any
-   configure). Cooperative hosts just resize and we mirror them.
-2. When the host kept the oversized slot anyway, the X11 shim walks its own
-   window ancestry to the host's **top-level** window and trims the excess
-   height there (budget 2, +1.5 s throttle). JUCE hosts honor WM-side
-   resizes of their windows even while their own drag handlers lock aspect;
-   the trim preserves the host's chrome, subtracting exactly the dead band.
-3. Only while none of the above has taken effect does the extra area exist —
-   and it is painted as chassis (gradient well + MUHAMMAD wordmark), never
-   host-black, so even a stubborn host looks designed rather than broken.
-
-Clicking the status/build strip (bottom edge, right side) opens the
+1. `request_resize` toward the exact panel aspect — a lifetime budget of 3
+   asks (re-armed only when the window genuinely lands at aspect; a
+   REFUSED answer or an ACCEPTED-but-not-honoured 2 s timeout moves on).
+   Cooperative hosts (Ardour via the VST3 wrapper, REAPER, Vital-style
+   users) just resize and we mirror them.
+2. Top-level trim: the X11 shim climbs its ancestry to the host's
+   **WM top-level** and shrinks holder + top together, throttled, budget
+   10 — then checks the post-resize geometry via `XSync` readback. Two
+   consecutive *ineffective* trims (the window came back same-size or
+   larger, as Bitwig's 1280x1308 proved) stop the fight immediately: an
+   embedded host that owns its window owns it.
+3. Chassis paint: whatever area the host insisted on is drawn as designed
+   chassis (gradient well + MUHAMMAD wordmark), never host-black.
+4. **For stubborn hosts: `P5_GUI_MODE=float`.** The plugin then declares —
+   and if need be forces — the CLAP *floating window* mode: a
+   plugin-owned, WM-managed top-level at the exact panel aspect with
+   `WM_NORMAL_HINTS` locking drags to the true ratio, MinSize 520x139,
+   transient-for the host window, and a `WM_DELETE` handler that calls
+   `hostGui->closed()` so Bitwig's device state stays in sync. Bitwig may
+   ignore `get_preferred_api`; mode=float overrides its embedded request
+   entirely (set_parent is absorbed as the transient anchor only).
 
 Clicking the status/build strip (bottom edge, right side) opens the
 Surge-style **DEBUG INFO page**: build stamp, gui api + host clap.gui

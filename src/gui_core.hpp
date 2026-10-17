@@ -111,7 +111,8 @@ struct GuiCore
                                               // window finally lands at aspect
     unsigned long trimWid = 0;                // last window we resized
     uint32_t trimAfterW = 0, trimAfterH = 0;  // its geometry AFTER resize (XSync readback)
-    int  getSizeCalls = 0;                    // did the host ever ask our size?                     // last request_resize verdict (1/0/-1 none)
+    int  getSizeCalls = 0;                    // did the host ever ask our size?
+    int  trimIneffective = 0;                 // consecutive trims that did not shrink
     int  topTries = 0;                        // top-level (host window) shrink budget
     long topNextMs = 0;
     char dbg[1200] = {};

@@ -326,7 +326,8 @@ void pump(Ctx &c)
             // the X11 shim; budget + throttle live in GuiCore).
             const int slotH = (int)(pr.bottom - pr.top);
             const long wantH = (long)((long)(pr.right - pr.left) * p5ui::kPanelH / p5ui::kPanelW);
-            if (slotH > wantH + 40 && c.topTries < 10 && coreShouldTrimNow(c, (long)GetTickCount()))
+            if (slotH > wantH + 40 && c.topTries < 10 &&
+                c.trimIneffective < 2 && coreShouldTrimNow(c, (long)GetTickCount()))
             {   const long t = (long)GetTickCount();
                 if (t >= c.topNextMs)
                 {   c.topNextMs = t + 1500;
@@ -342,9 +343,16 @@ void pump(Ctx &c)
                         std::fprintf(stderr, "[p5gui] host kept slot %dx%ld; trimming root HWND %p -> height %d (try %d)\n",
                                      (int)(pr.right - pr.left), (long)slotH, (void *)root,
                                      nh > (int)wantH ? nh : (int)wantH, c.topTries);
-                        SetWindowPos(root, nullptr, 0, 0, gr.right - gr.left,
-                                     nh > (int)wantH ? nh : (int)wantH,
+                        const int tgtH = nh > (int)wantH ? nh : (int)wantH;
+                        SetWindowPos(root, nullptr, 0, 0, gr.right - gr.left, tgtH,
                                      SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+                        RECT rb{};                       // readback truth (parity w/ x11)
+                        if (GetWindowRect(root, &rb))
+                        {   c.trimWid = (unsigned long)(uintptr_t)root;
+                            c.trimAfterW = (uint32_t)(rb.right - rb.left);
+                            c.trimAfterH = (uint32_t)(rb.bottom - rb.top);
+                            if (c.trimAfterH + 8 >= (uint32_t)(gr.bottom - gr.top)) c.trimIneffective++;
+                            else c.trimIneffective = 0; }
                     }
                 }
             }

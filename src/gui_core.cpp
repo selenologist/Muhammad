@@ -28,6 +28,13 @@
 
 namespace pw {
 
+// The wire patch-name field is 20 UNTERMINATED bytes (firmware layout):
+// printing it as a C string emits the garbage after the padded name (Bitwig
+// debug page showed "name ?h?..." mojibake). Keep printable ASCII, trim the
+// space padding - the same rule the panel display applies.
+static void wireName(char *out, size_t cap, const unsigned char *wp);
+
+
 namespace {
 
 void applyTrimSet(GuiCore &c, int row, int col, int v)
@@ -335,7 +342,10 @@ void actuate(GuiCore &c, int btnIdx, unsigned mods)
         if (c.modal)
         {
             std::string seed = c.plugin->currentFile();
-            if (seed.empty()) seed.assign((const char *)c.plugin->engine.patch().raw + p5::P5_NAME, p5::P5_NAME_LEN);
+            if (seed.empty())
+            {   char wb[24]; wireName(wb, sizeof wb,
+                        (const unsigned char *)c.plugin->engine.patch().raw + p5::P5_NAME);
+                seed = wb; }
             while (!seed.empty() && seed.back() == ' ') seed.pop_back();
             std::strncpy(c.modalBuf, seed.c_str(), sizeof c.modalBuf - 1);
             c.modalBuf[sizeof c.modalBuf - 1] = 0;
@@ -848,6 +858,21 @@ bool coreMirrorSlot(GuiCore &c, int slotW, int slotH, uint32_t &outW, uint32_t &
     c.w = outW; c.h = outH;
     return true;
 }
+// The wire patch-name field is 20 UNTERMINATED bytes (firmware layout):
+// printing it as a C string emits the garbage after the padded name (Bitwig
+// debug page showed "name ?h?..." mojibake). Keep printable ASCII, trim the
+// space padding - the same rule the panel display applies.
+static void wireName(char *out, size_t cap, const unsigned char *wp)
+{
+    size_t k = 0;
+    for (int i = 0; i < p5::P5_NAME_LEN && k + 1 < cap; i++)
+    {   const unsigned char ch = wp[i];
+        if (ch < 32 || ch > 126) continue;
+        out[k++] = (char)ch; }
+    while (k && out[k - 1] == ' ') k--;
+    out[k] = 0;
+}
+
 void buildDebugText(GuiCore &c)
 {
     Plugin *P = c.plugin;
@@ -860,9 +885,12 @@ void buildDebugText(GuiCore &c)
         va_end(ap);
         if (n > 0 && c.dbg[n - 1] == '\n') {} else if (n < (int)sizeof c.dbg - 8) { c.dbg[n++] = '\n'; }
     };
-    const char *name = "";
+    char dbgName[24]; dbgName[0] = 0;
     {   const std::string cur = P->currentFile();
-        name = cur.empty() ? (const char *)P->engine.patch().raw + p5::P5_NAME : cur.c_str(); }
+        if (!cur.empty()) std::snprintf(dbgName, sizeof dbgName, "%.20s", cur.c_str());
+        else wireName(dbgName, sizeof dbgName,
+                      (const unsigned char *)P->engine.patch().raw + p5::P5_NAME); }
+    const char *name = dbgName;
     line("Muhammad build: %s", P5_BUILD_INFO);
     {   const clap_host_t *hh = P->host;
         const char *nm = (hh && hh->name) ? hh->name : "?";
@@ -888,8 +916,8 @@ void buildDebugText(GuiCore &c)
          c.askLastRet < 0 ? "none" : (c.askLastRet ? "ACCEPTED" : "REFUSED"),
          c.topTries, (int)c.giveUpOnHost,
          (int)((float)c.h > (float)c.w * p5ui::kPanelH / p5ui::kPanelW + 3.f));
-    line("trim readback: 0x%lx now %ux%u   (get_size was called %d times)",
-         c.trimWid, c.trimAfterW, c.trimAfterH, c.getSizeCalls);
+    line("trim readback: 0x%lx now %ux%u ineff %d  (get_size was called %d times)",
+         c.trimWid, c.trimAfterW, c.trimAfterH, c.trimIneffective, c.getSizeCalls);
     line("window: win %ux%u  parent %ux%u  ancestor %ux%u",
          c.w, c.h, c.parW, c.parH, c.ancW, c.ancH);
     line("audio: sr %.0f  block %u  oversample %d  polyphony %d  live %u  simd %s",
