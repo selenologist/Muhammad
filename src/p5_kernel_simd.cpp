@@ -41,8 +41,13 @@ inline VI isub(VI a, VI b) { return simde_mm256_sub_epi32(a, b); }
 inline VI iand(VI a, VI b) { return simde_mm256_and_si256(a, b); }
 inline VI ixor(VI a, VI b) { return simde_mm256_xor_si256(a, b); }
 inline VI iieq(VI a, VI b) { return simde_mm256_cmpeq_epi32(a, b); }
-inline VI isll(VI a, int c) { return simde_mm256_slli_epi32(a, c); }
-inline VI isrli(VI a, int c) { return simde_mm256_srli_epi32(a, c); }
+// Shift counts are TEMPLATE CONSTANTS: x86 emits the immediate psll/psrl as
+// before, and clang/ARM's vshlq_n_* NEON macros (which SIMDe maps to on
+// arm64) demand a compile-time constant - a runtime `int c` there was the
+// "must be a constant integer" wall in the macOS CI leg. Every call site
+// already passes a literal.
+template <int C> inline VI isll(VI a)  { return simde_mm256_slli_epi32(a, C); }
+template <int C> inline VI isrli(VI a) { return simde_mm256_srli_epi32(a, C); }
 inline V andf(V a, V b) { return simde_mm256_and_ps(a, b); }
 inline V andnotf(V a, V b) { return simde_mm256_andnot_ps(a, b); }   // ~a & b
 inline V xorf(V a, V b) { return simde_mm256_xor_ps(a, b); }
@@ -60,7 +65,7 @@ inline V negf(V a) { return xorf(a, spl(-0.0f)); }
 // two 16-bit halves (each exact as float) and round once at the end.
 inline V u2f(VI u)
 {
-    V hi = simde_mm256_cvtepi32_ps(isrli(u, 16));         // exact, < 2^16
+    V hi = simde_mm256_cvtepi32_ps(isrli<16>(u));         // exact, < 2^16
     V lo = simde_mm256_cvtepi32_ps(iand(u, spli(0xFFFF)));
     return add(mul(hi, spl(65536.0f)), lo);
 }
@@ -139,7 +144,7 @@ inline V pitchRatioV(V x)                                      // p5_pitch_ratio
     VI i = cvtf2u(pos);
     V t0 = gather(PW_P5_EXP2, i), t1 = gather(PW_P5_EXP2, iadd(i, spli(1)));
     V ratio = add(t0, mul(sub(t1, t0), sub(pos, cvti2f(i))));
-    V scale = castsi(isll(iadd(o, spli(127)), 23));            // 2^octave through the exponent
+    V scale = castsi(isll<23>(iadd(o, spli(127))));            // 2^octave through the exponent
     return mul(ratio, scale);
 }
 
@@ -271,12 +276,12 @@ void P5_SIMD_SYMBOL(Engine &e, uint32_t mask, int32_t *out, uint32_t n)
         // p5_fast_noise32 across lanes
         {
             VI s = h.noise;
-            s = ixor(s, isll(s, 13));
-            s = ixor(s, isrli(s, 17));
-            s = ixor(s, isll(s, 5));
+            s = ixor(s, isll<13>(s));
+            s = ixor(s, isrli<17>(s));
+            s = ixor(s, isll<5>(s));
             h.noise = s;
         }
-        const V noise = sub(mul(cvti2f(isrli(h.noise, 8)), spl(1.0f / 16777216.0f)), spl(0.5f));
+        const V noise = sub(mul(cvti2f(isrli<8>(h.noise)), spl(1.0f / 16777216.0f)), spl(0.5f));
 
         const VI db = p[P5_WHEEL_FREQ_B] ? wheelIncV(ib, wheelPitch) : ib;
         const VI pwB = pwOfV(p[P5_WHEEL_PW_B] ? add(parF[F_PWMB], lfo) : parF[F_PWMB]);
