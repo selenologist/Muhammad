@@ -70,10 +70,16 @@ case "$(uname -s)" in
 esac
 if [ "$(uname)" = "Darwin" ]; then
     # AUv2 wrapper: Apple's AudioUnitSDK (BSD-3), cloned next to the others
-    if [ ! -d "$WORK/AudioUnitSDK" ]; then
-        # pinned: CI's unpinned HEAD hit AudioUnitSDK's C++20 migration
-        # (std::span, concept/requires) while the wrapper defaulted to C++17.
-        git clone -q --depth 1 --branch AudioUnitSDK-1.0.0 \
+    # pinned 1.4.0: layout AND language must satisfy the wrapper.
+    # base_sdks probes <root>/src/AudioUnitSDK; tag 1.0.0 keeps sources in
+    # Source/ (capital) and fails that probe; HEAD's headers moved to C++20
+    # mid-branch. 1.4.0 = the src/ layout the wrapper checks, still needs
+    # C++20, which CLAP_WRAPPER_CXX_STANDARD=20 below grants. (Verified by
+    # local clone forensics + base_sdks.cmake:244.) Existence-check on the
+    # LAYOUT the wrapper checks, so a stale wrong-layout cache self-heals.
+    if [ ! -d "$WORK/AudioUnitSDK/src/AudioUnitSDK" ]; then
+        rm -rf "$WORK/AudioUnitSDK"
+        git clone -q --depth 1 --branch AudioUnitSDK-1.4.0 \
             https://github.com/apple/AudioUnitSDK "$WORK/AudioUnitSDK"
     fi
     # C++20 for the whole wrapper build on mac (the SDK needs it; vst3sdk and
