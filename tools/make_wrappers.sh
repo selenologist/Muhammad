@@ -118,10 +118,18 @@ for cand in Release/muhammad.vst3 Debug/muhammad.vst3 muhammad.vst3 \
              Release/muhammad.component Debug/muhammad.component muhammad.component; do
     [ -e "$cand" ] && cp -R "$cand" "$DIST/" && say "collected $cand"
 done
+# standalone: flat executable on Linux/Windows, but a muhammad.app BUNDLE
+# DIRECTORY on macOS (wrap_standalone.cmake sets BUNDLE TRUE + .app). The old
+# "skip if directory" guard - right for the exes - silently dropped the .app,
+# shipping a mac wrappers zip with no standalone host at all (user-found).
 for cand in muhammad muhammad.exe Release/muhammad Release/muhammad.exe \
              Debug/muhammad Debug/muhammad.exe Release/muhammad.app \
              Debug/muhammad.app muhammad.app; do
-    [ -x "$cand" ] && [ ! -d "$cand" ] && cp "$cand" "$DIST/" && say "collected standalone $cand"
+    if [ -d "$cand" ]; then
+        cp -R "$cand" "$DIST/" && say "collected standalone bundle $cand"
+    elif [ -x "$cand" ]; then
+        cp "$cand" "$DIST/" && say "collected standalone $cand"
+    fi
 done
 # Keep dist/wrappers LOOSE: actions/upload-artifact always wraps artifacts in
 # one zip of its own - a self-made zip inside produced a zip-of-a-zip (user-
