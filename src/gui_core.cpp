@@ -830,7 +830,9 @@ bool coreMirrorSlot(GuiCore &c, int slotW, int slotH, uint32_t &outW, uint32_t &
     {   c.resizeRequests++;
         std::fprintf(stderr, "[p5gui] slot %dx%d taller than aspect; asked host for %dx%u (rr %d)\n",
                      slotW, slotH, slotW, wantH, c.resizeRequests);
-        c.hostGui->request_resize(c.plugin->host, slotW, wantH);
+        const bool ok = c.hostGui->request_resize(c.plugin->host, slotW, wantH);
+        std::fprintf(stderr, "[p5gui] request_resize(%d,%u) -> host %s\n",
+                     slotW, wantH, ok ? "ACCEPTED" : "REFUSED");
     }
     return true;
 }
@@ -881,7 +883,9 @@ void coreAncestorAsk(GuiCore &c, uint32_t parW, uint32_t parH,
     {
         c.lastAskMs = nowMs;
         c.resizeRequests++;
-        c.hostGui->request_resize(c.plugin->host, c.parW, c.ancH);
+        const bool ok2 = c.hostGui->request_resize(c.plugin->host, c.parW, c.ancH);
+        std::fprintf(stderr, "[p5gui] ancestor ask(%u,%u) -> host %s\n",
+                     c.parW, c.ancH, ok2 ? "ACCEPTED" : "REFUSED");
     }
 }
 

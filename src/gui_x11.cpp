@@ -91,6 +91,8 @@ struct Ctx : GuiCore
     p5ui::Gui gui{};
     bool hasGui = false;
     bool pointerGrabbed = false;    // XGrabPointer is in flight
+    int  topTries = 0;              // top-level (host window) shrink budget
+    long topNextMs = 0;
 };
 
 Ctx *ctxFrom(const clap_plugin_t *p)
@@ -145,6 +147,40 @@ void pump(Ctx &c)
             if (coreMirrorSlot(c, pa.width, pa.height, ow, oh))
             {   XResizeWindow(c.dpy, c.win, ow, oh);
                 dirty = true; }
+            // Hosts that hand out a square slot and refuse to shrink it
+            // (Bitwig: ignores our aspect hints; its drag keeps the launch
+            // aspect forever) still react to WM-side resizes of their OWN
+            // top-level window - so when the host GUI service failed us,
+            // trim the ancestor's excess ourselves. Budget 2, re-armed by
+            // any configure.
+            const long wantH = (long)(pa.width * p5ui::kPanelH / p5ui::kPanelW);
+            const bool askedAndRefused = !c.hostGui || !c.hostGui->request_resize ||
+                                         c.resizeRequests >= 3;
+            if (pa.height > wantH + 40 && c.topTries < 2 && askedAndRefused)
+            {
+                const long t = nowMs();
+                if (t >= c.topNextMs)
+                {
+                    c.topNextMs = t + 1500;
+                    Window top = c.parent, r2, up, *k = nullptr; unsigned n2 = 0;
+                    for (int guard = 0; guard < 8; guard++)
+                    {
+                        if (!XQueryTree(c.dpy, top, &r2, &up, &k, &n2)) break;
+                        if (k) XFree(k);
+                        if (up == 0 || up == top || up == r2) break;   // r2 == root
+                        top = up;
+                    }
+                    XWindowAttributes ta{};
+                    if (XGetWindowAttributes(c.dpy, top, &ta) && ta.width > 1)
+                    {   c.topTries++;
+                        const int nh = ta.height - (pa.height - (int)wantH);
+                        std::fprintf(stderr, "[p5gui] host kept slot %dx%d; shrinking top-level 0x%lx %dx%d -> %dx%d (try %d)\n",
+                                     pa.width, pa.height, (unsigned long)top,
+                                     ta.width, ta.height, ta.width, nh, c.topTries);
+                        XResizeWindow(c.dpy, top, ta.width, nh > (int)wantH ? nh : (int)wantH);
+                    }
+                }
+            }
         }
     }
     // Bitwig sizes our immediate container to the aspect we report; wasted
@@ -190,6 +226,7 @@ void pump(Ctx &c)
                     c.w = (uint32_t)ev.xconfigure.width;
                     c.h = (uint32_t)ev.xconfigure.height;
                     c.resizeRequests = 0;   // host answered (or user dragged): renegotiate
+                    c.topTries = 0;
                     dirty = true;
                 }
                 break;

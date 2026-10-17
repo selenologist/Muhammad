@@ -352,13 +352,22 @@ Release with all artifacts when a `v*` tag is pushed.
 
 ## Window sizing & debug page (v1.13.3)
 
-Hosts hand out slots that do not match the panel aspect (Bitwig on Linux
-gives 1280x1280 until asked — and often keeps not asking back). Policy:
-**the slot is always filled** — a taller window renders the panel pinned to
-the top plus a gradient well with the MUHAMMAD wordmark beneath, never host
-black letterbox. In parallel we still `request_resize` the host toward the
-exact aspect (budget 3 attempts, renegotiated whenever any configure
-arrives), so cooperating hosts get the tight window automatically.
+Hosts hand out slots that do not match the panel aspect — Bitwig on Linux
+opens 1280x1280 and its aspect-locked drag can never escape that launch
+ratio. The window is therefore **made right-sized**, in layers:
+
+1. `request_resize` toward the exact panel aspect (budget 3, re-armed by any
+   configure). Cooperative hosts just resize and we mirror them.
+2. When the host kept the oversized slot anyway, the X11 shim walks its own
+   window ancestry to the host's **top-level** window and trims the excess
+   height there (budget 2, +1.5 s throttle). JUCE hosts honor WM-side
+   resizes of their windows even while their own drag handlers lock aspect;
+   the trim preserves the host's chrome, subtracting exactly the dead band.
+3. Only while none of the above has taken effect does the extra area exist —
+   and it is painted as chassis (gradient well + MUHAMMAD wordmark), never
+   host-black, so even a stubborn host looks designed rather than broken.
+
+Clicking the status/build strip (bottom edge, right side) opens the
 
 Clicking the status/build strip (bottom edge, right side) opens the
 Surge-style **DEBUG INFO page**: build stamp, gui api + host clap.gui
