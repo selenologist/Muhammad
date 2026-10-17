@@ -25,6 +25,8 @@ int main(int argc, char **argv)
     auto *getf = entry->get_factory;
     auto *factory = (const clap_plugin_factory_t *)getf(CLAP_PLUGIN_FACTORY_ID);
     const clap_plugin_descriptor_t *desc = factory->get_plugin_descriptor(factory, 0);
+    static const clap_plugin_gui_t *g_gui = nullptr;      // shared with lambdas
+    static const clap_plugin_t *g_plugin = nullptr;
     clap_host_t host{};
     host.clap_version = CLAP_VERSION_INIT;
     static const clap_host_gui_t probeHostGui = {
@@ -36,13 +38,17 @@ int main(int argc, char **argv)
                          lie ? "accept (will not honour)" : "refuse");
             return lie; },                                                   // request_resize
         [](const clap_host_t *) -> bool { return true; },                     // request_show
-        [](const clap_host_t *) -> bool { return true; },                     // request_hide
+        [](const clap_host_t *) -> bool {                       // request_hide (JUCE-style obey)
+            std::fprintf(stderr, "[probe] host request_hide -> hiding gui\n");
+            if (g_gui && g_plugin) g_gui->hide(g_plugin);   // plugin ignores iff detached
+            return true; },
         [](const clap_host_t *, bool) {}                                      // closed
     };
     host.get_extension = [](const clap_host_t *, const char *id) -> const void *
     {   return (!strcmp(id, CLAP_EXT_GUI)) ? (const void *)&probeHostGui : nullptr; };
     if (const char *hn = getenv("P5_PROBE_HOSTNAME")) host.name = hn;
     const clap_plugin_t *plugin = factory->create_plugin(factory, &host, desc->id);
+    g_plugin = plugin;
     if (!plugin->init(plugin)) { std::printf("init fail\n"); return 2; }
     plugin->activate(plugin, 44100.0, 512.0, 1u /* steady */);
 
@@ -55,6 +61,7 @@ int main(int argc, char **argv)
     XSync(d, False);
 
     auto *gui = (const clap_plugin_gui_t *)plugin->get_extension(plugin, CLAP_EXT_GUI);
+    g_gui = gui;
     if (!gui) { std::printf("no gui ext\n"); return 4; }
     const bool floatMode = getenv("P5_GUI_MODE") && !strcmp(getenv("P5_GUI_MODE"), "float");
     gui->create(plugin, CLAP_WINDOW_API_X11, floatMode);

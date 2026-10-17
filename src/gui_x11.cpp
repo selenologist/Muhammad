@@ -90,6 +90,7 @@ struct Ctx : GuiCore
     GLXContext gl = nullptr;
     Atom wmDelete = None;
     bool floating = false;
+    bool keepVisible = false;                 // float: host show/hide must not unmap us
     bool wantFloat = false;                   // deferred DETACH (see pump tail)                    // clap gui floating mode: we own the window
     NVGcontext *vg = nullptr;
     p5ui::Gui gui{};
@@ -360,7 +361,9 @@ void pump(Ctx &c)
                         (Atom)ev.xclient.data.l[0] == c.wmDelete)
                     {   std::fprintf(stderr, "[p5gui] floating window closed by user\n");
                         if (c.hostGui && c.hostGui->closed && c.plugin && c.plugin->host)
+                        {   c.keepVisible = false;   // user killed it: nothing to guard
                             c.hostGui->closed(c.plugin->host, false);   // host stays in sync
+                        }
                         unregisterTimer(c);
                         XUnmapWindow(c.dpy, c.win);
                         c.mapped = false;
@@ -511,7 +514,20 @@ void switchToFloat(Ctx &c)
     {   XMapWindow(c.dpy, c.win);
         XMapRaised(c.dpy, c.win);
         c.mapped = true;
+        c.keepVisible = true;   // the host does NOT own this window anymore
         render(c);
+        // Bitwig otherwise keeps the wrapper window open - empty, black -
+        // until the track is deleted (user-measured). Ask the host to hide
+        // the GUI slot it no longer hosts; if it refuses, announce the
+        // connection as lost per spec (was_destroyed=true: its follow-up
+        // gui_destroy is survived - the float window is ours).
+        const clap_host_t *hh = c.plugin ? c.plugin->host : nullptr;
+        if (c.hostGui && c.hostGui->request_hide && hh && c.hostGui->request_hide(hh))
+            std::fprintf(stderr, "[p5gui] asked host to hide the empty wrapper\n");
+        else if (c.hostGui && c.hostGui->closed && hh)
+        {   std::fprintf(stderr, "[p5gui] request_hide unavailable -> closed(host)\n");
+            c.hostGui->closed(hh, true);
+        }
     }
     else std::fprintf(stderr, "[p5gui] mid-session float setup FAILED (blank slot)\n");
 }
@@ -769,6 +785,10 @@ bool gui_hide(const clap_plugin_t *p)
     if (auto *s0 = static_cast<Plugin *>(p->plugin_data)) s0->trail("gui_hide");
     auto *c = ctxFrom(p);
     if (!c || !c->win) return false;
+    if (c->keepVisible)
+    {   std::fprintf(stderr, "[p5gui] host hide ignored: window is DETACHED\n");
+        return true;                          // float window stays on screen
+    }
     unregisterTimer(*c);
     XUnmapWindow(c->dpy, c->win);
     c->mapped = false;
