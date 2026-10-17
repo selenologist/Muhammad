@@ -70,21 +70,24 @@ case "$(uname -s)" in
 esac
 if [ "$(uname)" = "Darwin" ]; then
     # AUv2 wrapper: Apple's AudioUnitSDK (BSD-3), cloned next to the others
-    # pinned 1.4.0: layout AND language must satisfy the wrapper.
-    # base_sdks probes <root>/src/AudioUnitSDK; tag 1.0.0 keeps sources in
-    # Source/ (capital) and fails that probe; HEAD's headers moved to C++20
-    # mid-branch. 1.4.0 = the src/ layout the wrapper checks, still needs
-    # C++20, which CLAP_WRAPPER_CXX_STANDARD=20 below grants. (Verified by
-    # local clone forensics + base_sdks.cmake:244.) Existence-check on the
-    # LAYOUT the wrapper checks, so a stale wrong-layout cache self-heals.
-    if [ ! -d "$WORK/AudioUnitSDK/src/AudioUnitSDK" ]; then
+    # Pinned AudioUnitSDK-1.3.0 - the newest tag the macos-14 runner's
+    # Xcode-15.4 toolchain can compile. Tag forensics (local clones, real
+    # greps): 1.0.0 keeps sources in Source/ (fails base_sdks' src/ probe);
+    # 1.1.0/1.2.0 are src/ + C++17-clean; 1.3.0 adds std::span/concepts
+    # (C++20 - granted below); 1.4.0 adds std::expected (C++23, absent from
+    # clang 15's libc++ - the CI error) . So: 1.3.0 + CLAP_WRAPPER_CXX_STANDARD=20.
+    # Upgrading the job to macos-15/Xcode16 would let the pin move forward.
+    # Layout guard + pin marker: a stale wrong-shape OR wrong-tag cache self-heals.
+    if [ ! -d "$WORK/AudioUnitSDK/src/AudioUnitSDK" ] || \
+       [ ! -f "$WORK/AudioUnitSDK/.pinned-AudioUnitSDK-1.3.0" ]; then
         rm -rf "$WORK/AudioUnitSDK"
-        git clone -q --depth 1 --branch AudioUnitSDK-1.4.0 \
+        git clone -q --depth 1 --branch AudioUnitSDK-1.3.0 \
             https://github.com/apple/AudioUnitSDK "$WORK/AudioUnitSDK"
+        touch "$WORK/AudioUnitSDK/.pinned-AudioUnitSDK-1.3.0"
     fi
-    # C++20 for the whole wrapper build on mac (the SDK needs it; vst3sdk and
-    # the wrapper both support >=17 per their own guard) + deployment 12.0 so
-    # libc++'s availability-marked std::span compiles under 10.13 default.
+    # C++20 for the whole mac wrapper build (1.3.0 needs span/concepts;
+    # vst3sdk and the wrapper support >=17 by their own guard), deployment
+    # 12.0 for the span-era availability annotations.
     EXTRA+=(-DCLAP_WRAPPER_BUILD_AUV2=ON -DAUDIOUNIT_SDK_ROOT="$WORK/AudioUnitSDK"
             -DCLAP_WRAPPER_CXX_STANDARD=20 -DOSX_DEPLOYMENT_TARGET=12.0)
 fi
