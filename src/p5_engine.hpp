@@ -26,20 +26,27 @@ struct Env { float value; int32_t stage; };   // p5_env_t: 0 off, 1 attack, 2 de
 
 // Voice bookkeeping from voice.c's voice_t (the fields this path touches)
 struct VoiceState {
-    uint8_t note, vel, gate, active, stage;   // stage: the track ADSR's
-    int32_t env, envOut;                      // Q24 / Q15
-    int32_t pitch16, pitchCur, fine;
+    uint8_t note, vel, gate, active;
+    int32_t pitch16, pitchCur, fine;          // pitchCur: the allocation's last pitch
     uint32_t age;
     uint8_t mvel;
 };
 
-// per-voice block parameters: p5_render_params_t of eng_prophet_test.c
+// The part-wide parameter math is a function of the per-sample knob state, so
+// it lives in a per-sample broadcast row (ppS_) next to the envelopes/pitch.
+enum PartP { PP_CUT, PP_K, PP_FG, PP_ENVAMT, PP_PAENV, PP_PAB, PP_PFENV, PP_PFB,
+             PP_PWENV, PP_PWB, PP_PWMA, PP_PWMB, PP_LA, PP_LB, PP_LN, PP_FB,
+             PP_COARSEA, PP_COARSEB, PP_ABSB, PP_FINEBS, PP_STEPE, PP_N };
+// per-sample envelope rate sets (built in partSample from the live knob state)
+struct EnvRates
+{
+    float atk, tgt, expD, expR, ssmD, ssmR;
+    int ssm;
+};
+// per-voice parameters that are genuinely per-NOTE (velocity scale): constant
+// between note events, so they stay per-call. Everything else is per-sample.
 struct LaneParams {
-    float f0, a0, f1, a1, cut, k, filterGain, filterVel, ampVel, envAmount;
-    float paEnv, paB, pfEnv, pfB, pwEnv, pwB, pwmA, pwmB, la, lb, ln;
-    float amp0, amp1;                         // m.amp0/m.amp1, Q15 as float
-    float fb;                                 // FEEDBACK loop gain (byte 133 * 0.9/127)
-    uint32_t ia, ib;
+    float filterVel, ampVel;
 };
 
 enum class KernelMode { Scalar, Wide, Auto };
@@ -79,6 +86,7 @@ public:
     void editRaw(int idx, int v) {               // native editor write: exact byte, no state reset
         if (idx >= 0 && idx < (int)RAW_MAX) {
             patch_.raw[idx] = (uint8_t)v;
+            paramDirty_ = true;
             trackAccept();
             if (idx == P5_LFO_INITIAL) wheelSeed();   // still the wheel's position, if untouched
         }
@@ -111,7 +119,8 @@ public:
     void setPcMode(bool on) { pcMode_ = on; if (on) wheelSeed(); }
     void wheelSeed() { if (pcMode_ && !wheelTaken_) mw_ = valueOf(P5_LFO_INITIAL); }
     void wheelReset() { wheelTaken_ = false; if (pcMode_) wheelSeed(); else mw_ = 0; }
-    void setModWheel(int v) { if (pcMode_) wheelTaken_ = true; mw_ = i_clamp(v, 0, 127); }
+    void setModWheel(int v) { if (pcMode_) wheelTaken_ = true; mw_ = i_clamp(v, 0, 127);
+                              if (mw_ != wheelSeen_) { wheelSeen_ = mw_; } }
     // A saved patch must sound the way it sounds. Once the real wheel has
     // taken over (pc mode), the wire INITIAL byte - the ONLY thing that
     // persists - is stale (typically the 0 it loads at), so save-without-
@@ -120,8 +129,8 @@ public:
     void commitWheelToPatch()
     {   if (pcMode_ && wheelTaken_) editRaw(P5_LFO_INITIAL, mw_); }
     int wheelPos() const { return mw_; }
-    void setAftertouch(int v) { at_ = i_clamp(v, 0, 127); }
-    void setOverlay(int i, int v) { if (i >= 0 && i < 8) e_[i] = (int16_t)v; }
+    void setAftertouch(int v) { at_ = i_clamp(v, 0, 127); paramDirty_ = true; }
+    void setOverlay(int i, int v) { if (i >= 0 && i < 8) { e_[i] = (int16_t)v; paramDirty_ = true; } }
     int overlay(int i) const { return e_[i]; }
     void setPolyphony(int n) { poly_ = n == 5 ? 5 : MAXV; }  // 5: the firmware's single-core cap
     // 1 = the firmware's base rate (the bit-exact path); 2 = the firmware's
@@ -165,7 +174,7 @@ public:
     // BRIGHTNESS (Rev4 CC74): added to cutoff.
     void setDriftDepth(int d) { editRaw(P5_VINTAGE, d < 0 ? 0 : d > 127 ? 127 : d); }
     int  driftDepth() const { return valueOf(P5_VINTAGE); }
-    void setBrightness(int b) { brightness_ = b < 0 ? 0 : b > 127 ? 127 : b; }
+    void setBrightness(int b) { brightness_ = b < 0 ? 0 : b > 127 ? 127 : b; paramDirty_ = true; }
     void setVoiceTrim(int lane, int osc, int scale, int offset);
     void voiceTrim(int lane, int osc, int *scale, int *offset) const;
     const int32_t *lastMix() const { return mixTap_; }   // pre-post block (debug)
@@ -185,10 +194,11 @@ private:
     struct Lane {
         VoiceState v;
         uint32_t vph[2];                      // voice_t ph[]: only the unison seeds ever advance it
-        Env fenv, aenv;                       // the engine's own envelopes
-        int32_t drift, filterDrift, ampDrift, envDrift;   // vintage mismatch, fixed per note
-        float filterPrev, ampPrev;            // f0/a0 carried across blocks
-        int32_t glidePitch;                   // s->glide_pitch (engine glide)
+        Env fenv, aenv;                       // the engine's own envelopes (ticked per sample)
+        int32_t envDrift;                     // (kept: the note-on roulette slot, always 0)
+        float glideF, curF;                   // engine glide + track glide, 1/16-st, continuous
+        float vca, fadeT;                     // VCA onset ramp / death fade, per sample
+        float wP, wF, wA;                     // per-lane drift walks (was wP_[i] etc)
         int ch = 0;                           // MIDI channel of the sounding note (MPE)
         int16_t trimS[2] = {64, 64};          // per-OSC V/oct slope trim, 64 = neutral
         int16_t trimO[2] = {64, 64};          // per-OSC V/oct offset trim
@@ -199,35 +209,29 @@ private:
 
     int valueOf(int k) const { return patch_.raw[k] > 127u ? 127 : patch_.raw[k]; }
     int slotCount() const;                    // p5_cap / trk_nvoice
-    void p5_update_bend();
-    void block();                             // p5_block (part->value, bend, wheel)
-    void modSamples(uint32_t inc, float amount, float mix, uint32_t entries);
-    float envTickEngine(Env &e, int gate, int a, int d, int s, int r, int32_t variation, int ssm);
-    int32_t adsrTick(Lane &l);                // voice.c env_tick (track ADSR; preset defaults)
+    // (the old p5_block/adsrTick/tickEnvelopes control ticks are gone: the
+    // whole control path advances per host sample inside process())
     void synthNoteOn(int lane, int voiceWas); // p5_note_on
     void voiceStart(int lane, int note, int vel, uint8_t mvel, int *voiceWas, int *sounding);
     void polyNoteOn(int note, int vel);
     void monoNoteOn(int note, int vel);
     int monoPick() const;
-    void tickEnvelopes(Lane &l, int gate);
-    bool renderLane(Lane &l, int32_t mPitch16, int32_t mFine, int32_t mCutoff,
-                    int32_t mShape, int32_t mAmp0, int32_t mAmp1, int32_t *out, uint32_t n);
+    bool renderLane(Lane &l, int32_t *out, uint32_t n);   // velocity scale + death fade
+    void partSample(uint32_t i);                 // ppS_ column i: knob state -> DSP params
 
     Patch patch_;
     int16_t e_[8] = {0, 0, 0, 0, 0, 0, 0, 0}; // P_E0..P_E7 editor overlays
-    uint8_t value_[55] = {0};                 // part->value: p5_value-clamped knobs
+    float fval_[55] = {0};                    // part->value, continuous (float slew, no byte stair)
     int brightness_ = 0;
-    static int32_t applyTrim(const Lane &l, int32_t p16, int osc);
+    static float applyTrim(const Lane &l, float p16, int osc);   // float now: pitch is continuous
 
-    float wP_[MAXV], wF_[MAXV], wA_[MAXV];    // DRIFT thermal walks: pitch, cutoff, amp
-    uint32_t wSt_[MAXV];                      // walk LCGs (separate from the osc noise state)
+    uint32_t wSt_[MAXV];                      // walk LCGs (separate from the osc noise stream)
 
-    uint32_t lfoPhase_ = 0;
+    double lfoPhaseD_ = 0;                  // fractional LFO phase (per-sub-sample float rate)
     int32_t lastPitch_ = 0, modNoise_ = 0;
     float wheel_[CTL_ * 2], wheelPitch_[CTL_ * 2];   // CTL * oversample entries
     uint32_t wheelLen_ = CTL_;
-    float envCut_ = 1.0f / 1024.0f;         // ownenv release kill (tickEnvelopes)
-    int32_t trackKill_ = 1 << 12;           // track ADSR kill, Q24 (adsrTick)
+    float envCut_ = 1.0f / 1024.0f;         // release kill (env tick)
     int32_t dcX1_ = 0, dcY1_ = 0;
     int32_t dcX1r_ = 0, dcY1r_ = 0;           // the R-side coupling cap, same law
     int panWidth_ = 0;                        // 0..127
@@ -238,19 +242,20 @@ private:
     int poly_ = MAXV;
     int tuneCents_ = 0;
     bool smooth_ = false;
+    bool paramDirty_ = true;                  // partSample() must rebuild the ppS_ rows
+    float bendTgt_[16] = {};
+    int32_t bendRawSeen_[16] = {};
+    int wheelSeen_ = -1;
     bool pcMode_ = false;
     bool wheelTaken_ = false;
-    float slew_[55] = {};
     int tuneUnits_ = 0;
     int voiceMode_ = 0, voiceModeOverride_ = -1;
     int prio_ = 1, detune_ = 0;               // p5_track_accept
     int monoNote_ = 0; uint8_t monoStack_[MAXV]; uint32_t nmono_ = 0;
     uint32_t live_ = 0;
 
-    // the track ADSR the presets leave at their defaults (preset_t: env 0,0,127,0)
-    int adsrA_ = 0, adsrD_ = 0, adsrS_ = 127, adsrR_ = 0;
-
-    int32_t bendRaw_[16] = {}, bendQ8_[16] = {};
+    int32_t bendRaw_[16] = {};
+    float bendF_[16] = {};                  // continuous bend, Q8 cents, per-sample slew
     int16_t rUp_[16], rDn_[16];        // per-channel host range, Q8 cents, -1 = unset
     int16_t rUpDef_ = -1, rDnDef_ = -1;  // editor default, Q8, -1 = fall back to wire
     int16_t tuneDev_[128] = {};          // microtuning table, 1/16 semitone
@@ -261,6 +266,7 @@ private:
     int16_t rangeDnQ8(int ch) const { return rDn_[ch] >= 0 ? rDn_[ch] : (rDnDef_ >= 0 ? rDnDef_ : wireRangeQ8()); }
     int mw_ = 0, at_ = 0;
     double srScale_ = 1.0;                    // 44100 / host sr
+    double smoothBend_ = 0.008990;            // per-sample bend slew factor (set in activate)
     double hostSr_ = 44100.0;
     int os_ = 1;                              // runtime P5_OVERSAMPLE
     // cutoff->g table: PW_P5_TPT_G verbatim at (44100, 1x) so the bit-exact
@@ -276,6 +282,15 @@ private:
 
     int32_t mixTap_[CTL_];
     Lane lanes_[MAXV];
+    // per-sample control, materialized in process() and read by BOTH kernels
+    // (SoA columns of 8 lanes): the engine has no control-rate grid anymore.
+    float fenvS_[CTL_][MAXV], aenvS_[CTL_][MAXV];   // the two envelopes, this call's samples
+    float vcaS_[CTL_][MAXV];                        // VCA gain: onset ramp / 1 / (1+ampDrift)
+    float fcAddS_[CTL_][MAXV];                      // cutoff adds: filter drift + key-track, /256
+    uint32_t iaS_[CTL_][MAXV], ibS_[CTL_][MAXV];    // per-sample oscillator increments
+    float b16H_[16][CTL_], bfiH_[16][CTL_];         // per-channel bend history this block
+    float ppS_[PP_N][CTL_];                         // part parameters, per host sample
+    EnvRates efr_[CTL_], ear_[CTL_];                // the two env laws, per host sample
     // hot state, struct-of-arrays: the SIMD kernel loads these eight lanes at a time
     uint32_t phaseA_[MAXV], phaseB_[MAXV], noise_[MAXV];
     float fbState_[MAXV] = {};       // FEEDBACK: last sample's VCA out, per voice

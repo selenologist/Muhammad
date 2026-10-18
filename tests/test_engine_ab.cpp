@@ -74,11 +74,21 @@ static void writeWav(const char *path, const std::vector<int32_t> &pcm)
     fclose(f);
 }
 
+// Hann-windowed Goertzel. The audit compares inter-harmonic floors BETWEEN
+// laws/modes; unwindowed Goertzel at half-integer bins is dominated by
+// fundamental/harmonic LEAKAGE (several dB of measurement luck per window
+// position, verified on the old engine), which buried the true -120 dB floor
+// entirely. With the window the numbers are offset-stable and the 1x-vs-2x
+// comparison measures aliasing, not leakage phase.
 static double goertzel(const std::vector<int32_t> &x, double f, int N)
 {
     const double PI = 3.14159265358979323846;
     double w = 2.0 * PI * f / 44100.0, cw = cos(w), coeff = 2.0 * cw, s1 = 0, s2 = 0;
-    for (int i = 0; i < N; i++) { double s0 = (double)x[i] / 32768.0 + coeff * s1 - s2; s2 = s1; s1 = s0; }
+    const double w0 = 2.0 * PI / N;
+    for (int i = 0; i < N; i++) {
+        const double win = 0.5 * (1.0 - cos(w0 * i));
+        double s0 = win * (double)x[i] / 32768.0 + coeff * s1 - s2; s2 = s1; s1 = s0;
+    }
     return sqrt(s1 * s1 + s2 * s2 - coeff * s1 * s2);
 }
 
@@ -202,8 +212,8 @@ int main(int argc, char **argv)
     //      (f0 = 2093 Hz). The engine's BLEP keeps inter-harmonic bins at a
     //      deep floor already; 2x + halfband must not raise it and must lower
     //      it (the fold-back and nonlinear products move above the transition
-    //      band). Assert: both floors below -60 dB vs the fundamental, and the
-    //      2x floor no higher than 1x. ----
+    //      band). Assert: both windowed floors below -100 dB vs the
+    //      fundamental, and the 2x floor no higher than 1x. ----
     {
         double v1[8], v2[8];
         const double f0 = 440.0 * pow(2.0, (96 - 69) / 12.0);
@@ -235,7 +245,7 @@ int main(int argc, char **argv)
         double f1 = 10*log10(p1/(v1[6]*v1[6])), f2 = 10*log10(p2/(v1[6]*v1[6]));
         printf("alias floor (sync saws note 96, inter-harmonic bins): 1x %.1f dB, 2x %.1f dB (%.1f dB cleaner)\n",
                f1, f2, f1 - f2);
-        if (!(f1 < -60.0 && f2 < -60.0 && f2 <= f1 + 0.5)) failures++;
+        if (!(f1 < -100.0 && f2 < -100.0 && f2 <= f1 + 0.5)) failures++;
     }
 
     printf("%s\n", failures ? "A/B: DIFFERENCES FOUND" : "A/B: bit-exact");

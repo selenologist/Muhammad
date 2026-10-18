@@ -95,20 +95,30 @@ void p5KernelScalar(Engine &e, uint32_t mask, int32_t *out, uint32_t n)
         const float gl1 = (float)l.panG[1] * (1.0f / 32768.0f);
         int32_t last = 0;
         for (uint32_t i = 0; i < n; i++) {
-            const float time = (float)i * (1.0f / CTL_);
-            const float fe = c.f0 + (c.f1 - c.f0) * time, ae = c.a0 + (c.a1 - c.a0) * time;
+            // per-sample control, materialized by Engine::process: envelopes,
+            // VCA (onset ramp x amp drift), cutoff adds, pitch increments,
+            // and the part-wide parameter row (knob math is per-sample too)
+            const float fe = e.fenvS_[i][v], ae = e.aenvS_[i][v];
+            const float va = e.vcaS_[i][v], fcAdd = e.fcAddS_[i][v];
+            const uint32_t ia0 = e.iaS_[i][v], ib0 = e.ibS_[i][v];
+            const float ppCut = e.ppS_[PP_CUT][i], ppK = e.ppS_[PP_K][i], ppFG = e.ppS_[PP_FG][i];
+            const float ppEnvAmt = e.ppS_[PP_ENVAMT][i], ppPwA = e.ppS_[PP_PWMA][i], ppPwmB = e.ppS_[PP_PWMB][i];
+            const float ppLa = e.ppS_[PP_LA][i], ppLb = e.ppS_[PP_LB][i], ppLn = e.ppS_[PP_LN][i];
+            const float ppFb = e.ppS_[PP_FB][i], ppPaEnv = e.ppS_[PP_PAENV][i], ppPaB = e.ppS_[PP_PAB][i];
+            const float ppPfEnv = e.ppS_[PP_PFENV][i], ppPfB = e.ppS_[PP_PFB][i];
+            const float ppPwEnv = e.ppS_[PP_PWENV][i], ppPwB = e.ppS_[PP_PWB][i];
             for (uint32_t o = 0; o < os; o++) {          // the firmware's P5_OVERSAMPLE loop
                 const float noise = (float)(fastNoise32(&h.noise) >> 8) * (1.0f / 16777216.0f) - 0.5f;
                 const float lfo = e.wheel_[i * os + o], wheelPitch = e.wheelPitch_[i * os + o];
-                const float gain = ae * c.ampVel * (1.0f + (float)l.ampDrift / 32768.0f);
-            const float amp = (c.amp0 + (c.amp1 - c.amp0) * time) * (1.0f / 32768.0f);
-            const uint32_t db = fWFreqB ? wheelInc(c.ib, wheelPitch) : c.ib;
-                const float b = oscWave(h.ph[1], db, pwOf(c.pwmB + (fWPwB ? lfo : 0.0f)),
+                const float gain = ae * c.ampVel;
+            const float amp = va;
+            const uint32_t db = fWFreqB ? wheelInc(ib0, wheelPitch) : ib0;
+                const float b = oscWave(h.ph[1], db, pwOf(ppPwmB + (fWPwB ? lfo : 0.0f)),
                                         fSawB, fPulB, fTriB, &h.triangle);
                 const float bn = b * 2.0f;
-                uint32_t da = fPolyFreq ? incOf(c.ia, fe * c.paEnv + bn * c.paB) : c.ia;
+                uint32_t da = fPolyFreq ? incOf(ia0, fe * ppPaEnv + bn * ppPaB) : ia0;
                 if (fWFreqA) da = wheelInc(da, wheelPitch);
-                const uint32_t pw = pwOf(c.pwmA + (fPolyPw ? fe * c.pwEnv + b * c.pwB : 0.0f)
+                const uint32_t pw = pwOf(ppPwA + (fPolyPw ? fe * ppPwEnv + b * ppPwB : 0.0f)
                                          + (fWPwA ? lfo : 0.0f));
                 float unused = 0.0f;
                 float a = oscWave(h.ph[0], da, pw, fSawA, fPulA, 0, &unused) + h.syncTail;
@@ -127,11 +137,11 @@ void p5KernelScalar(Engine &e, uint32_t mask, int32_t *out, uint32_t n)
                     h.ph[0] = na;
                 }
                 h.ph[1] = nb;
-                const float x = a * c.la + b * c.lb + noise * c.ln + c.fb * h.fbPrev;
-                float fc = c.cut + fe * c.filterVel * c.envAmount;
-                if (fPolyFilter) fc += fe * c.pfEnv + bn * c.pfB;
+                const float x = a * ppLa + b * ppLb + noise * ppLn + ppFb * h.fbPrev;
+                float fc = ppCut + fcAdd + fe * c.filterVel * ppEnvAmt;
+                if (fPolyFilter) fc += fe * ppPfEnv + bn * ppPfB;
                 if (fWFilter) fc += lfo * 112.0f;
-                const float y = filterCore(h, fastSoftclip(x), fc, c.k, c.filterGain, curtis, tab);
+                const float y = filterCore(h, fastSoftclip(x), fc, ppK, ppFG, curtis, tab);
                 const float vcaF = (y * gain) * amp;    // VCA at the OS rate, so every
                 h.fbPrev += kFbLpA * (vcaF - h.fbPrev); // sub-sample reaches the tap
                 if (os == 1u)            // the firmware-identical int path, untouched

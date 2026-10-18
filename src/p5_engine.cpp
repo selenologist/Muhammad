@@ -3,8 +3,22 @@
 // of melodee firmware/src/voice.c (trk_note_on/off, voice_alloc, voice_start,
 // mono_play, track_render_audio) and the engine's part-level work of
 // eng_prophet_test.c (p5_block, the p5_render parameter math, p5_post).
-// The per-sample synthesis lives in the two kernels; this file is control-rate,
-// so bit-for-bit fidelity at 44.1 kHz costs nothing per sample here.
+//
+// CONTROL RATE: the firmware's 32-sample control tick is gone by owner
+// decision (Oct 2026). Every time-varying control - the two envelopes, the
+// VCA, pitch (bend, glide, drift), the LFO rate/depth/phase and the knob
+// slew - advances once per HOST SAMPLE inside process(), independent of
+// where the host chops its buffers or where events land. The old block-lerp
+// law (tick once per call, interpolate i/32) snapped the ramp endpoint at
+// every partial block - the occasional click at note-on - and the per-call
+// knob update with uint8 value_ stair-quantized the LFO and every slewed
+// parameter. The kernels now read per-sample control arrays materialized
+// here, so scalar and wide stay bit-identical to EACH OTHER (the A/B still
+// certifies that) while the firmware dump comparison is retired as
+// superseded - the same kind of deliberate deviation as the OS decimator.
+// Static per-note math (patch bytes -> coefficients) stays at call rate on
+// block-start knob snapshots: a knob cannot move more than 0.7 ms of its own
+// 10 ms slew between calls, and nothing per-sample reads stale bytes.
 #include <cmath>
 #include <cstring>    // IWYU: memcpy lives here, not in the header chain
 #include "p5_engine.hpp"
@@ -13,6 +27,61 @@
 namespace p5 {
 
 static const int V_POLY = 0, V_MONO = 1, V_LEGATO = 2, V_UNISON = 3;
+
+static inline float f_max(float a, float b) { return a > b ? a : b; }
+
+// ---- continuous table lookups (the byte stair is gone) ----------------------
+static float lutF(const float *t, float x)
+{
+    x = f_clamp(x, 0.0f, 127.0f);
+    const uint32_t i = (uint32_t)x;
+    if (i >= 127u) return t[127];
+    const float f = x - (float)i;
+    return t[i] + (t[i + 1u] - t[i]) * f;
+}
+static float lutU(const uint32_t *t, float x)
+{
+    x = f_clamp(x, 0.0f, 127.0f);
+    const uint32_t i = (uint32_t)x;
+    if (i >= 127u) return (float)t[127];
+    const float f = x - (float)i;
+    return (float)t[i] + ((float)t[i + 1u] - (float)t[i]) * f;
+}
+
+// ---- per-sample envelope law (the old envTickEngine, /32 per tick) ----------
+static EnvRates envRatesF(const float *q, int a, int d, int s, int r, int relOn,
+                         double srScale, int ssm, float variation)
+{
+    const float sc = (float)(srScale * (1.0 / 32.0)) * (1.0f + variation * (1.0f / 32768.0f));
+    EnvRates L;
+    L.ssm  = ssm;
+    L.atk  = lutF(PW_P5_ENV_ATK, q[a]) * sc;
+    L.tgt  = q[s] * (1.0f / 127.0f);
+    L.expD = f_min(lutF(PW_P5_ENV_EXP, q[d]) * sc, 1.0f);
+    const float rB = relOn ? q[r] : 16.0f;
+    L.expR = f_min(lutF(PW_P5_ENV_EXP, rB) * sc, 1.0f);
+    L.ssmD = lutF(PW_P5_ENV_SSM, q[d]) * sc;
+    L.ssmR = lutF(PW_P5_ENV_SSM, rB) * sc;
+    return L;
+}
+
+static inline void envTick1(Env &e, const EnvRates &L, int gate, float cut)
+{
+    if (!gate && e.stage != 0) e.stage = 3;
+    if (e.stage == 1) {
+        e.value += L.atk;
+        if (e.value >= 1.0f) { e.value = 1.0f; e.stage = 2; }
+    } else if (L.ssm && e.stage >= 2) {
+        const float tgt = e.stage == 2 ? L.tgt : 0.0f;
+        const float step = e.stage == 2 ? L.ssmD : L.ssmR;
+        e.value += f_clamp(tgt - e.value, -step, step);
+    } else if (e.stage == 2) {
+        e.value += (L.tgt - e.value) * L.expD;
+    } else if (e.stage == 3) {
+        e.value -= e.value * L.expR;
+    }
+    if (e.stage == 3 && e.value < cut) { e.value = 0.0f; e.stage = 0; }
+}
 
 Engine::Engine(KernelMode mode) : mode_(mode)
 {
@@ -35,12 +104,16 @@ const char *Engine::simdPath() const
 
 void Engine::activate(double sampleRate)
 {
+    paramDirty_ = true;
 #ifdef P5_HAVE_AVX2
     if (__builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma"))
         simdK_ = p5KernelSimdAVX2;   // wide kernel at true AVX2, still contract=off
 #endif
     srScale_ = sampleRate > 0.0 ? 44100.0 / sampleRate : 1.0;
     hostSr_ = sampleRate > 0.0 ? sampleRate : 44100.0;
+    // the old per-call quarter-step bend slew (exact landing, ~2.8 ms) as a
+    // per-sample factor: one 32-step of the same geometric decay per sample
+    smoothBend_ = 1.0 - std::exp(-srScale_ * (std::log(4.0 / 3.0) / 32.0));
     buildTpt();
     if (sampleRate == 44100.0) {
         dcK_ = DC_K_DEFAULT;            // the firmware's P5_DC_K literal, bit for bit
@@ -51,7 +124,7 @@ void Engine::activate(double sampleRate)
         dcK_ = (uint32_t)(k > 0.0 ? k : 0.0);
     }
     dcX1_ = dcY1_ = 0;
-    for (int i = 0; i < 16; i++) { bendRaw_[i] = bendQ8_[i] = 0; rUp_[i] = rDn_[i] = -1; }
+    for (int i = 0; i < 16; i++) { bendRaw_[i] = 0; bendF_[i] = 0; rUp_[i] = rDn_[i] = -1; }
     rUpDef_ = rDnDef_ = -1;
     std::memset(tuneDev_, 0, sizeof tuneDev_);
     tuningActive_ = false;
@@ -61,9 +134,9 @@ void Engine::activate(double sampleRate)
 // Rebuild the cutoff->g table for the internal rate (os_ * hostSr_). The
 // firmware table is tan(pi*fc_i/44100)/(1+tan(pi*fc_i/44100)) per index; the
 // firmware's own P5_OVERSAMPLE=2 variant is the same expression at 2*FS.
-// At (44100, 1x) we use the dumped table verbatim so the bit-exact A/B never
-// sees a recomputed value. (Inverting g -> tan -> rescale -> g keeps every
-// index's cutoff in exact Hertz at any host sample rate.)
+// At (44100, 1x) we use the dumped table verbatim so the scalar/wide A/B
+// never sees a recomputed value. (Inverting g -> tan -> rescale -> g keeps
+// every index's cutoff in exact Hertz at any host sample rate.)
 void Engine::buildTpt()
 {
     if (os_ == 1 && hostSr_ == 44100.0)
@@ -97,7 +170,8 @@ void Engine::buildTpt()
 void Engine::setSmoothing(bool on)
 {
     smooth_ = on;
-    for (uint32_t k = 0; k < 55u; k++) slew_[k] = (float)valueOf((int)k);
+    paramDirty_ = true;
+    if (on) for (uint32_t k = 0; k < 55u; k++) fval_[k] = (float)valueOf((int)k);
 }
 
 void Engine::setTuneCents(int cents)
@@ -112,8 +186,6 @@ void Engine::setReleaseCut(float lin)
 {
     if (lin < 1.0e-9f) lin = 1.0e-9f;
     envCut_ = lin;
-    const long q = (long)(lin * 16777216.0f);
-    trackKill_ = q < 1 ? 1 : (int32_t)q;
 }
 
 void Engine::setOverSample(int os)
@@ -121,7 +193,6 @@ void Engine::setOverSample(int os)
     const int os2 = (os == 2) ? 2 : 1;
     if (os2 == os_) return;
     os_ = os2;
-    wheelLen_ = (uint32_t)(CTL_ * os_);
     buildTpt();
     hbReset(hbMixL_); hbReset(hbMixR_);
 }
@@ -137,13 +208,16 @@ void Engine::trackAccept()
 void Engine::setPatch(const Patch &p)
 {
     patch_ = p;
+    paramDirty_ = true;
     trackAccept();
     wheelTaken_ = false;
     wheelSeed();
     monoNote_ = 0; nmono_ = 0;
     // the part's shared state starts afresh with a new patch (the p5_ready path)
-    lfoPhase_ = 0; modNoise_ = 0; lastPitch_ = 0;
-    for (int i = 0; i < MAXV; i++) { lanes_[i].v.active = 0; lanes_[i].v.gate = 0; }
+    lfoPhaseD_ = 0; modNoise_ = 0; lastPitch_ = 0;
+    for (int i = 0; i < MAXV; i++)
+    {   lanes_[i].v.active = 0; lanes_[i].v.gate = 0;
+        lanes_[i].fadeT = 0.0f; lanes_[i].lastPcm = 0; }
     live_ = 0;
 }
 
@@ -172,6 +246,7 @@ int Engine::slotCount() const
 
 void Engine::silenceReset()
 {
+    paramDirty_ = true;
     for (int i = 0; i < MAXV; i++) {
         Lane &l = lanes_[i];
         std::memset(&l, 0, sizeof l);
@@ -182,14 +257,15 @@ void Engine::silenceReset()
         for (int j = 0; j < 4; j++) z_[j][i] = 0.0f;
         triangle_[i] = 0.0f; syncTail_[i] = 0.0f;
     }
-    lfoPhase_ = 0; lastPitch_ = 0; modNoise_ = 0; dcX1_ = dcY1_ = 0;
+    lfoPhaseD_ = 0; lastPitch_ = 0; modNoise_ = 0; dcX1_ = dcY1_ = 0;
+    for (int i = 0; i < 16; i++) bendF_[i] = 0.0f;
+    for (int k = 0; k < 55; k++) fval_[k] = 0.0f;
     hbReset(hbMixL_); hbReset(hbMixR_);
     live_ = 0; monoNote_ = 0; nmono_ = 0;
     vage_ = 0;   // (the firmware's vage clock is process-global; the A/B harness resets it per scenario)
     for (int i = 0; i < MAXV; i++)
     {
         lanes_[i].trimS[0] = lanes_[i].trimS[1] = lanes_[i].trimO[0] = lanes_[i].trimO[1] = 64;
-        wP_[i] = wF_[i] = wA_[i] = 0.0f;
         wSt_[i] = (uint32_t)(0x9E3779B9u + i * 0x85EBCA6Bu);
     }
 }
@@ -203,9 +279,8 @@ void Engine::synthNoteOn(int lane, int voiceWas)
     if (!voiceWas) {
         std::memset(&l.fenv, 0, sizeof l.fenv);
         std::memset(&l.aenv, 0, sizeof l.aenv);
-        l.filterPrev = l.ampPrev = 0.0f;
-        l.glidePitch = 0; l.lastPcm = 0;
-        l.drift = l.filterDrift = l.ampDrift = l.envDrift = 0;
+        l.glideF = 0.0f; l.lastPcm = 0;
+        l.envDrift = 0;
         fbState_[lane] = 0.f;                          // fresh voice: loop silent
         phaseA_[lane] = l.vph[0];
         phaseB_[lane] = l.vph[1];
@@ -222,11 +297,11 @@ void Engine::synthNoteOn(int lane, int voiceWas)
         }
         noise_[lane] = (uint32_t)(0x5A1793 + (int32_t)l.v.age * 17 + lane * 101);
     }
-    if (!voiceWas) l.glidePitch = lastPitch_ ? lastPitch_ : l.v.pitch16;
+    if (!voiceWas) l.glideF = lastPitch_ ? (float)lastPitch_ : (float)l.v.pitch16;
     lastPitch_ = l.v.pitch16;
     l.fenv.stage = l.aenv.stage = 1;
     // VINTAGE now means DRIFT: the static per-note roulette is retired. The
-    // OU walks in process() are continuous across notes, like a hot board.
+    // OU walks are continuous across notes, like a hot board (per-sample).
     l.envDrift = 0;
     int32_t *st = (int32_t *)&noise_[lane];
     // The firmware burned 4 LCG draws here for the vintage roulette. The
@@ -242,18 +317,18 @@ void Engine::voiceStart(int lane, int note, int vel, uint8_t mvel, int *voiceWas
 {
     Lane &l = lanes_[lane];
     *voiceWas = !l.v.active ? 0 : (l.v.gate ? 2 : 1);
-    *sounding = l.v.active && l.v.stage != 0;
+    *sounding = l.v.active;
     l.v.note = (uint8_t)note;
     l.v.vel = (uint8_t)vel;
     l.v.gate = 1;
     l.v.active = 1;
-    l.v.stage = 1;
     l.v.age = ++vage_;
     l.ch = curCh_;
     l.v.pitch16 = note * 16 + tuneUnits_ + (tuningActive_ ? tuneDev_[i_clamp(note, 0, 127)] : 0);
     l.v.pitchCur = l.v.pitch16;                   // glide_set: the track's glide is off
+    l.curF = (float)l.v.pitch16;
     l.v.mvel = mvel;                              // t->m_vel (mod.c: the note's VEL)
-    if (!*sounding) { l.v.env = 0; l.v.envOut = 0; }
+    if (!*sounding) { l.vca = 0.0f; l.fadeT = 0.0f; }   // the VCA onset ramp restarts
 }
 
 void Engine::polyNoteOn(int note, int vel)
@@ -343,6 +418,7 @@ void Engine::monoNoteOn(int note, int vel)
             l.v.note = (uint8_t)want;                   // legato: new pitch, same envelope
             l.v.pitch16 = want * 16 + tuneUnits_ + (tuningActive_ ? tuneDev_[i_clamp(want, 0, 127)] : 0);
             l.v.pitchCur = l.v.pitch16;
+            l.curF = (float)l.v.pitch16;
             l.v.mvel = (uint8_t)vel;
             if (vel > l.v.vel && nv == 1) l.v.vel = (uint8_t)vel;
             if (patch_.raw[P5_RETRIGGER] & 1u) l.fenv.stage = l.aenv.stage = 1;   // p5_legato
@@ -380,7 +456,7 @@ void Engine::noteOff(int note, int ch)
                 monoNoteOn(next, v0);
             } else {
                 for (int i = 0; i < nv; i++)
-                    if (lanes_[i].v.gate) { lanes_[i].v.gate = 0; lanes_[i].v.stage = 3; }
+                    if (lanes_[i].v.gate) lanes_[i].v.gate = 0;
                 monoNote_ = 0;
             }
         }
@@ -389,55 +465,14 @@ void Engine::noteOff(int note, int ch)
         if (lanes_[i].v.note == note && lanes_[i].v.gate &&
             (ch < 0 || lanes_[i].ch == ch)) {           // MPE: same key, other channel survives
             lanes_[i].v.gate = 0;
-            lanes_[i].v.stage = 3;
         }
 }
 
 void Engine::allNotesOff()
 {
-    for (int i = 0; i < MAXV; i++) {
-        VoiceState &v = lanes_[i].v;
-        v.gate = 0;
-        v.stage = v.active ? 3 : 0;
-    }
+    for (int i = 0; i < MAXV; i++)
+        lanes_[i].v.gate = 0;
     nmono_ = 0; monoNote_ = 0;
-}
-
-// ------------------------------------------------------------- part block ----
-// p5_block: raw-to-DSP clamping is part-wide; envelopes and all voices share it
-void Engine::block()
-{
-    const uint8_t *p = patch_.raw;
-    if (!smooth_) {
-        for (uint32_t k = 0; k < 55u; k++) value_[k] = (uint8_t)valueOf((int)k);
-    } else {
-        // one-pole toward the target, 10 ms time constant (block-rate and
-        // oversampling aware: dt = 32*os_/(srScale-adjusted host sr))
-        const float alpha = 1.0f - (float)std::exp(-32.0 * (double)os_ * srScale_ / 441.0);
-        for (uint32_t k = 0; k < 55u; k++) {
-            const float t = (float)valueOf((int)k);
-            float v = slew_[k] + (t - slew_[k]) * alpha;
-            if (v > t ? (v - t < 0.5f) : (t - v < 0.5f)) v = t;
-            slew_[k] = v;
-            value_[k] = (uint8_t)(v < 0 ? 0 : v > 255 ? 255 : v + 0.5f);
-        }
-    }
-    uint32_t inc = PW_P5_LFO_INC[value_[P5_LFO_RATE]] / (uint32_t)os_;  // per sub-sample
-    if (srScale_ != 1.0) inc = (uint32_t)((double)inc * srScale_);
-    const int amt = i_clamp((pcMode_ ? 0 : valueOf(P5_LFO_INITIAL)) + mw_ + (p[P5_PRESS_LFO] ? at_ : 0), 0, 127);
-    modSamples(inc, PW_P5_AMOUNT[amt], (float)valueOf(P5_WHEEL_MIX) * (1.0f / 127.0f), wheelLen_);
-}
-
-void Engine::p5_update_bend()
-{
-    // one smoothing lane per MIDI channel (~6 ms, exact landing, same law)
-    for (int ch = 0; ch < 16; ch++)
-    {
-        const int32_t range = bendRaw_[ch] < 0 ? rangeDnQ8(ch) : rangeUpQ8(ch);
-        const int32_t tgt = bendRaw_[ch] * range / (bendRaw_[ch] < 0 ? 8192 : 8191);
-        const int32_t d = tgt - bendQ8_[ch];
-        bendQ8_[ch] += d > 0 ? (d < 4 ? d : (d + 3) / 4) : (d > -4 ? d : (d - 3) / 4);
-    }
 }
 
 void Engine::setBendRangeSemitones(int ch, double up, double down)
@@ -478,204 +513,65 @@ void Engine::voiceTrim(int lane, int osc, int *scale, int *offset) const
     *scale = lanes_[lane].trimS[osc]; *offset = lanes_[lane].trimO[osc];
 }
 
+// ---------------------------------------------------------- per-sample pitch --
+// The continuous centsInc: p16f carries the live pitch stack in 1/16-steps
+// (float), ctF the drift cents, fineF the fine term (v.fine + bend residual).
+// The integer skeleton mirrors centsInc() of dsp.c exactly; only the inputs
+// became continuous, so bend and glide slide instead of stepping per block.
+static uint32_t incAt(float p16f, float ctF, float fineF, double srScale, int os)
+{
+    const int32_t ct16 = (int32_t)(ctF * 16.0f);
+    const int32_t d16 = ct16 / 100;
+    const float rem = (float)ct16 - (float)d16 * 100.0f;
+    const uint32_t base = pitchInc((uint32_t)i_clamp((int32_t)p16f + d16, 0, 2047));
+    const int32_t add = (int32_t)((float)(int32_t)(base >> 12) * (rem * (2367.0f / 16000.0f) + fineF));
+    uint32_t ia = base + (uint32_t)add;
+    if (srScale != 1.0) ia = (uint32_t)((double)ia * srScale);
+    if (os != 1) ia /= (uint32_t)os;
+    return ia;
+}
+
 // Per-oscillator V/oct calibration, 1/16-semitone domain, slope pivoted at C4
 // like a scope trim. Applied at the oscillator increment read, AFTER the shared
 // glide/CV bus — which is exactly the hardware topology: each osc's own trim
-// pot shapes its own control voltage.
-int32_t Engine::applyTrim(const Lane &l, int32_t p16, int osc)
+// pot shapes its own control voltage. Continuous with the pitch it shapes.
+float Engine::applyTrim(const Lane &l, float p16, int osc)
 {
-    const int32_t sc = l.trimS[osc] - 64, of = l.trimO[osc] - 64;
-    int32_t pt = p16 + of + (int32_t)(((int64_t)(p16 - 960) * sc) >> 10);
-    return pt < 0 ? 0 : pt > 2047 ? 2047 : pt;
+    const float sc = (float)(l.trimS[osc] - 64), of = (float)(l.trimO[osc] - 64);
+    const float pt = p16 + of + (p16 - 960.0f) * sc * (1.0f / 1024.0f);
+    return pt < 0.0f ? 0.0f : pt > 2047.0f ? 2047.0f : pt;
 }
 
-// the shared wheel: LFO and noise with an exact power-of-two pitch ratio per entry
-void Engine::modSamples(uint32_t inc, float amount, float mix, uint32_t entries)
+// one host sample of the part-wide parameter math, from the LIVE knob state.
+// Everything a slewed knob can reach is here, so no parameter ever steps on
+// a call boundary: cutoff, resonance, depths, widths, levels, coarse tuning,
+// the glide step and both envelope laws.
+void Engine::partSample(uint32_t i)
 {
     const uint8_t *p = patch_.raw;
-    uint32_t phase = lfoPhase_;
-    int32_t noiseSt = modNoise_;
-    if (!noiseSt) noiseSt = 0x517953;
-    for (uint32_t i = 0; i < entries; i++) {
-        float noise = (float)(int32_t)(fastNoise32(&noiseSt) >> 8) * (1.0f / 16777216.0f) - 0.5f;
-        float w = (lfoWave(phase, p) * (1.0f - mix) + noise * mix) * amount;
-        wheel_[i] = w;
-        wheelPitch_[i] = pitchRatio(w * (470.0f / 1200.0f));
-        phase += inc;
-    }
-    modNoise_ = noiseSt;
-    lfoPhase_ = phase;
-}
-
-// p5_env_tick: the engine's own envelopes (the SSM filter uses its linear decay)
-float Engine::envTickEngine(Env &e, int gate, int a, int d, int s, int r, int32_t variation, int ssm)
-{
-    const uint8_t *p = patch_.raw;
-    if (!gate && e.stage != 0u) e.stage = 3;
-    float target = (float)value_[s] * (1.0f / 127.0f);
-    float scale = (1.0f + (float)variation * (1.0f / 32768.0f)) * (float)srScale_;
-    const uint32_t rel = p[P5_RELEASE_ON] ? value_[r] : 16u;
-    if (e.stage == 1u) {
-        e.value += PW_P5_ENV_ATK[value_[a]] * scale;
-        if (e.value >= 1.0f) { e.value = 1.0f; e.stage = 2; }
-    } else if (ssm && e.stage >= 2u) {
-        const float step = PW_P5_ENV_SSM[e.stage == 2u ? value_[d] : rel] * scale;
-        if (e.stage == 3u) target = 0.0f;
-        e.value += f_clamp(target - e.value, -step, step);
-    } else if (e.stage == 2u) {
-        e.value += (target - e.value) * f_min(PW_P5_ENV_EXP[value_[d]] * scale, 1.0f);
-    } else if (e.stage == 3u) {
-        e.value -= e.value * f_min(PW_P5_ENV_EXP[rel] * scale, 1.0f);
-    }
-    if (e.stage == 3u && e.value < envCut_) { e.value = 0.0f; e.stage = 0; }
-    return e.value;
-}
-
-// voice.c env_tick: the track ADSR (the Prophet presets leave it A0 D0 S127 R0)
-int32_t Engine::adsrTick(Lane &l)
-{
-    VoiceState &v = l.v;
-    const int32_t sus = adsrS_ << 17;               // Q24
-    switch (v.stage) {
-    case 1:
-        v.env += (int32_t)PW_ENV_LIN[adsrA_ & 127];
-        if (v.env >= (1 << 24)) { v.env = 1 << 24; v.stage = 2; }
-        break;
-    case 2:
-        v.env += mulq16(sus - v.env, PW_ENV_EXP16[adsrD_ & 127]);
-        break;
-    case 3:
-        v.env -= mulq16(v.env, PW_ENV_EXP16[adsrR_ & 127]);
-        if (v.env < trackKill_) { v.env = 0; v.stage = 0; v.active = 0; }
-        break;
-    case 4:
-        v.env = 0; v.stage = 0; v.active = 0;
-        break;
-    default:
-        v.env = 0;
-        break;
-    }
-    return v.env >> 9;
-}
-
-// p5_render: one block's parameter math for one voice, or the final fade.
-// Returns 1 when the lane must run through the sample kernel.
-// the block's engine envelopes, ticked once; the caller reads ampPrev afterwards
-// as p5_env_source and passes the four ramp values to renderLane (as the
-// firmware's p5_render does in one call, but the vmod sources in track_render
-// see the value this tick produced)
-void Engine::tickEnvelopes(Lane &l, int gate)
-{
-    const uint8_t *p = patch_.raw;
+    const float *q = fval_;
     const int curtis = !!p[P5_FILTER_REV];
-    const float f1 = envTickEngine(l.fenv, gate, P5_ATTACK_FILTER, P5_DECAY_FILTER,
-                                   P5_SUSTAIN_FILTER, P5_RELEASE_FILTER, l.envDrift, !curtis);
-    const float a1 = envTickEngine(l.aenv, gate, P5_ATTACK_AMP, P5_DECAY_AMP,
-                                   P5_SUSTAIN_AMP, P5_RELEASE_AMP, l.envDrift, 0);
-    l.filterPrev = f1;
-    l.ampPrev = a1;
-}
-
-bool Engine::renderLane(Lane &l, int32_t mPitch16, int32_t mFine, int32_t mCutoff,
-                        int32_t mShape, int32_t mAmp0, int32_t mAmp1, int32_t *out, uint32_t n)
-{
-    VoiceState &v = l.v;
-    const uint8_t *p = patch_.raw;
-    const uint8_t *q = value_;
-    const int curtis = !!p[P5_FILTER_REV];
-    const float f0 = l.filterPrev, a0 = l.ampPrev;
-    tickEnvelopes(l, v.gate);
-    const float f1 = l.filterPrev, a1 = l.ampPrev;
-    // A budget victim is already inactive when the final fade block arrives: fade its
-    // last PCM to zero instead of running a whole voice; ends exactly at zero.
-    if (!v.active && !mAmp1) {
-        if (n > 1u) {
-            const int32_t step = l.lastPcm / (int32_t)(n - 1u);
-            if (panOn_)
-                for (uint32_t i = 0; i < n - 1u; i++)
-                {   const int32_t f = l.lastPcm - step * (int32_t)i;
-                    out[i] += (int32_t)(((int64_t)f * l.panG[0]) >> 15);
-                    mixR_[i] += (int32_t)(((int64_t)f * l.panG[1]) >> 15); }
-            else
-                for (uint32_t i = 0; i < n - 1u; i++) out[i] += l.lastPcm - step * (int32_t)i;
-        }
-        l.lastPcm = 0;
-        return false;
-    }
-    int32_t glide = 0;
-    if (p[P5_GLIDE]) {
-        const int32_t target = v.pitch16, d = target - l.glidePitch;
-        int32_t step = (int32_t)(PW_ENV_LIN[q[P5_GLIDE]] >> 14);
-        if (srScale_ != 1.0) step = (int32_t)((double)step * srScale_);
-        if (step < 1) step = 1;
-        l.glidePitch += i_clamp(d, -step, step);
-        glide = l.glidePitch - v.pitchCur;
-    } else {
-        l.glidePitch = v.pitch16;
-    }
-    // Keyed coarse tuning has semitone detents (adjacent raw values share one);
-    // keyboard-off B spans nine octaves continuously. Only the rendered pitch is
-    // quantized; the patch bytes stay exact.
-    const int32_t coarse_a = (i_clamp(q[P5_FREQ_A], 0, 96) / 2 - 12) * 16;
-    const int32_t coarse_b = (i_clamp(q[P5_FREQ_B], 0, 96) / 2 - 12) * 16;
-    const int32_t pa = applyTrim(l, mPitch16 + glide + coarse_a + (int32_t)e_[2] * 16, 0);
-    const int32_t pb = (p[P5_KEY_B] ? mPitch16 + glide + coarse_b
-                                    : 12 * 16 + (int32_t)q[P5_FREQ_B] * 108 * 16 / 127) + (int32_t)e_[3] * 16;
-    uint32_t ia = centsInc(pa, l.drift, mFine);
-    uint32_t ib = centsInc(applyTrim(l, pb, 1), (int32_t)q[P5_FINE_B] * 100 / 128 - l.drift, mFine);
-    if (srScale_ != 1.0) {                            // pitch is exact at any host sr
-        ia = (uint32_t)((double)ia * srScale_);
-        ib = (uint32_t)((double)ib * srScale_);
-    }
-    if (os_ != 1) {                                   // increments for the 2x sub-rate
-        ia /= (uint32_t)os_;
-        ib /= (uint32_t)os_;
-    }
-    // Lo Freq drops B seven octaves.
-    if (p[P5_LOW_B]) ib >>= 7;
-    const int32_t filterVelocity = p[P5_VEL_FILTER] ? (int32_t)v.mvel * 258 : 32767;
-    const int32_t ampVelocity = p[P5_VEL_AMP] ? (int32_t)v.mvel * 258 : 32767;
-    // Cutoff in Q8 steps of the coefficient table (14.02 per octave, 30 Hz at 0).
-    const int32_t c0 = q[P5_CUTOFF] + brightness_;   // Rev4 CC74 Brightness adds to cutoff
-    int32_t cut = 1618 + c0 * 236 + (curtis ? 0 : (127 - c0 > 66 ? 66 : 127 - c0) * 38)
-                + mCutoff + (int32_t)e_[0] * 256 + l.filterDrift;
-    // Keyboard tracking pivots on the lowest C: full tracks 2x per octave, half sqrt(2).
-    cut += (mPitch16 - 36 * 16) * fastClamp(p[P5_KEY_FILTER], 0, 2) * PW_KEYTRACK_HALF_Q7 / 128;
-    if (p[P5_PRESS_FILTER]) cut += at_ * 96;
-    const int32_t resonance = fastClamp((int32_t)q[P5_RESONANCE] + e_[1], 0, 127);
-    const int32_t k = resonance * (curtis ? 19200 : 18800) / 127;
-    const int32_t filterGain = 32767 - resonance * (curtis ? 100 : 45);
-    const int32_t envAmount = q[P5_ENV_FILTER] * 165;     // 0.046 octave per step (Rev-4 recordings)
-    // Poly-Mod: oscillator A in Q12 octaves, filter in Q8 steps.
-    const int32_t paEnv = q[P5_POLY_ENV] * 85, paB = q[P5_POLY_B] * 35;
-    const int32_t pfEnv = q[P5_POLY_ENV] * 226, pfB = q[P5_POLY_B] * 226;
-    const int32_t pwEnv = q[P5_POLY_ENV] * 64, pwB = q[P5_POLY_B] * 258;
-    const int32_t widthMod = mShape - (64 << 8);
-    const int32_t pwmA = (int32_t)q[P5_PW_A] * 258 + (int32_t)e_[4] * 256 + widthMod;
-    const int32_t pwmB = (int32_t)q[P5_PW_B] * 258 + (int32_t)e_[5] * 256 + widthMod;
-    const int32_t la = i_clamp((int32_t)q[P5_LEVEL_A] + e_[6], 0, 127) * 258;
-    const int32_t lb = i_clamp((int32_t)q[P5_LEVEL_B] + e_[7], 0, 127) * 258;
-    const int32_t ln = (int32_t)q[P5_NOISE] * 258;
-
-    LaneParams &c = l.p;
-    c.f0 = f0; c.a0 = a0; c.f1 = f1; c.a1 = a1;
-    c.cut = (float)cut / 256.0f;
-    c.k = (float)k / 4096.0f;
-    c.filterGain = (float)filterGain / 32768.0f;
-    c.filterVel = (float)filterVelocity / 32768.0f;
-    c.ampVel = (float)ampVelocity / 32768.0f;
-    c.envAmount = (float)envAmount / 256.0f;
-    c.paEnv = (float)paEnv / 4096.0f;
-    c.paB = (float)paB / 4096.0f;
-    c.pfEnv = (float)pfEnv / 256.0f;
-    c.pfB = (float)pfB / 256.0f;
-    c.pwEnv = (float)pwEnv / 32768.0f;
-    c.pwB = (float)pwB / 32768.0f;
-    c.pwmA = (float)pwmA / 32768.0f;
-    c.pwmB = (float)pwmB / 32768.0f;
-    c.la = (float)la / 32768.0f;
-    c.lb = (float)lb / 32768.0f;
-    c.ln = (float)ln / 32768.0f;
+    const float c0 = q[P5_CUTOFF] + (float)brightness_;   // Rev4 CC74 Brightness adds to cutoff
+    float cut = 1618.0f + c0 * 236.0f
+              + (curtis ? 0.0f : (127.0f - c0 > 66.0f ? 66.0f : 127.0f - c0) * 38.0f)
+              + (float)e_[0] * 256.0f;
+    if (p[P5_PRESS_FILTER]) cut += (float)at_ * 96.0f;
+    const float resonance = f_clamp(q[P5_RESONANCE] + (float)e_[1], 0.0f, 127.0f);
+    ppS_[PP_CUT][i]    = cut / 256.0f;
+    ppS_[PP_K][i]      = resonance * (float)(curtis ? 19200 : 18800) / 127.0f / 4096.0f;
+    ppS_[PP_FG][i]     = (32767.0f - resonance * (float)(curtis ? 100 : 45)) / 32768.0f;
+    ppS_[PP_ENVAMT][i] = q[P5_ENV_FILTER] * (165.0f / 256.0f);
+    ppS_[PP_PAENV][i]  = q[P5_POLY_ENV] * (85.0f / 4096.0f);
+    ppS_[PP_PAB][i]    = q[P5_POLY_B] * (35.0f / 4096.0f);
+    ppS_[PP_PFENV][i]  = q[P5_POLY_ENV] * (226.0f / 256.0f);
+    ppS_[PP_PFB][i]    = q[P5_POLY_B] * (226.0f / 256.0f);
+    ppS_[PP_PWENV][i]  = q[P5_POLY_ENV] * (64.0f / 32768.0f);
+    ppS_[PP_PWB][i]    = q[P5_POLY_B] * (258.0f / 32768.0f);
+    ppS_[PP_PWMA][i]   = (q[P5_PW_A] * 258.0f + (float)e_[4] * 256.0f) / 32768.0f;
+    ppS_[PP_PWMB][i]   = (q[P5_PW_B] * 258.0f + (float)e_[5] * 256.0f) / 32768.0f;
+    ppS_[PP_LA][i]     = f_clamp(q[P5_LEVEL_A] + (float)e_[6], 0.0f, 127.0f) * (258.0f / 32768.0f);
+    ppS_[PP_LB][i]     = f_clamp(q[P5_LEVEL_B] + (float)e_[7], 0.0f, 127.0f) * (258.0f / 32768.0f);
+    ppS_[PP_LN][i]     = q[P5_NOISE] * (258.0f / 32768.0f);
     // FEEDBACK: VCA -> filter input, per voice, like plugging the output
     // jack into the external input. The tap keeps its real envelope depth
     // (a quiet voice feeds back quietly - the hardware behaves exactly so);
@@ -687,21 +583,61 @@ bool Engine::renderLane(Lane &l, int32_t mPitch16, int32_t mFine, int32_t mCutof
     // valueOf-style clamping must NOT see the flag, so mask explicitly.
     const uint8_t fbr = p[P5_FEEDBACK];
     const float fbv = (float)(fbr & 127u) * (3.0f / 127.0f);
-    c.fb = (fbr & 128u) ? -fbv : fbv;
-    c.ia = ia;
-    c.ib = ib;
-    c.amp0 = (float)mAmp0;
-    c.amp1 = (float)mAmp1;
+    ppS_[PP_FB][i] = (fbr & 128u) ? -fbv : fbv;
+    // Keyed coarse tuning keeps its semitone detents (patch semantics);
+    // keyboard-off B spans nine octaves continuously.
+    ppS_[PP_COARSEA][i] = (float)((i_clamp((int)q[P5_FREQ_A], 0, 96) / 2 - 12) * 16);
+    ppS_[PP_COARSEB][i] = (float)((i_clamp((int)q[P5_FREQ_B], 0, 96) / 2 - 12) * 16);
+    ppS_[PP_ABSB][i]    = 12.0f * 16.0f + q[P5_FREQ_B] * (108.0f * 16.0f / 127.0f);
+    ppS_[PP_FINEBS][i]  = q[P5_FINE_B] * (100.0f / 128.0f);
+    ppS_[PP_STEPE][i]   = p[P5_GLIDE]
+        ? f_max(lutU(PW_ENV_LIN, q[P5_GLIDE]) * (1.0f / 16384.0f)
+                * (float)srScale_ * (1.0f / 32.0f), 1.0f / 32.0f)
+        : 0.0f;
+    const int relOn = p[P5_RELEASE_ON];
+    efr_[i] = envRatesF(q, P5_ATTACK_FILTER, P5_DECAY_FILTER, P5_SUSTAIN_FILTER,
+                        P5_RELEASE_FILTER, relOn, srScale_, !curtis, 0.0f);
+    ear_[i] = envRatesF(q, P5_ATTACK_AMP, P5_DECAY_AMP, P5_SUSTAIN_AMP,
+                        P5_RELEASE_AMP, relOn, srScale_, 0, 0.0f);
+}
+
+// what is left of p5_render per NOTE: the velocity scale and the death fade.
+// Returns 1 when the lane must run through the sample kernel.
+bool Engine::renderLane(Lane &l, int32_t *out, uint32_t n)
+{
+    VoiceState &v = l.v;
+    const uint8_t *p = patch_.raw;
+    // A lane whose envelope reached the kill level stops running: fade its
+    // last PCM to zero over 32 host samples, continuous across call bounds.
+    if (!v.active) {
+        for (uint32_t i = 0; i < n && l.fadeT > 0.0f; i++)
+        {
+            const int32_t s = (int32_t)((float)l.lastPcm * l.fadeT);
+            if (panOn_)
+            {   out[i] += (int32_t)(((int64_t)s * l.panG[0]) >> 15);
+                mixR_[i] += (int32_t)(((int64_t)s * l.panG[1]) >> 15); }
+            else out[i] += s;
+            l.fadeT -= 1.0f / 32.0f;
+        }
+        if (l.fadeT <= 0.0f) { l.fadeT = 0.0f; l.lastPcm = 0; }
+        return false;
+    }
+    const int32_t filterVelocity = p[P5_VEL_FILTER] ? (int32_t)v.mvel * 258 : 32767;
+    const int32_t ampVelocity = p[P5_VEL_AMP] ? (int32_t)v.mvel * 258 : 32767;
+    LaneParams &c = l.p;
+    c.filterVel = (float)filterVelocity / 32768.0f;
+    c.ampVel = (float)ampVelocity / 32768.0f;
     return true;
 }
 
-// one block of the part's audio: e->block, the per-voice vmod and render prep,
-// the sample kernel for the live lanes, and p5_post's coupling capacitor.
+// one block of the part's audio: the per-sample control pass, the static
+// render prep, the sample kernel for the live lanes, and p5_post's coupling
+// capacitor. Control NEVER advances per call: host-block and event-split
+// geometry cannot move any value by even one sample's worth of slew.
 void Engine::process(int32_t *out, uint32_t n)
 {
-    // the wheel covers SUB-samples of this chunk (the LFO runs at the internal
-    // rate); callers chop host blocks to <= CTL, so this is <= CTL_*os entries
-    wheelLen_ = (n <= CTL_ ? n : CTL_) * (uint32_t)os_;
+    if (n > (uint32_t)CTL_) n = (uint32_t)CTL_;   // control arrays hold one block
+    const uint8_t *p = patch_.raw;
     for (uint32_t i = 0; i < n; i++) { out[i] = 0; mixR_[i] = 0; }
 
     if (panDirty_)
@@ -721,81 +657,157 @@ void Engine::process(int32_t *out, uint32_t n)
         panDirty_ = false;
     }
 
+    const float aS = smooth_ ? (float)(1.0 - std::exp(-srScale_ * (1.0 / 441.0))) : 1.0f;
+    uint32_t liveChMask = 0;
+    for (int k = 0; k < MAXV; k++)
+        if (lanes_[k].v.active) liveChMask |= 1u << (lanes_[k].ch & 15);
+
+    if (!smooth_)
+        for (uint32_t k = 0; k < 55u; k++) fval_[k] = (float)valueOf((int)k);   // raw: exact, once
+    uint32_t noiseSt = modNoise_;
+    if (!noiseSt) noiseSt = 0x517953;
+    const float wheelAmtBase = (pcMode_ ? 0.0f : fval_[P5_LFO_INITIAL]) + (float)mw_;
+    for (uint32_t i = 0; i < n; i++)
+    {
+        // knobs: continuous float slew; `moved` (or a flag change) gates the row
+        bool moved = false;
+        if (smooth_)
+            for (uint32_t k = 0; k < 55u; k++)
+            {
+                const float tgt = (float)valueOf((int)k);
+                const float d = tgt - fval_[k];
+                if (d > -0.0039f && d < 0.0039f)
+                {   if (fval_[k] != tgt) { fval_[k] = tgt; moved = true; }   // the snap sample refills too
+                    continue; }
+                fval_[k] = fval_[k] + d * aS;
+                moved = true;
+            }
+        if (moved || paramDirty_) partSample(i);   // part-wide DSP params from live knob state
+        // bend: the old per-call quarter-step, as a per-sample factor (~2.8 ms).
+        // Target re-derives only when the raw value changed; an idle, settled,
+        // silent channel costs one float compare.
+        for (int ch = 0; ch < 16; ch++)
+        {
+            if (bendRaw_[ch] != bendRawSeen_[ch])
+            {
+                bendRawSeen_[ch] = bendRaw_[ch];
+                const int32_t range = bendRaw_[ch] < 0 ? rangeDnQ8(ch) : rangeUpQ8(ch);
+                bendTgt_[ch] = (float)((double)bendRaw_[ch] * (double)range
+                             / (bendRaw_[ch] < 0 ? 8192.0 : 8191.0));
+            }
+            const float d = bendTgt_[ch] - bendF_[ch];
+            const bool audible = (liveChMask >> ch) & 1u;
+            if (d > -0.5f && d < 0.5f)
+            {   bendF_[ch] = bendTgt_[ch];
+                if (!audible) continue;
+            }
+            else bendF_[ch] += d * (float)smoothBend_;
+            const float b16 = std::floor(bendF_[ch] * (1.0f / 16.0f));
+            b16H_[ch][i] = b16;
+            bfiH_[ch][i] = (bendF_[ch] - b16 * 16.0f) * (2367.0f / 2560.0f);
+        }
+        // the shared wheel: float rate/depth, fractional phase, per sub-sample
+        const float amtF = f_clamp(wheelAmtBase + (p[P5_PRESS_LFO] ? (float)at_ : 0.0f), 0.0f, 127.0f);
+        const double incD = (double)lutU(PW_P5_LFO_INC, fval_[P5_LFO_RATE])
+                          / (double)os_ * srScale_;
+        const float amount = lutF(PW_P5_AMOUNT, amtF);
+        const float mix = fval_[P5_WHEEL_MIX] * (1.0f / 127.0f);
+        for (uint32_t o = 0; o < (uint32_t)os_; o++)
+        {
+            lfoPhaseD_ += incD;
+            if (lfoPhaseD_ >= 4294967296.0) lfoPhaseD_ -= 4294967296.0;
+            const uint32_t phase = (uint32_t)lfoPhaseD_;
+            const float noise = (float)(int32_t)(fastNoise32((int32_t *)&noiseSt) >> 8)
+                              * (1.0f / 16777216.0f) - 0.5f;
+            const float w = (lfoWave(phase, p) * (1.0f - mix) + noise * mix) * amount;
+            const uint32_t e = i * (uint32_t)os_ + o;
+            wheel_[e] = w;
+            wheelPitch_[e] = pitchRatio(w * (470.0f / 1200.0f));
+        }
+    }
+    modNoise_ = (int32_t)noiseSt;
+    paramDirty_ = false;
+
     uint32_t live = 0;
     for (int i = 0; i < MAXV; i++) live |= lanes_[i].v.active ? 1u << i : 0;
-
-    block();                                      // the part's wheel runs even on a silent track
-    p5_update_bend();                             // per-MIDI-channel bend lanes
 
     uint32_t mask = 0;
     uint32_t nr = 0;
     if (live) {
-        for (int i = 0; i < MAXV; i++) {
-            Lane &l = lanes_[i];
+        const float vdep = (float)driftDepth() * (1.0f / 127.0f);
+        const float leakS = 0.9999843753f;       // 0.9995^(1/32): the old per-block leak, continuous
+        const float sigS = 0.019445f;            // 0.11/sqrt(32): same stationary spread per sample
+        const float kt = (float)fastClamp(p[P5_KEY_FILTER], 0, 2) * (float)PW_KEYTRACK_HALF_Q7 / 128.0f;
+        const int lowB = p[P5_LOW_B], keyB = p[P5_KEY_B];
+        for (int lane = 0; lane < MAXV; lane++) {
+            Lane &l = lanes_[lane];
             VoiceState &v = l.v;
             if (!v.active) continue;
-            {   // DRIFT: leaky (OU) walks at block rate = slow 1/f^2-ish wander;
-                // the VINTAGE byte (0..127) is the depth. A separate LCG keeps
-                // the oscillator noise stream — and every bit-exact scenario —
-                // untouched; at vintage 0 these produce exact zeros anyway.
-                float *w[3] = { &wP_[i], &wF_[i], &wA_[i] };
-                for (int k = 0; k < 3; k++)
+            const int ch = l.ch & 15;
+            const float stepC = f_max((float)(PW_ENV_LIN[40] >> 14) * (float)srScale_ * (1.0f / 32.0f),
+                                      1.0f / 32.0f);
+            const float tgtP = (float)v.pitch16;
+            const float e2 = (float)e_[2] * 16.0f, e3 = (float)e_[3] * 16.0f;
+            for (uint32_t i = 0; i < n; i++)
+            {
+                // DRIFT: leaky (OU) walks, per sample (the ~1.5 s corner is kept;
+                // at vintage 0 these stay exact zeros, so the LCG is not even run).
+                float driftC = 0.0f, filtD = 0.0f, ampD = 0.0f;
+                if (vdep > 0.0f)
                 {
-                    const uint32_t r = fastNoise32((int32_t *)&wSt_[i]);
-                    const float n01 = ((float)(r >> 8) * (1.0f / 8388608.0f)) - 1.0f;   // -1..1 SYM
-                    *w[k] = *w[k] * 0.9995f + n01 * 0.11f;
+                    const uint32_t r0 = fastNoise32((int32_t *)&wSt_[lane]);
+                    const uint32_t r1 = fastNoise32((int32_t *)&wSt_[lane]);
+                    const uint32_t r2 = fastNoise32((int32_t *)&wSt_[lane]);
+                    l.wP = l.wP * leakS + (((float)(r0 >> 8) * (1.0f / 8388608.0f)) - 1.0f) * sigS;
+                    l.wF = l.wF * leakS + (((float)(r1 >> 8) * (1.0f / 8388608.0f)) - 1.0f) * sigS;
+                    l.wA = l.wA * leakS + (((float)(r2 >> 8) * (1.0f / 8388608.0f)) - 1.0f) * sigS;
+                    driftC = l.wP * vdep * 4.0f;     // cents, A up as B down
+                    filtD  = l.wF * vdep * 110.0f;
+                    ampD   = l.wA * vdep * 260.0f;
                 }
-                const float v = (float)driftDepth() * (1.0f / 127.0f);
-                // slow corner (~1.5 s tau): drift, not flutter. Scales are the
-                // firmware's old static-draw magnitudes so max depth feels familiar.
-                l.drift       = (int)(wP_[i] * v * 4.0f);     // cents, A up as B down
-                l.filterDrift = (int)(wF_[i] * v * 110.0f);
-                l.ampDrift    = (int)(wA_[i] * v * 260.0f);
+                const float stepE = ppS_[PP_STEPE][i];
+                if (stepE > 0.0f) l.glideF += f_clamp(tgtP - l.glideF, -stepE, stepE);
+                else l.glideF = tgtP;
+                l.curF += f_clamp(tgtP - l.curF, -stepC, stepC);
+                // the two envelopes
+                envTick1(l.fenv, efr_[i], v.gate, envCut_);
+                envTick1(l.aenv, ear_[i], v.gate, envCut_);
+                fenvS_[i][lane] = l.fenv.value;
+                aenvS_[i][lane] = l.aenv.value;
+                // VCA: 32-sample onset ramp, then unity (x amp drift)
+                if (l.vca < 1.0f) l.vca = f_min(1.0f, l.vca + 1.0f / 32.0f);
+                vcaS_[i][lane] = l.vca * (1.0f + ampD * (1.0f / 32768.0f));
+                // pitch stack, continuous: glide sits on the shared CV bus,
+                // bend follows the lane's own channel (MPE)
+                const float mPitch = f_clamp(l.curF + b16H_[ch][i], 0.0f, 2047.0f);
+                const float mFine = (float)v.fine + bfiH_[ch][i];
+                const float gDelta = l.glideF - l.curF;
+                const float pA = applyTrim(l, mPitch + gDelta + ppS_[PP_COARSEA][i] + e2, 0);
+                const float pBraw = keyB ? mPitch + gDelta + ppS_[PP_COARSEB][i] + e3
+                                         : ppS_[PP_ABSB][i] + e3;
+                iaS_[i][lane] = incAt(pA, driftC, mFine, srScale_, os_);
+                uint32_t ib = incAt(applyTrim(l, pBraw, 1), ppS_[PP_FINEBS][i] - driftC,
+                                    mFine, srScale_, os_);
+                if (lowB) ib >>= 7;                 // Lo Freq drops B seven octaves.
+                ibS_[i][lane] = ib;
+                // cutoff adds (in float units of c.cut): drift + keyboard tracking
+                // pivoting on the live pitch (the old per-block mPitch16 term).
+                fcAddS_[i][lane] = (filtD + (mPitch - 576.0f) * kt) / 256.0f;
             }
-            // this lane's bend, from its own channel (MPE)
-            const int32_t bend = bendQ8_[l.ch & 15];
-            const int32_t bend16 = bend >= 0 ? bend / 16 : -((-bend + 15) / 16);
-            const int32_t bendFine = (bend - bend16 * 16) * 2367 / 2560;
-            int32_t env = adsrTick(l);
-            if (v.active) {                       // ownenv: the engine's envelopes end the voice
-                if (!v.gate && l.aenv.stage == 0u) {      // p5_done: its last block, faded out
-                    v.active = v.gate = 0;
-                    v.stage = 0;
-                    v.env = 0;
-                    env = 0;
-                } else {
-                    v.env = 1 << 24;                      // (the common ADSR holds at full)
-                    env = 32767;
-                }
+            // ownenv: the engine's envelopes end the voice (p5_done)
+            if (!v.gate && l.aenv.stage == 0u) {
+                v.active = 0;
+                v.gate = 0;
+                l.fadeT = 1.0f;               // the death fade runs via renderLane
             }
-            const int32_t envq15 = (int32_t)(l.ampPrev * 32768.0f);   // p5_env_source (pre-tick)
-            const int32_t amp1 = env;                   // ownenv: no common velocity gain here
-            const int32_t amp0 = v.envOut;
-            v.envOut = amp1;
-            if (v.pitchCur != v.pitch16) {              // the track's glide (off: pitchCur == pitch16)
-                int32_t d = v.pitch16 - v.pitchCur;
-                int32_t st = (int32_t)(PW_ENV_LIN[40] >> 14);
-                if (st < 1) st = 1;
-                v.pitchCur += d > 0 ? (d < st ? d : st) : (-d < st ? d : -st);
-            }
-            if (!env && !amp0 && v.stage == 2) continue;    // held at a silent sustain
-            const int32_t mPitch16 = i_clamp(v.pitchCur + bend16, 0, 2047);
-            const int32_t mFine = v.fine + bendFine;
-            // The firmware applies the >110 accent to m.cutoff from m.envq15 BEFORE
-            // p5 overrides envq15 with the engine envelope - so for this ownenv engine
-            // the accent term is always the forced-zero matrix value (0). Exact port.
-            const int32_t mCutoff = 0;
-            if (renderLane(l, mPitch16, mFine, mCutoff, 64 << 8, amp0, amp1, out, n)) {
-                mask |= 1u << i;
-                nr++;
-            }
+            if (v.active && renderLane(l, out, n)) { mask |= 1u << lane; nr++; }
+            else if (!v.active) renderLane(l, out, n);
         }
     }
     if (mask) {
         // Auto: below two live voices the vector kernel's fixed cost dominates,
         // so the scalar path wins; both compute bit-identical results (proven by
-        // tests/test_engine_ab against the firmware reference), switching mid-stream
-        // is safe.
+        // tests/test_engine_ab), switching mid-stream is safe.
         const int lanes = __builtin_popcount(mask);
         const bool wide = mode_ == KernelMode::Wide ||
                           (mode_ == KernelMode::Auto && lanes >= 2);

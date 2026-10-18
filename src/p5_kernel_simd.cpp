@@ -201,35 +201,19 @@ void P5_SIMD_SYMBOL(Engine &e, uint32_t mask, int32_t *out, uint32_t n)
     const uint32_t os = (uint32_t)e.os_;
     const float *tab = e.tpt_;
 
-    // transpose the per-lane block parameters (LaneParams: 24 floats + 2 u32)
-    V parF[24];
-    for (int f = 0; f < 24; f++) {
-        alignas(32) float t[8];
-        for (int j = 0; j < 8; j++) t[j] = ((const float *)&e.lanes_[j].p)[f];
-        parF[f] = ld(t);
-    }
-    enum { F_F0, F_A0, F_F1, F_A1, F_CUT, F_K, F_FG, F_FVEL, F_AVEL, F_ENVAMT,
-           F_PAENV, F_PAB, F_PFENV, F_PFB, F_PWENV, F_PWB, F_PWMA, F_PWMB,
-           F_LA, F_LB, F_LN, F_AMP0, F_AMP1, F_FB };
-    VI ia, ib;
-    {
-        alignas(32) uint32_t t[8];
-        for (int j = 0; j < 8; j++) t[j] = e.lanes_[j].p.ia;
-        ia = ldu(t);
-        for (int j = 0; j < 8; j++) t[j] = e.lanes_[j].p.ib;
-        ib = ldu(t);
+    // per-lane velocity scale only; the part-wide parameters arrive per-sample
+    V fvelV, avelV;
+    {   alignas(32) float t[8];
+        for (int j = 0; j < 8; j++) t[j] = e.lanes_[j].p.filterVel;
+        fvelV = ld(t);
+        for (int j = 0; j < 8; j++) t[j] = e.lanes_[j].p.ampVel;
+        avelV = ld(t);
     }
     V laneLive = spl(0.0f);
     {
         alignas(32) float t[8];
         for (int j = 0; j < 8; j++) t[j] = (float)((mask >> j) & 1u);
         laneLive = ld(t);
-    }
-    V ampDriftN = spl(0.0f);
-    {
-        alignas(32) float t[8];
-        for (int j = 0; j < 8; j++) t[j] = (float)e.lanes_[j].ampDrift;
-        ampDriftN = ld(t);
     }
 
     HotV h;
@@ -263,13 +247,22 @@ void P5_SIMD_SYMBOL(Engine &e, uint32_t mask, int32_t *out, uint32_t n)
     }
 
     for (uint32_t i = 0; i < n; i++) {
-        const V time = spl((float)i * (1.0f / CTL_));
-        const V fe = add(parF[F_F0], mul(sub(parF[F_F1], parF[F_F0]), time));
-        const V ae = add(parF[F_A0], mul(sub(parF[F_A1], parF[F_A0]), time));
-        // the VCA ramp and the int32 quantisation, identical to p5_samples
-        const V gain = mul(mul(ae, parF[F_AVEL]), add(spl(1.0f), mul(ampDriftN, spl(1.0f / 32768.0f))));
-        const V amp = mul(mul(add(parF[F_AMP0], mul(sub(parF[F_AMP1], parF[F_AMP0]), time)),
-                              spl(1.0f / 32768.0f)), laneLive);
+        // per-sample control columns, materialized by Engine::process
+        const V fe = ld(e.fenvS_[i]), ae = ld(e.aenvS_[i]);
+        const V va = ld(e.vcaS_[i]), fcAdd = ld(e.fcAddS_[i]);
+        const VI ia = ldu(e.iaS_[i]), ib = ldu(e.ibS_[i]);
+        // part-wide parameter row for this sample (broadcasts: same for all lanes)
+        const V ppCut = spl(e.ppS_[PP_CUT][i]), ppK = spl(e.ppS_[PP_K][i]), ppFG = spl(e.ppS_[PP_FG][i]);
+        const V ppEnvA = spl(e.ppS_[PP_ENVAMT][i]);
+        const V ppPaEnv = spl(e.ppS_[PP_PAENV][i]), ppPaB = spl(e.ppS_[PP_PAB][i]);
+        const V ppPfEnv = spl(e.ppS_[PP_PFENV][i]), ppPfB = spl(e.ppS_[PP_PFB][i]);
+        const V ppPwEnv = spl(e.ppS_[PP_PWENV][i]), ppPwB = spl(e.ppS_[PP_PWB][i]);
+        const V ppPwA = spl(e.ppS_[PP_PWMA][i]), ppPwMB = spl(e.ppS_[PP_PWMB][i]);
+        const V ppLa = spl(e.ppS_[PP_LA][i]), ppLb = spl(e.ppS_[PP_LB][i]), ppLn = spl(e.ppS_[PP_LN][i]);
+        const V ppPwMA = ppPwA, ppFb = spl(e.ppS_[PP_FB][i]);
+        // the VCA and the int32 quantisation, identical to p5_samples
+        const V gain = mul(ae, avelV);
+        const V amp = mul(va, laneLive);
         for (uint32_t o = 0; o < os; o++) {          // the firmware's P5_OVERSAMPLE loop
         const V lfo = spl(e.wheel_[i * os + o]), wheelPitch = spl(e.wheelPitch_[i * os + o]);
 
@@ -284,7 +277,7 @@ void P5_SIMD_SYMBOL(Engine &e, uint32_t mask, int32_t *out, uint32_t n)
         const V noise = sub(mul(cvti2f(isrli<8>(h.noise)), spl(1.0f / 16777216.0f)), spl(0.5f));
 
         const VI db = p[P5_WHEEL_FREQ_B] ? wheelIncV(ib, wheelPitch) : ib;
-        const VI pwB = pwOfV(p[P5_WHEEL_PW_B] ? add(parF[F_PWMB], lfo) : parF[F_PWMB]);
+        const VI pwB = pwOfV(p[P5_WHEEL_PW_B] ? add(ppPwMB, lfo) : ppPwMB);
 
         // oscillator B with the triangle integrator (p5_wave)
         V bSaw = oscSaw(h.phB, db);
@@ -304,10 +297,10 @@ void P5_SIMD_SYMBOL(Engine &e, uint32_t mask, int32_t *out, uint32_t n)
         const V bn = mul(b, spl(2.0f));
 
         // oscillator A: poly-mod, pulse width, sync
-        VI da = p[P5_POLY_FREQ] ? incOfV(ia, add(mul(fe, parF[F_PAENV]), mul(bn, parF[F_PAB]))) : ia;
+        VI da = p[P5_POLY_FREQ] ? incOfV(ia, add(mul(fe, ppPaEnv), mul(bn, ppPaB))) : ia;
         if (p[P5_WHEEL_FREQ_A]) da = wheelIncV(da, wheelPitch);
-        const VI pwA = pwOfV(add(add(parF[F_PWMA],
-                                    p[P5_POLY_PW] ? add(mul(fe, parF[F_PWENV]), mul(b, parF[F_PWB])) : spl(0.0f)),
+        const VI pwA = pwOfV(add(add(ppPwMA,
+                                    p[P5_POLY_PW] ? add(mul(fe, ppPwEnv), mul(b, ppPwB)) : spl(0.0f)),
                                 p[P5_WHEEL_PW_A] ? lfo : spl(0.0f)));
         V aSaw = oscSaw(h.phA, da);
         V a = add(add(mul(aSaw, mSawA),
@@ -336,15 +329,15 @@ void P5_SIMD_SYMBOL(Engine &e, uint32_t mask, int32_t *out, uint32_t n)
         }
         h.phB = nb;
 
-        const V x = add(add(add(mul(a, parF[F_LA]), mul(b, parF[F_LB])),
-                            mul(noise, parF[F_LN])),
-                        mul(parF[F_FB], h.fbPrev));
+        const V x = add(add(add(mul(a, ppLa), mul(b, ppLb)),
+                            mul(noise, ppLn)),
+                        mul(ppFb, h.fbPrev));
 
-        V fc = add(parF[F_CUT], mul(mul(fe, parF[F_FVEL]), parF[F_ENVAMT]));
-        if (p[P5_POLY_FILTER]) fc = add(fc, add(mul(fe, parF[F_PFENV]), mul(bn, parF[F_PFB])));
+        V fc = add(add(ppCut, fcAdd), mul(mul(fe, fvelV), ppEnvA));
+        if (p[P5_POLY_FILTER]) fc = add(fc, add(mul(fe, ppPfEnv), mul(bn, ppPfB)));
         if (p[P5_WHEEL_FILTER]) fc = add(fc, mul(lfo, spl(112.0f)));
 
-        const V y = filterCoreV(h, softclipV(x), fc, parF[F_K], parF[F_FG], curtis, tab);
+        const V y = filterCoreV(h, softclipV(x), fc, ppK, ppFG, curtis, tab);
         const V vcaF = mul(mul(y, gain), amp);
         h.fbPrev = add(h.fbPrev, mul(spl(kFbLpA), sub(vcaF, h.fbPrev)));  // 6 dB/oct pole at fs/4
         if (os == 1u)                    // the firmware-identical path, untouched
