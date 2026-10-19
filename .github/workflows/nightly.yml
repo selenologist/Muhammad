@@ -157,26 +157,37 @@ jobs:
             (cd "$d" && zip -qr "$OLDPWD/$(basename "$d").zip" .)
           done
       - name: stage claps under unique names
-        # Every platform uploads its clap as the FILE muhammad.clap inside a
-        # distinctively-named artifact. download-artifact preserves the inner
-        # name, so assets/**/*.clap was THREE identical basenames - and
-        # softprops keys assets by basename, so each upload silently replaced
-        # the last: the release showed one muhammad.clap and the mac/win
-        # downloads "disappeared" (they were overwritten, not missing).
-        # The artifact's directory name already embeds platform+version;
-        # flatten with it.
+        # Two upload shapes to flatten: linux/windows upload the FILE
+        # muhammad.clap (artifact dir contains muhammad.clap); macOS uploads
+        # the BUNDLE DIRECTORY dist/muhammad.clap, and upload-artifact v4
+        # roots entries at the common ancestor - so the download contains
+        # Contents/... DIRECTLY and there is no inner muhammad.clap (this is
+        # what broke the first v0.1.2 run). Release assets must be files, so
+        # the bundle ships as .clap.zip containing muhammad.clap/.
+        # Flatten every form to a basename-unique asset: softprops keys
+        # assets by basename (three identical muhammad.clap silently
+        # clobbered each other before eea68ca).
         run: |
           for d in assets/*.clap; do
             [ -d "$d" ] || continue
-            mv "$d/muhammad.clap" "./$(basename "$d")"
+            name=$(basename "$d")                        # muhammad-VER-PLATFORM.clap
+            if [ -f "$d/muhammad.clap" ]; then           # linux / windows: one file
+              mv "$d/muhammad.clap" "./$name"
+            elif [ -d "$d/Contents" ]; then              # macOS: the dir IS the bundle
+              mv "$d" "./muhammad.clap"
+              zip -qr "./$name.zip" "muhammad.clap"
+              rm -rf "./muhammad.clap"
+            else
+              echo "::error::unrecognized clap artifact shape in $d"; ls -R "$d"; exit 1
+            fi
           done
-          ls -la muhammad-*.clap
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true    # commit log under the static blurb:
           append_body: true               # a tester tag carries its own story
           files: |
             muhammad-*.clap
+            muhammad-*.clap.zip
             muhammad-*-wrappers.zip
           body: >
             Muhammad ${{ needs.version.outputs.ver }} — CLAP for linux-x64,
