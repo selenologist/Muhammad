@@ -1,6 +1,6 @@
 # Muhammad
 
-**Version: 0.2.0**
+**Version: 0.3.0**
 
 ![Muhammad booting its recorded default patch, "Peace Be Upon Him"](docs/muhammad-panel.png)
 
@@ -13,7 +13,7 @@ through [SIMDe](https://github.com/simd-everywhere/simde) — the same portable
 vectorization layer Surge uses — so one source emits AVX2 on x86, NEON on ARM,
 and SSE2 as the fallback.
 
-## New in 0.2.0 (tester notes)
+## New in 0.3.0 (tester notes)
 
 - **Note-on clicks**: the occasional tick when hitting the same note again
   should be gone — this is still an *attempt*; please hammer repeated notes
@@ -28,6 +28,12 @@ and SSE2 as the fallback.
   your patches; old files load invert-off.
 - macOS builds ship as a **`.clap.zip`** — unzip, drop `muhammad.clap` into
   your CLAP folder.
+- The VST3/AUv2 wrappers and the standalone now have the whole instrument
+  **built in** — install them like any plugin; no separate `muhammad.clap`
+  download, no `~/.clap` folder, nothing to version-match by hand.
+- Under the hood: the engine now has a strict single-writer threading model,
+  verified under ThreadSanitizer — no knob drag, program change or session
+  load can ever corrupt a sound mid-block (and no RISC portability hazard).
 
 ## Right-click polarity knobs
 
@@ -152,6 +158,25 @@ its A/B build standalone.
   a knob stops or a param lands, because a host may next call with a LONGER
   chunk than the dirty call wrote — the second click class, now pinned by
   `test_splitinv`.
+* **Single-writer engine** (0.3.0). While active, the audio thread is
+  the engine's only writer. Main-thread mutations (panel drags, flushed host
+  params, preset/state loads, program changes) compute final values against a
+  main-side `View` and post them to an SPSC command ring drained at the top of
+  `process()`; reads come from the View, handed over via a try-lock mutex the
+  audio thread never blocks on (it skips a publish on contention, costing one
+  block of staleness). Reads replay unconsumed ring entries, so the CLAP flush
+  contract holds without waiting for a block. Patch loads stage full `Patch`
+  payloads (file I/O stays on main; the audio owner only memcpy-applies); the
+  slot cache is double-buffered so main rebuilds never race the audio PC
+  memcpy; `idSync_`/adopt keeps identity bookkeeping main-side.
+  `tests/test_threadsan.cpp` (CI job `tsan`, `-DMUHAMMAD_TSAN=ON`) runs both
+  threads concurrently — flushes, polarity flips, program loads, trims,
+  tunings, state save/load — under ThreadSanitizer: zero races. This replaces
+  the earlier design where GUI drags called `editRaw`/`setPatch` directly on
+  main while `process()` read the same bytes: no data race on the 134-byte
+  patch copy, no lost-update byte-RMW on RISC targets, no compiler hoisting a
+  knob into forever — the MIPS/cache-invalidation argument is moot by
+  discipline, not by luck.
 * **Adaptive dispatch** (Auto mode): below two live voices the scalar kernel
   runs — the wide kernel's fixed cost dominates for a lone note. Both kernels
   are bit-identical (verified), so switching mid-stream is inaudible.
@@ -456,21 +481,25 @@ bash tools/make_wrappers.sh      # native build; CI runs this on all three platf
 The script clones [free-audio/clap-wrapper](https://github.com/free-audio/clap-wrapper)
 and the Steinberg `vst3sdk` (pinned `v3.8.0_build_66` + submodules; Apple's
 `AudioUnitSDK` on macOS), stages this repo's vendored CLAP 1.2.10 headers in
-the layout the wrapper expects, and builds the **dynamic-load** wrapper with
-the component TUID pinned in `tools/muhammad_vst3_tuid.txt` (keep that file
-stable or hosts forget the plugin identity between builds). Output lands in
-`dist/wrappers/`: `muhammad.vst3` everywhere, `muhammad.component` (AUv2) on
-macOS, and the simple `muhammad` standalone host executable everywhere.
+the layout the wrapper expects, and drives clap-wrapper's **clap-first** mode
+(`tools/wrapper/CMakeLists.txt`): the engine + panel are **statically embedded
+into every wrapper** (VST3, AUv2, standalone), pinned to the TUID in
+`tools/muhammad_vst3_tuid.txt`. A tester installs the `.vst3`/`.component` or
+double-clicks the standalone with **no `muhammad.clap` anywhere** — the old
+dynamic-load mode demanded one on `~/.clap` and standalone users without it
+just got `No Entry as configured` (tester-reported; the embedding switch was
+the fix). Output lands in `dist/wrappers/`: `muhammad.vst3` everywhere,
+`muhammad.component` + `muhammad.app` (standalone bundle) on macOS, flat
+standalone executables on Linux/Windows. The collect step now FAILS the build
+if a format or the standalone is missing (no more silent drops).
 On macOS the plugin itself is a bundle DIRECTORY (`muhammad.clap/Contents/…`) —
 release staging zips it as `muhammad-<ver>-macos-universal.clap.zip` (unzip →
 drop `muhammad.clap` in `~/Library/Application Support/CLAP` or `~/.clap`).
 
-Because the wrappers host `muhammad.clap` **by name at runtime**, a wrapper
-is only ever as current as the installed CLAP: drop `muhammad.clap` in the
-CLAP directory (`~/.clap`, the Bitwig/VST3-adjacent path, or
-`~/Library/Application Support/CLAP`), the `.vst3`/`.component` in the
-matching host folder. CI publishes these as zip artifacts per platform, and
-`v*` tags ship them in the GitHub Release alongside the `.clap`s. AAX is not
+Wrappers are self-contained; the CLAP itself still installs on its own
+(`~/.clap` or `~/Library/Application Support/CLAP`). CI publishes these as zip
+artifacts per platform, and `v*` tags ship them in the GitHub Release
+alongside the `.clap`s. AAX is not
 built (the Avid SDK is not redistributable to CI); AUv3 needs Xcode
 signing and is likewise out of the nightly scope.
 
@@ -479,7 +508,8 @@ then `tools/make_mac_bundle.sh build/muhammad.clap muhammad.clap` wraps the dyli
 into a `.clap` bundle.
 
 `.github/workflows/nightly.yml` runs all three platforms on schedule/push/PR,
-executes the Linux test suite + golden images there, and publishes a GitHub
+executes the Linux test suite (full battery incl. `test_splitinv`) plus a
+ThreadSanitizer stress job and golden images there, and publishes a GitHub
 Release with all artifacts when a `v*` tag is pushed.
 
 ## Dev loop: tools/dev_install.sh

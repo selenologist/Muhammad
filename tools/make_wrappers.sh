@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Build the VST3 wrapper (+ standalone, + AUv2 on macOS) for Muhammad using
-# free-audio/clap-wrapper's DYNAMIC-LOAD mode: the wrapper binaries host the
-# clap named "muhammad" found at runtime (~/.clap or the platform default),
-# so they pair with the muhammad.clap artifact of the same version.
+# free-audio/clap-wrapper's CLAPFIRST mode: the engine + panel are STATICALLY
+# EMBEDDED in every wrapper, so a tester installs the .vst3/.component or runs
+# the standalone with no muhammad.clap anywhere. (User call 2026-10-20: "users
+# aren't going to populate a clap directory when they're not using clap".)
 #
 # Run from anywhere inside the repo on a native machine (Linux, macOS) or in
 # CI including windows-latest under git-bash - the wrapper needs no compile
@@ -98,39 +99,53 @@ fi
 VER="$(grep -m1 'set(P5_VERSION' "$REPO/CMakeLists.txt" | sed 's/.*"\(.*\)".*/\1/')"
 TUID="$(cat "$REPO/tools/muhammad_vst3_tuid.txt")"
 
-# ---- configure + build ----------------------------------------------------
-cd "$WORK/clap-wrapper"
-cmake -B build -DCMAKE_BUILD_TYPE=Release \
+# ---- configure + build (clapfirst: embedded wrappers) ---------------------
+# The TUID pins the VST3 identity; clapfirst derives it from the CLAP id when
+# unset, so pass it explicitly to keep host plugin databases stable.
+cmake -B "$WORK/clapfirst-build" "$REPO/tools/wrapper" \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DMUH_REPO="$REPO" \
+      -DCLAP_WRAPPER_ROOT="$WORK/clap-wrapper" \
       -DCLAP_SDK_ROOT="$STAGE" \
       -DVST3_SDK_ROOT="$WORK/vst3sdk" \
-      -DCLAP_WRAPPER_OUTPUT_NAME=muhammad \
-      -DCLAP_VST3_TUID_STRING="$TUID" \
       -DCLAP_WRAPPER_DOWNLOAD_DEPENDENCIES=ON \
-      -DCLAP_WRAPPER_BUILD_STANDALONE=ON \
+      -DCLAP_VST3_TUID_STRING="$TUID" \
       "${EXTRA[@]}"
 # --config Release matters on the VS generator (windows): it is
 # multi-config, ignores CMAKE_BUILD_TYPE, and DEFAULTS TO DEBUG.
-cmake --build build --config Release -j"$( (nproc 2>/dev/null || sysctl -n hw.ncpu) | head -1 )"
+cmake --build "$WORK/clapfirst-build" --config Release --target muhammadw_all \
+      -j"$( (nproc 2>/dev/null || sysctl -n hw.ncpu) | head -1 )"
 
-# ---- collect -------------------------------------------------------------
-cd "$WORK/clap-wrapper/build"
-for cand in Release/muhammad.vst3 Debug/muhammad.vst3 muhammad.vst3 \
-             Release/muhammad.component Debug/muhammad.component muhammad.component; do
-    [ -e "$cand" ] && cp -R "$cand" "$DIST/" && say "collected $cand"
-done
-# standalone: flat executable on Linux/Windows, but a muhammad.app BUNDLE
-# DIRECTORY on macOS (wrap_standalone.cmake sets BUNDLE TRUE + .app). The old
-# "skip if directory" guard - right for the exes - silently dropped the .app,
-# shipping a mac wrappers zip with no standalone host at all (user-found).
-for cand in muhammad muhammad.exe Release/muhammad Release/muhammad.exe \
-             Debug/muhammad Debug/muhammad.exe Release/muhammad.app \
-             Debug/muhammad.app muhammad.app; do
-    if [ -d "$cand" ]; then
-        cp -R "$cand" "$DIST/" && say "collected standalone bundle $cand"
-    elif [ -x "$cand" ]; then
-        cp "$cand" "$DIST/" && say "collected standalone $cand"
-    fi
-done
+# ---- collect from the assets tree -----------------------------------------
+# ASSET_OUTPUT_DIRECTORY layout: per-format dirs holding muhammad.vst3 (dir),
+# muhammad.component (dir, mac), muhammad.app (dir, mac standalone) or the
+# flat muhammad / muhammad.exe host. The CLAP asset itself is NOT collected —
+# the release ships muhammad.clap from the main build (version stamp!).
+ASSETS="$WORK/clapfirst-build/assets"
+[ -d "$ASSETS" ] || { echo "[wrappers] ERROR: no assets tree"; exit 1; }
+FOUND=""
+while IFS= read -r -d '' item; do
+    base=$(basename "$item")
+    case "$base" in
+        muhammad.vst3|muhammad.component|muhammad.app)
+            cp -R "$item" "$DIST/" && FOUND="$FOUND [$base]";;
+        muhammad|muhammad.exe)
+            [ -d "$item" ] && continue
+            [ -x "$item" ] && { cp "$item" "$DIST/" && FOUND="$FOUND [$base]"; };;
+    esac
+done < <(find "$ASSETS" -mindepth 1 \
+           \( -name 'muhammad.vst3' -o -name 'muhammad.component' \) -print0 -o \
+           \( \( -name 'muhammad' -o -name 'muhammad.exe' -o -name 'muhammad.app' \) -print0 \) 2>/dev/null)
+say "collected:${FOUND:- nothing}"
+# Fail LOUDLY on missing pieces (the silent mac .app drop of the first
+# wrappers release must never repeat, in either direction).
+case " $FOUND " in *" [muhammad.vst3] "*) :;;
+    *) echo "[wrappers] ERROR: no muhammad.vst3 collected"; ls -R "$ASSETS" | head -40; exit 1;;
+esac
+case "$OSTYPE" in darwin*) pat=" [muhammad.app] ";; windows*) pat=" [muhammad.exe] ";; *) pat=" [muhammad] ";; esac
+case " $FOUND " in *"$pat"*) :;;
+    *) echo "[wrappers] ERROR: no standalone host collected (wanted$pat)"; ls -R "$ASSETS" | head -40; exit 1;;
+esac
 # Keep dist/wrappers LOOSE: actions/upload-artifact always wraps artifacts in
 # one zip of its own - a self-made zip inside produced a zip-of-a-zip (user-
 # observed). The release job stages explicit per-platform zips instead.
