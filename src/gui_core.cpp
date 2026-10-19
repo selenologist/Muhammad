@@ -177,8 +177,9 @@ void fillState(GuiCore &c, p5ui::State &st)
         }
     }
     for (int i = 0; i < p5ui::kNumKnobs; i++)
-        st.knob[i] = p5::knobNorm(p5ui::kKnobs[i].pid, c.plugin->guiValue(p5ui::kKnobs[i].pid));
-    st.fbInv = (c.plugin->rawOf(p5::P5_FEEDBACK) & 128) != 0;   // white dial = inverted
+    {   st.knob[i] = p5::knobNorm(p5ui::kKnobs[i].pid, c.plugin->guiValue(p5ui::kKnobs[i].pid));
+        st.knobInv[i] = c.plugin->knobPolarity(p5ui::kKnobs[i].pid) ? 1 : 0;   // white dial = inverted
+    }
     const int program = c.plugin->program, bank = c.plugin->bank;
     for (int i = 0; i < p5ui::kNumBtns; i++)
     {
@@ -421,11 +422,17 @@ void buildDebugText(GuiCore &c);
 // generic press. (A gate folded into onPointerPress was eliminated by -O3.)
 bool onRightPress(GuiCore &c, float px, float py)
 {   const int kn = p5ui::knobAt(p5ui::State{}, px, py, (float)c.w, (float)c.h);
-    if (kn >= 0 && p5ui::kKnobs[kn].pid == 57)
-    {   c.plugin->toggleFbPolarity();     // FEEDBACK: flip the loop sign
-        return true;                      // (dial goes white; byte133 bit7)
+    if (kn < 0) return false;
+    const int pid = p5ui::kKnobs[kn].pid;
+    // Polarity knobs (raw byte bit 7): flip the sign, dial goes white.
+    // FEEDBACK = loop sign; FIL. ENV (filter and polymod) now SUBTRACT the
+    // envelope from cutoff instead of adding. pids 0..54 are identity raw
+    // bytes; FEEDBACK rides pid 57 / byte 133.
+    const int raw = (pid == 57) ? p5::P5_FEEDBACK : pid;
+    if (pid < 0 || !p5::polarityByte(raw)) return false;
+    {   c.plugin->togglePolarity(raw);
+        return true;
     }
-    return false;
 }
 
 bool onPointerPress(GuiCore &c, float px, float py, unsigned mods, unsigned timeMs)

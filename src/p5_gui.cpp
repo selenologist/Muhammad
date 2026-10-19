@@ -259,7 +259,7 @@ void draw(const Gui &g, const State &s, float w, float h)
     {
         const auto &k = kKnobs[i];
         knobScale(g, k.x, k.y, k.tickLo, k.tickHi);
-        knobDial(g, k.x, k.y, s.knob[i], k.white || (k.pid == 57 && s.fbInv));
+        knobDial(g, k.x, k.y, s.knob[i], k.white || s.knobInv[i]);
     }
 
     // buttons

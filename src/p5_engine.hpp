@@ -207,7 +207,12 @@ private:
         LaneParams p;
     };
 
-    int valueOf(int k) const { return patch_.raw[k] > 127u ? 127 : patch_.raw[k]; }
+    int valueOf(int k) const
+    {   const uint8_t r = patch_.raw[k];
+        // Bit 7 = POLARITY flag on these (right-click on the knob);
+        // valueOf must never see the flag, so the level continues underneath.
+        if (polarityByte(k)) return (int)(r & 127u);
+        return r > 127u ? 127 : (int)r; }
     int slotCount() const;                    // p5_cap / trk_nvoice
     // (the old p5_block/adsrTick/tickEnvelopes control ticks are gone: the
     // whole control path advances per host sample inside process())
@@ -243,6 +248,8 @@ private:
     int tuneCents_ = 0;
     bool smooth_ = false;
     bool paramDirty_ = true;                  // partSample() must rebuild the ppS_ rows
+    // Block-invariant polarity signs (bit 7 of the flag bytes, see process()).
+    float polEnv_ = 1.0f, polPoly_ = 1.0f, polFb_ = 1.0f;
     float bendTgt_[16] = {};
     int32_t bendRawSeen_[16] = {};
     int wheelSeen_ = -1;

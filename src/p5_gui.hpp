@@ -27,7 +27,7 @@ inline DetachRect detachRect(float winBot)
 
 struct State
 {
-    bool fbInv = false;   // FEEDBACK polarity bit (byte133 bit7): flips the dial white
+    uint8_t knobInv[kNumKnobs] = {};  // 1 = bit-7 polarity set: dial renders white
     double knob[kNumKnobs] = {};   // 0..1 normalized position
     uint8_t led[kNumBtns] = {};   // 0 off, 1 amber, 2 red
     char   name[21] = "Peace Be Upon Him";

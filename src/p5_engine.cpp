@@ -560,12 +560,12 @@ void Engine::partSample(uint32_t i)
     ppS_[PP_CUT][i]    = cut / 256.0f;
     ppS_[PP_K][i]      = resonance * (float)(curtis ? 19200 : 18800) / 127.0f / 4096.0f;
     ppS_[PP_FG][i]     = (32767.0f - resonance * (float)(curtis ? 100 : 45)) / 32768.0f;
-    ppS_[PP_ENVAMT][i] = q[P5_ENV_FILTER] * (165.0f / 256.0f);
-    ppS_[PP_PAENV][i]  = q[P5_POLY_ENV] * (85.0f / 4096.0f);
+    ppS_[PP_ENVAMT][i] = q[P5_ENV_FILTER] * (165.0f / 256.0f) * polEnv_;
+    ppS_[PP_PAENV][i]  = q[P5_POLY_ENV] * (85.0f / 4096.0f) * polPoly_;
     ppS_[PP_PAB][i]    = q[P5_POLY_B] * (35.0f / 4096.0f);
-    ppS_[PP_PFENV][i]  = q[P5_POLY_ENV] * (226.0f / 256.0f);
+    ppS_[PP_PFENV][i]  = q[P5_POLY_ENV] * (226.0f / 256.0f) * polPoly_;
     ppS_[PP_PFB][i]    = q[P5_POLY_B] * (226.0f / 256.0f);
-    ppS_[PP_PWENV][i]  = q[P5_POLY_ENV] * (64.0f / 32768.0f);
+    ppS_[PP_PWENV][i]  = q[P5_POLY_ENV] * (64.0f / 32768.0f) * polPoly_;
     ppS_[PP_PWB][i]    = q[P5_POLY_B] * (258.0f / 32768.0f);
     ppS_[PP_PWMA][i]   = (q[P5_PW_A] * 258.0f + (float)e_[4] * 256.0f) / 32768.0f;
     ppS_[PP_PWMB][i]   = (q[P5_PW_B] * 258.0f + (float)e_[5] * 256.0f) / 32768.0f;
@@ -579,11 +579,9 @@ void Engine::partSample(uint32_t i)
     // byte 127 at the edge of loop unity - the ladder sings and the
     // pre-ladder softclip distorts, which is the whole point at extreme
     // settings. Mid bytes sing less; byte 0 adds an exact +-0 (bit-exact).
-    // Bits: 0..6 = cable amount, 7 = POLARITY (right-click on the knob).
-    // valueOf-style clamping must NOT see the flag, so mask explicitly.
-    const uint8_t fbr = p[P5_FEEDBACK];
-    const float fbv = (float)(fbr & 127u) * (3.0f / 127.0f);
-    ppS_[PP_FB][i] = (fbr & 128u) ? -fbv : fbv;
+    // Bits: 0..6 = cable amount, 7 = POLARITY (right-click on the knob; the
+    // sign is extracted once per block in process(), valueOf never sees it).
+    ppS_[PP_FB][i] = (float)(p[P5_FEEDBACK] & 127u) * (3.0f / 127.0f) * polFb_;
     // Keyed coarse tuning keeps its semitone detents (patch semantics);
     // keyboard-off B spans nine octaves continuously.
     ppS_[PP_COARSEA][i] = (float)((i_clamp((int)q[P5_FREQ_A], 0, 96) / 2 - 12) * 16);
@@ -667,6 +665,13 @@ void Engine::process(int32_t *out, uint32_t n)
     uint32_t noiseSt = modNoise_;
     if (!noiseSt) noiseSt = 0x517953;
     const float wheelAmtBase = (pcMode_ ? 0.0f : fval_[P5_LFO_INITIAL]) + (float)mw_;
+    // Bit-7 polarity flags (right-click on the knob). Host events drain
+    // between render calls, so the patch CANNOT change inside process():
+    // these are block-invariant by construction. Extract once, multiply
+    // downstream — no bitwise work in the per-sample path.
+    polEnv_  = 1.0f - 2.0f * (float)((p[P5_ENV_FILTER] >> 7) & 1u);
+    polPoly_ = 1.0f - 2.0f * (float)((p[P5_POLY_ENV]  >> 7) & 1u);
+    polFb_   = 1.0f - 2.0f * (float)((p[P5_FEEDBACK]  >> 7) & 1u);
     for (uint32_t i = 0; i < n; i++)
     {
         // knobs: continuous float slew; `moved` (or a flag change) gates the row

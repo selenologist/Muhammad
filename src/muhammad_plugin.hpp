@@ -112,8 +112,9 @@ struct Plugin {
     int rawOf(int idx) const;
     double guiValue(clap_id id);                    // same units as par_get_value
     void guiSetLocal(clap_id id, double v);         // engine only (drag in progress)
-    void toggleFbPolarity()   // right-click on FEEDBACK: flip the loop's sign
-    {   engine.editRaw(p5::P5_FEEDBACK, engine.rawValue(p5::P5_FEEDBACK) ^ 128); }
+    void togglePolarity(int rawIdx)   // right-click: bit 7 flips the sign (dial white)
+    {   engine.editRaw(rawIdx, engine.rawValue(rawIdx) ^ 128); }
+    bool knobPolarity(clap_id id);    // dial-shape: bit 7 set on a polarity knob
     void guiSet(clap_id id, double v);              // apply + one host sync event
     void guiSync(clap_id id);                       // push current value once (gesture end)
     void loadProgram(int k);

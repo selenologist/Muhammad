@@ -125,6 +125,9 @@ static bool rawByteCarriesMeaning(int idx)
     }
 }
 
+// Bit 7 = knob POLARITY (p5::polarityByte): host/CC writes address the 7-bit
+// LEVEL only — the flag holds — and the host surface never sees it.
+
 static void applyParam(Plugin *s, clap_id id, double value)
 {
     if (isRawParam(id)) {
@@ -133,8 +136,8 @@ static void applyParam(Plugin *s, clap_id id, double value)
             if (v < (int)k->lo) v = (int)k->lo;
             if (v > (int)k->hi) v = (int)k->hi;
         } else if (v > 127 && !rawByteCarriesMeaning(kRawIndex[id])) v = 127;
-        if (kRawIndex[id] == p5::P5_FEEDBACK)          // knob/CC/automation write
-            v = (s->rawOf(p5::P5_FEEDBACK) & 128) | (v & 127);   // the LEVEL; polarity holds
+        if (p5::polarityByte(kRawIndex[id]))               // knob/CC/automation write
+            v = (s->rawOf(kRawIndex[id]) & 128) | (v & 127);   // the LEVEL; polarity holds
         s->applyRaw(kRawIndex[id], v);
     }
     else if (isOverlayParam(id))
@@ -198,7 +201,7 @@ static double paramValue(Plugin *s, clap_id id)
 {
     if (isRawParam(id)) {
         int v = s->rawOf(kRawIndex[id]);
-        if (kRawIndex[id] == p5::P5_FEEDBACK) v &= 127;   // bit 7 = polarity, not level
+        if (p5::polarityByte(kRawIndex[id])) v &= 127;   // bit 7 = polarity, not level
         if (const KnobClamp *k = knobClamp(id)) {
             if (k->defWhenZero && v == 0) v = k->def;   // raw 0 COUNT = "default 5"
             if (v > (int)k->hi) v = (int)k->hi;         // saturating knobs
@@ -217,6 +220,11 @@ static double paramValue(Plugin *s, clap_id id)
 }
 
 double Plugin::guiValue(clap_id id) { return paramValue(this, id); }
+
+bool Plugin::knobPolarity(clap_id id)
+{   if (!isRawParam(id)) return false;
+    const int ri = kRawIndex[id];
+    return p5::polarityByte(ri) && (rawOf(ri) & 128) != 0; }
 
 void Plugin::guiSetLocal(clap_id id, double v)
 {
