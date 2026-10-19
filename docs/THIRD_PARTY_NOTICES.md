@@ -106,3 +106,10 @@ or non-GPL copyleft, so the combined distribution under GPL-3.0-only stands.
 
 If you remove or vendor-bump any of the above, update this file in the same
 commit.
+
+## Khronos GL extension headers (external/mingw-gl)
+
+`GL/glext.h` + `GL/wglext.h` copied verbatim from the mingw-w64 sysroot; the
+original Khronos permissive notice is preserved in each file. Used only for
+MSVC builds on Windows (Windows Kits does not ship them); MinGW and POSIX
+builds never read this directory.

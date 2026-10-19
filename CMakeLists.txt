@@ -11,6 +11,12 @@ endif()
 
 # SIMD width is chosen by SIMDe for the target; the SIMD kernel must not let the
 # compiler fuse mul+add, or the scalar reference and the vector kernel drift.
+if(MSVC)
+    # Windows Kits has GL/gl.h but no GL/glext.h/wglext.h (C1083 in every MSVC
+    # compile of the panel); these Khronos copies (see external/mingw-gl/README)
+    # sit BEFORE the system so <GL/glext.h> resolves. MinGW never uses them.
+    include_directories(BEFORE ${CMAKE_CURRENT_SOURCE_DIR}/external/mingw-gl)
+endif()
 include_directories(vendor/tuning-library/include)   # header-only, MIT: tuning-library
 # the library needs C++20 concepts; grant them to the one TU that includes it
 set_source_files_properties(src/p5_store.cpp PROPERTIES COMPILE_OPTIONS "-std=gnu++20")

@@ -89,6 +89,9 @@ target_include_directories(muhammad-impl PUBLIC
     ${MUH_REPO}/src ${MUH_REPO}/vendor/clap ${MUH_REPO}/external
     ${MUH_REPO}/vendor/tuning-library/include
     ${MUH_REPO}/external/stb ${X11_INCLUDE_DIR})
+if(MSVC)
+    target_include_directories(muhammad-impl BEFORE PRIVATE ${MUH_REPO}/external/mingw-gl)
+endif()
 target_link_libraries(muhammad-impl PUBLIC clap clap-wrapper-extensions p5_gui ${MUH_GL_LIBS})
 target_compile_definitions(muhammad-impl PRIVATE P5_GUI=1 P5_VERSION="${PROJECT_VERSION}")
 if(APPLE)
@@ -140,4 +143,11 @@ make_clapfirst_plugins(
         COPY_AFTER_BUILD FALSE
         PLUGIN_FORMATS ${MUH_FORMATS}
         STANDALONE_CONFIGURATIONS "standalone;muhammad;muhammad.unresolvable"
+        # AUv2's build helper refuses to invent a manufacturer: without these it
+        # probes the clap for a clap.plugin-factory-info-for-auv2 extension we
+        # do not implement (mac CI: "No manufacturer provider"). Name/code come
+        # from the plugin-id namespace; the AU subtype self-derives from a hash
+        # of the clap id, so it is stable by construction.
+        AUV2_MANUFACTURER_NAME "unresolvable"
+        AUV2_MANUFACTURER_CODE "UNRS"
         ASSET_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/assets)
