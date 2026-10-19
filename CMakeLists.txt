@@ -146,6 +146,20 @@ if(MATH_LIBRARY)
 endif()
 
 # ---- engine A/B test (scalar reference vs the SIMD kernel) ---------------------
+# ---- ThreadSanitizer stress (opt-in; CI job `tsan`) ----------------------------
+option(MUHAMMAD_TSAN "build test_threadsan under ThreadSanitizer" OFF)
+if(MUHAMMAD_TSAN AND NOT WIN32)
+    add_executable(test_threadsan tests/test_threadsan.cpp
+        src/muhammad_plugin.cpp src/p5_store.cpp ${ENGINE_SOURCES})
+    target_include_directories(test_threadsan PRIVATE src vendor/clap external)
+    target_compile_definitions(test_threadsan PRIVATE P5_BUILD_INFO="tsan" P5_VERSION="tsan")
+    target_compile_options(test_threadsan PRIVATE -fsanitize=thread)
+    target_link_options(test_threadsan PRIVATE -fsanitize=thread)
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        target_link_options(test_threadsan PRIVATE -no-pie)   # TSan shadow vs PIE mmaps
+    endif()
+endif()
+
 add_executable(test_splitinv tests/test_splitinv.cpp ${ENGINE_SOURCES})
 target_include_directories(test_splitinv PRIVATE src external)
 if(MATH_LIBRARY)

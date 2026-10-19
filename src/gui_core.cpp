@@ -42,12 +42,12 @@ void applyTrimSet(GuiCore &c, int row, int col, int v)
     // oscillator increment read, so held notes keep re-trimming live
     const int osc = col / 2, which = col % 2;
     int sa, oa, sb, ob;
-    c.plugin->engine.voiceTrim(row, 0, &sa, &oa);
-    c.plugin->engine.voiceTrim(row, 1, &sb, &ob);
+    c.plugin->trimPair(row, 0, &sa, &oa);
+    c.plugin->trimPair(row, 1, &sb, &ob);
     if (which == 0) { if (osc == 0) sa = v; else sb = v; }
     else            { if (osc == 0) oa = v; else ob = v; }
-    c.plugin->engine.setVoiceTrim(row, 0, sa, oa);
-    c.plugin->engine.setVoiceTrim(row, 1, sb, ob);
+    c.plugin->setTrimPair(row, 0, sa, oa);
+    c.plugin->setTrimPair(row, 1, sb, ob);
 }
 
 void applyTrimDrag(GuiCore &c, float lx)
@@ -82,7 +82,7 @@ void wheelApply(GuiCore &c)
     for (int i = 0; i < c.wheelN; i++) p[i + 1] = c.wheelC[i];
     int16_t dev[128];
     if (!p5store::buildScaleDev(p, c.wheelN, c.wheelMask, c.wheelRoot, dev)) return;
-    c.plugin->engine.setTuningDeviation(dev);
+    c.plugin->setTuning(dev);
     c.plugin->tuneToneCount_ = c.wheelN;
     c.plugin->tuneMask_ = c.wheelMask; c.plugin->tuneWalk_ = c.wheelWalk;
     c.plugin->tuneRoot_ = c.wheelRoot;
@@ -111,9 +111,9 @@ void applyTuneDrag(GuiCore &c, float lx, unsigned mods)
 {   const int k = c.tuneDrag - 3;
     float v = p5ui::tune::railValAt(k, lx);
     if (mods & P5_MOD_SHIFT) v = (float)(int)(v + 0.5f);   // Shift: snap to integer semitones
-    const float up = k == 0 ? v : (float)c.plugin->engine.bendRangeUpDefault();
-    const float dn = k == 1 ? v : (float)c.plugin->engine.bendRangeDownDefault();
-    c.plugin->engine.setBendRangeDefault(up, dn);   // resolved pair stored (WYSIWYG)
+    const float up = k == 0 ? v : c.plugin->bendDefault(0);
+    const float dn = k == 1 ? v : c.plugin->bendDefault(1);
+    c.plugin->setBendDefault(up, dn);              // resolved pair stored (WYSIWYG)
 }
 
 // param value from a normalized knob position, in the param's own units
@@ -134,15 +134,15 @@ void fillState(GuiCore &c, p5ui::State &st)
     st.trimOpen = (c.modal == 5);
     for (int i = 0; i < 8; i++)
         for (int k = 0; k < 2; k++)
-        {   int sc, of; c.plugin->engine.voiceTrim(i, k, &sc, &of);
+        {   int sc, of; c.plugin->trimPair(i, k, &sc, &of);
             st.trimV[4*i+2*k] = (short)sc; st.trimV[4*i+2*k+1] = (short)of; }     // audio-thread PC applied bytes; pull identity here
     st.tuneOpen = (c.modal == 6);
     st.tunePick = (c.modal == 7);
     st.tuneTab = c.tuneTab;
     std::snprintf(st.tuneName, sizeof st.tuneName, "%s", c.plugin->tuneName_);
-    for (int k = 0; k < 128; k++) st.tuneDev[k] = c.plugin->engine.tuningDeviation()[k];
-    st.tuneUp = (float)c.plugin->engine.bendRangeUpDefault();
-    st.tuneDn = (float)c.plugin->engine.bendRangeDownDefault();
+    c.plugin->tuningCopy(st.tuneDev);
+    st.tuneUp = c.plugin->bendDefault(0);
+    st.tuneDn = c.plugin->bendDefault(1);
     st.tuneFocus = c.tuneFocus;
     st.wheelC = c.wheelC; st.wheelN = c.wheelN; st.wheelHot = c.wheelHot;
     st.tuneRoot = c.wheelRoot;
@@ -217,7 +217,7 @@ void fillState(GuiCore &c, p5ui::State &st)
                       c.w, c.h, c.parW, c.parH, c.ancW, c.ancH);
         st.diag = diagBuf;
     }
-    std::memcpy(st.name, c.plugin->engine.patch().raw + p5::P5_NAME, 20);
+    c.plugin->nameBytes(st.name);
     st.name[20] = 0;
     for (char *q = st.name + 19; q >= st.name && *q == ' '; *q-- = 0) {}
     if (c.modal == 4)
@@ -346,8 +346,8 @@ void actuate(GuiCore &c, int btnIdx, unsigned mods)
         {
             std::string seed = c.plugin->currentFile();
             if (seed.empty())
-            {   char wb[24]; wireName(wb, sizeof wb,
-                        (const unsigned char *)c.plugin->engine.patch().raw + p5::P5_NAME);
+            {   char wb[24], nb[20]; c.plugin->nameBytes(nb);
+                wireName(wb, sizeof wb, (const unsigned char *)nb);
                 seed = wb; }
             while (!seed.empty() && seed.back() == ' ') seed.pop_back();
             std::strncpy(c.modalBuf, seed.c_str(), sizeof c.modalBuf - 1);
@@ -568,7 +568,7 @@ bool onPointerPress(GuiCore &c, float px, float py, unsigned mods, unsigned time
         if (r >= 0)
         {   const int idx = c.tunePage * p5ui::pick::rows + r;
             if (idx == 0)
-            {   c.plugin->engine.setTuningDeviation(nullptr);
+            {   c.plugin->setTuning(nullptr);
                 std::snprintf(c.plugin->tuneName_, sizeof c.plugin->tuneName_, "12-TET");
                 c.plugin->tuneToneCount_ = 0; c.wheelN = 0; c.wheelHot = -1;
                 c.wheelMask = 0; c.wheelWalk = 0;
@@ -596,7 +596,7 @@ bool onPointerPress(GuiCore &c, float px, float py, unsigned mods, unsigned time
                             c.plugin->tuneWalk_ = (m == 0);
                         }
                     }
-                    c.plugin->engine.setTuningDeviation(dev);
+                    c.plugin->setTuning(dev);
                     wheelSeed(c);
                     std::fprintf(stderr, "[p5gui] tuning loaded: %s (%d tones editable)\n", nm, tnn); }
                 else std::fprintf(stderr, "[p5gui] tuning LOAD failed: %s\n",
@@ -652,7 +652,7 @@ bool onPointerPress(GuiCore &c, float px, float py, unsigned mods, unsigned time
             std::fprintf(stderr, "[p5gui] tuning root -> %d\n", c.wheelRoot);
             return true; }
         else if (ctl == 2)
-        {   c.plugin->engine.setTuningDeviation(nullptr);
+        {   c.plugin->setTuning(nullptr);
             std::snprintf(c.plugin->tuneName_, sizeof c.plugin->tuneName_, "12-TET");
             c.plugin->tuneToneCount_ = 0; c.wheelHot = -1;
             c.wheelN = 12; c.wheelMask = 0x0fff; c.wheelWalk = 0;
@@ -823,8 +823,8 @@ bool onKey(GuiCore &c, GuiKey key, unsigned mods)
     }
     if (c.modal == 6)                     // tuning page: arrows adjust the focused range rail
     {
-        float up = (float)c.plugin->engine.bendRangeUpDefault();
-        float dn = (float)c.plugin->engine.bendRangeDownDefault();
+        float up = c.plugin->bendDefault(0);
+        float dn = c.plugin->bendDefault(1);
         const float d = (mods & P5_MOD_SHIFT) ? 1.0f : 0.1f;  // Shift = integer step
         if (key == K_LEFT) c.tuneFocus = 0;
         else if (key == K_RIGHT) c.tuneFocus = 1;
@@ -833,7 +833,7 @@ bool onKey(GuiCore &c, GuiKey key, unsigned mods)
         else return false;
         auto clampQ = [](float v) { v = v < 0.f ? 0.f : v > 24.f ? 24.f : v;
                                         return (float)((int)(v * 10.0f + 0.5f)) / 10.0f; };
-        c.plugin->engine.setBendRangeDefault(clampQ(up), clampQ(dn));
+        c.plugin->setBendDefault(clampQ(up), clampQ(dn));
         return true;
     }
     return false;
@@ -922,8 +922,8 @@ void buildDebugText(GuiCore &c)
     char dbgName[24]; dbgName[0] = 0;
     {   const std::string cur = P->currentFile();
         if (!cur.empty()) std::snprintf(dbgName, sizeof dbgName, "%.20s", cur.c_str());
-        else wireName(dbgName, sizeof dbgName,
-                      (const unsigned char *)P->engine.patch().raw + p5::P5_NAME); }
+        else { char nb[20]; P->nameBytes(nb);
+               wireName(dbgName, sizeof dbgName, (const unsigned char *)nb); } }
     const char *name = dbgName;
     line("Muhammad build: %s", P5_BUILD_INFO);
     {   const clap_host_t *hh = P->host;
@@ -955,8 +955,8 @@ void buildDebugText(GuiCore &c)
     line("window: win %ux%u  parent %ux%u  ancestor %ux%u",
          c.w, c.h, c.parW, c.parH, c.ancW, c.ancH);
     line("audio: sr %.0f  block %u  oversample %d  polyphony %d  live %u  simd %s",
-         P->sr, P->minBlock, P->engine.oversample(), P->engine.polyphony(),
-         (unsigned)P->engine.liveVoices(), P->engine.simdPath());
+         P->sr, P->minBlock, (P->refreshView(), P->view_.os), P->engine.polyphony(),
+         (unsigned)P->view_.live, P->engine.simdPath());
     line("patch: src %s  name %.20s", P->loadTag_, name);
     line("tuning: %.60s  tones %d  root %d  mask %03x  walk %d",
          P->tuneName_, (int)P->tuneToneCount_, P->tuneRoot_, (unsigned)P->tuneMask_,

@@ -84,6 +84,17 @@ jobs:
           name: muhammad-${{ needs.version.outputs.ver }}-linux-x64-wrappers
           path: dist/wrappers
 
+  tsan:
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake -B build -DMUHAMMAD_TSAN=ON -DMUHAMMAD_GUI=OFF -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build build --target test_threadsan -j"$(nproc)"
+      - name: ThreadSanitizer stress (audio thread vs main-thread surface)
+        run: ./build/test_threadsan
+
+
   windows:
     needs: version
     runs-on: ubuntu-24.04

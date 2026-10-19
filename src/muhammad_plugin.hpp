@@ -4,6 +4,8 @@
 #include <clap/clap.h>
 #include <clap/ext/latency.h>
 #include <clap/ext/timer-support.h>
+#include <chrono>
+#include <mutex>
 #include <cstring>
 #include <string>
 #include <atomic>
@@ -33,14 +35,24 @@ struct Plugin {
     p5::Engine engine{p5::KernelMode::Auto};
     double sr = 44100.0;
     uint32_t minBlock = 0;                  // from activate (debug page)
-    bool active = false;
-    float trim = 0.5f;   // headroom for stacked full-velocity voices (parameter 0..2)
+    std::atomic<bool> active{false};
+    std::atomic<float> trim{0.5f};   // headroom for stacked full-velocity voices (parameter 0..2)
+    std::atomic<bool> latencyDirty{false};   // OS changed latency while active: report on deactivate
     int32_t scratch[32] = {0};
     int bendRaw = 0;
-    int program = -1;                   // factory program loaded (-1: edited/INIT)
+    int program = -1;                   // factory program loaded (-1: edited/INIT)   // MAIN-owned:
+    std::atomic<int> bank{0};           // audio reads it for PC mapping -> atomic
+    std::chrono::steady_clock::time_point stallSince_{};   // postCmd fallback timer (main-only)
+    std::atomic<int> adoptMode_{0};     // 0: idSyncSlot_ is a slot; 1: audio loaded a program
+    std::atomic<int> programA_{-1};     // audio-side program mirror (echo guard)
+    // Double-buffered slot cache: rebuilds happen on MAIN while audio may be
+    // mid-applyPcFromCache; writers fill the back buffer, then flip the index.
     uint8_t slotRaw_[PW_FACTORY_N][134] = {};
-    int16_t slotCode_[PW_FACTORY_N];                  // -1 init, -2 default, -3 file, else factory idx
-    bool slotReady_ = false;
+    uint8_t slotRawB_[PW_FACTORY_N][134] = {};
+    int16_t slotCode_[PW_FACTORY_N];                    // -1 init, -2 default, -3 file, else factory idx
+    int16_t slotCodeB_[PW_FACTORY_N];
+    std::atomic<int> cacheSel_{0};
+    std::atomic<bool> slotReady_{false};
     // Rev4 MIDI performance layer: CC7 volume * CC13 expression (linear,
     // default exactly 1.0f so untouched renders are bit-identical), CC64 damper.
     uint8_t rpnM_[16] = {127}, rpnL_[16] = {127};   // per-channel RPN select (deselected)
@@ -63,9 +75,7 @@ struct Plugin {
     int lastProgClick_ = 0;
     const char *loadTag_ = "seed";           // which path last replaced the patch (diag)
     p5store::Source curSrc_;                   // identity of the loaded patch (picker highlight)
-    int bank = 0;                       // panel bank cursor
     void *gui = nullptr;                // owned by gui_x11.cpp when the panel is open
-    bool latencyDirty = false;          // OS changed latency while active: report on deactivate
 
     // ---- patch store / bank-program retrieval (see p5_store.hpp) ----
     // The loaded SOURCE (factory index or user file) is the "preset state" the
@@ -95,7 +105,10 @@ struct Plugin {
     bool loadUserPatch(const std::string &name);      // false if missing
     void savePatchNamed(const std::string &name);     // writes file + becomes source
     void assignSlotFromText(int slot, const std::string &text);
-    bool panelDirty() const { return hasSrc_ && std::memcmp(engine.patch().raw, srcRaw_, 134) != 0; }
+    bool panelDirty()
+    {   if (!hasSrc_) return false;
+        refreshView();
+        return std::memcmp(view_.raw, srcRaw_, 134) != 0; }
     void presetRecall();                              // PRESET: back to loaded source
     const std::string &currentFile() const { return srcFile_; }
     void markSource(int kind, int idx, const std::string &file);  // after any load
@@ -108,12 +121,72 @@ struct Plugin {
     bool pendSet[PEND_IDS] = {};
     void markPending(clap_id id, double v) { if (id < PEND_IDS) { pendVal[id] = v; pendSet[id] = true; } }
 
+    // ---- threaded discipline (the engine is written ONLY by the audio
+    // thread while active). Main-thread mutations ride a lock-free command
+    // ring drained at the top of process(); main reads a seqlock view the
+    // audio thread publishes at the end of every block. While inactive,
+    // main owns the engine outright and every post applies directly.
+    struct View
+    {
+        uint8_t raw[p5::RAW_MAX] = {};
+        int16_t ov[8] = {};
+        int16_t trimV[8][2][2] = {};                 // per-lane/osc scale+offset
+        int16_t dev[128] = {};                       // tuning deviations
+        int tune = 0, os = 1, pan = 0, drift = 0, wheel = 0, live = 0;
+        float brUp = 0.f, brDn = 0.f;                // applied defaults (gui rails)
+        int rbrUp = 2, rbrDn = 2;                    // RAW stored bend defaults (state blob)
+    };
+    struct Cmd
+    {
+        uint8_t op = 0; int32_t i0 = 0, i1 = 0, i2 = 0, i3 = 0;
+        double d0 = 0.0, d1 = 0.0; uint8_t ev[64] = {};
+        uint8_t pl[256] = {};                    // payload: LOAD 134 bytes, TUNING 256
+    };
+    enum : uint8_t { OP_RAW, OP_OVERLAY, OP_TUNE, OP_OS, OP_PAN, OP_TRIM,
+                     OP_TUNING, OP_BRDEF, OP_LOAD, OP_RESET, OP_EVENT };
+    static constexpr uint32_t RINGN = 256u;
+    Cmd ring_[RINGN] = {};
+    std::atomic<uint32_t> rw_{0}, rr_{0};            // rw: main writes; rr: audio
+    View view_ = {}, pub_ = {};                      // main-private / audio-published
+    std::mutex viewMx_;                              // pub_ handoff: audio try-locks
+                                                     // (never blocks), main blocks
+
+    void copyEngineInto(View &v);
+    void refreshView();                              // main: current snapshot
+    void publishView();                              // audio: end-of-block
+    bool postCmd(const Cmd &c);                      // main: SPSC push (see impl re: stalls)
+    void drainCmds();                                // consumer: apply everything queued
+    void execCmd(const Cmd &c);
+    // posting helpers: mutate view_ optimistically, then enqueue the FINAL value.
+    void postRaw(int idx, int v);
+    void postOverlay(int i, int v);
+    void postTune(int v);
+    void postOS(int v);
+    void postPan(int v);
+    void postTrimPair(int lane, int osc, int sc, int of);
+    void postTuning(const int16_t *dev);             // nullptr = reset 12-TET
+    void postBendDefault(float up, float dn);
+    void postLoad(const p5::Patch &p);
+    void postReset();
+
+    // ---- gui_core facades (never let the panel touch the engine directly)
+    int  rawOfView(int idx);
+    void trimPair(int lane, int osc, int *sc, int *of)
+    {   refreshView(); *sc = view_.trimV[lane][osc][0]; *of = view_.trimV[lane][osc][1]; }
+    void setTrimPair(int lane, int osc, int sc, int of) { postTrimPair(lane, osc, sc, of); }
+    void tuningCopy(int16_t out[128]) { refreshView(); std::memcpy(out, view_.dev, 256); }
+    void setTuning(const int16_t *dev) { postTuning(dev); }
+    float bendDefault(int which) { refreshView(); return which ? view_.brDn : view_.brUp; }
+    void setBendDefault(float up, float dn) { postBendDefault(up, dn); }
+    void nameBytes(char *dst20) { refreshView(); std::memcpy(dst20, view_.raw + p5::P5_NAME, 20); }
+
     void applyRaw(int idx, int v);
-    int rawOf(int idx) const;
+    int rawOf(int idx);
     double guiValue(clap_id id);                    // same units as par_get_value
     void guiSetLocal(clap_id id, double v);         // engine only (drag in progress)
     void togglePolarity(int rawIdx)   // right-click: bit 7 flips the sign (dial white)
-    {   engine.editRaw(rawIdx, engine.rawValue(rawIdx) ^ 128); }
+    {   const int cur = rawOf(rawIdx);              // view (main) / engine (inactive)
+        postRaw(rawIdx, cur ^ 128); }
     bool knobPolarity(clap_id id);    // dial-shape: bit 7 set on a polarity knob
     void guiSet(clap_id id, double v);              // apply + one host sync event
     void guiSync(clap_id id);                       // push current value once (gesture end)
