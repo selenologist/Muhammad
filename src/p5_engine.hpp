@@ -86,7 +86,7 @@ public:
     void editRaw(int idx, int v) {               // native editor write: exact byte, no state reset
         if (idx >= 0 && idx < (int)RAW_MAX) {
             patch_.raw[idx] = (uint8_t)v;
-            paramDirty_ = true;
+            rowsSettled_ = false;
             trackAccept();
             if (idx == P5_LFO_INITIAL) wheelSeed();   // still the wheel's position, if untouched
         }
@@ -129,8 +129,8 @@ public:
     void commitWheelToPatch()
     {   if (pcMode_ && wheelTaken_) editRaw(P5_LFO_INITIAL, mw_); }
     int wheelPos() const { return mw_; }
-    void setAftertouch(int v) { at_ = i_clamp(v, 0, 127); paramDirty_ = true; }
-    void setOverlay(int i, int v) { if (i >= 0 && i < 8) { e_[i] = (int16_t)v; paramDirty_ = true; } }
+    void setAftertouch(int v) { at_ = i_clamp(v, 0, 127); rowsSettled_ = false; }
+    void setOverlay(int i, int v) { if (i >= 0 && i < 8) { e_[i] = (int16_t)v; rowsSettled_ = false; } }
     int overlay(int i) const { return e_[i]; }
     void setPolyphony(int n) { poly_ = n == 5 ? 5 : MAXV; }  // 5: the firmware's single-core cap
     // 1 = the firmware's base rate (the bit-exact path); 2 = the firmware's
@@ -174,7 +174,7 @@ public:
     // BRIGHTNESS (Rev4 CC74): added to cutoff.
     void setDriftDepth(int d) { editRaw(P5_VINTAGE, d < 0 ? 0 : d > 127 ? 127 : d); }
     int  driftDepth() const { return valueOf(P5_VINTAGE); }
-    void setBrightness(int b) { brightness_ = b < 0 ? 0 : b > 127 ? 127 : b; paramDirty_ = true; }
+    void setBrightness(int b) { brightness_ = b < 0 ? 0 : b > 127 ? 127 : b; rowsSettled_ = false; }
     void setVoiceTrim(int lane, int osc, int scale, int offset);
     void voiceTrim(int lane, int osc, int *scale, int *offset) const;
     const int32_t *lastMix() const { return mixTap_; }   // pre-post block (debug)
@@ -247,7 +247,11 @@ private:
     int poly_ = MAXV;
     int tuneCents_ = 0;
     bool smooth_ = false;
-    bool paramDirty_ = true;                  // partSample() must rebuild the ppS_ rows
+    // ppS_/efr_/ear_ rows valid up to end-of-array iff settled. Any param
+    // change unssettles; the first clean sample refills i..CTL_ once (a later
+    // call may START past the last index written - event-split hosts - and
+    // never-written rows there would be read as garbage env rates/part params).
+    bool rowsSettled_ = false;
     // Block-invariant polarity signs (bit 7 of the flag bytes, see process()).
     float polEnv_ = 1.0f, polPoly_ = 1.0f, polPolyB_ = 1.0f, polFb_ = 1.0f, polLfo_ = 1.0f;
     float bendTgt_[16] = {};

@@ -146,6 +146,12 @@ if(MATH_LIBRARY)
 endif()
 
 # ---- engine A/B test (scalar reference vs the SIMD kernel) ---------------------
+add_executable(test_splitinv tests/test_splitinv.cpp ${ENGINE_SOURCES})
+target_include_directories(test_splitinv PRIVATE src external)
+if(MATH_LIBRARY)
+    target_link_libraries(test_splitinv PRIVATE ${MATH_LIBRARY})
+endif()
+
 add_executable(test_engine_ab tests/test_engine_ab.cpp ${ENGINE_SOURCES})
 target_include_directories(test_engine_ab PRIVATE src external)
 if(MATH_LIBRARY)

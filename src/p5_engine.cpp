@@ -104,7 +104,7 @@ const char *Engine::simdPath() const
 
 void Engine::activate(double sampleRate)
 {
-    paramDirty_ = true;
+    rowsSettled_ = false;
 #ifdef P5_HAVE_AVX2
     if (__builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma"))
         simdK_ = p5KernelSimdAVX2;   // wide kernel at true AVX2, still contract=off
@@ -170,7 +170,7 @@ void Engine::buildTpt()
 void Engine::setSmoothing(bool on)
 {
     smooth_ = on;
-    paramDirty_ = true;
+    rowsSettled_ = false;
     if (on) for (uint32_t k = 0; k < 55u; k++) fval_[k] = (float)valueOf((int)k);
 }
 
@@ -208,7 +208,7 @@ void Engine::trackAccept()
 void Engine::setPatch(const Patch &p)
 {
     patch_ = p;
-    paramDirty_ = true;
+    rowsSettled_ = false;
     trackAccept();
     wheelTaken_ = false;
     wheelSeed();
@@ -246,7 +246,7 @@ int Engine::slotCount() const
 
 void Engine::silenceReset()
 {
-    paramDirty_ = true;
+    rowsSettled_ = false;
     for (int i = 0; i < MAXV; i++) {
         Lane &l = lanes_[i];
         std::memset(&l, 0, sizeof l);
@@ -689,7 +689,14 @@ void Engine::process(int32_t *out, uint32_t n)
                 fval_[k] = fval_[k] + d * aS;
                 moved = true;
             }
-        if (moved || paramDirty_) partSample(i);   // part-wide DSP params from live knob state
+        if (moved)
+        {   partSample(i);                           // rows track the knob while it moves
+            rowsSettled_ = false; }
+        else if (!rowsSettled_)
+        {   // params are static at this instant: one tail refill makes every
+            // row valid for whatever call length this state sees next.
+            for (uint32_t j = i; j < CTL_; j++) partSample(j);
+            rowsSettled_ = true; }
         // bend: the old per-call quarter-step, as a per-sample factor (~2.8 ms).
         // Target re-derives only when the raw value changed; an idle, settled,
         // silent channel costs one float compare.
@@ -736,7 +743,6 @@ void Engine::process(int32_t *out, uint32_t n)
         }
     }
     modNoise_ = (int32_t)noiseSt;
-    paramDirty_ = false;
 
     uint32_t live = 0;
     for (int i = 0; i < MAXV; i++) live |= lanes_[i].v.active ? 1u << i : 0;
