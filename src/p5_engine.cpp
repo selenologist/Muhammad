@@ -673,6 +673,7 @@ void Engine::process(int32_t *out, uint32_t n)
     polPoly_ = 1.0f - 2.0f * (float)((p[P5_POLY_ENV]  >> 7) & 1u);
     polPolyB_ = 1.0f - 2.0f * (float)((p[P5_POLY_B] >> 7) & 1u);
     polFb_   = 1.0f - 2.0f * (float)((p[P5_FEEDBACK]  >> 7) & 1u);
+    polLfo_  = 1.0f - 2.0f * (float)((p[P5_LFO_RATE] >> 7) & 1u);
     for (uint32_t i = 0; i < n; i++)
     {
         // knobs: continuous float slew; `moved` (or a flag change) gates the row
@@ -725,7 +726,10 @@ void Engine::process(int32_t *out, uint32_t n)
             const uint32_t phase = (uint32_t)lfoPhaseD_;
             const float noise = (float)(int32_t)(fastNoise32((int32_t *)&noiseSt) >> 8)
                               * (1.0f / 16777216.0f) - 0.5f;
-            const float w = (lfoWave(phase, p) * (1.0f - mix) + noise * mix) * amount;
+            // polLfo_: right-click polarity on LFO RATE - the OUTPUT flips
+            // (every destination reads w or wheelPitch_), the phase above
+            // this line is untouched: no negative-increment wrap exists.
+            const float w = (lfoWave(phase, p) * (1.0f - mix) + noise * mix) * amount * polLfo_;
             const uint32_t e = i * (uint32_t)os_ + o;
             wheel_[e] = w;
             wheelPitch_[e] = pitchRatio(w * (470.0f / 1200.0f));

@@ -39,11 +39,14 @@ enum RawIdx {
 // Bit 7 = knob POLARITY on these bytes: right-click on the panel dials the
 // flag, the face goes white, and the contribution SUBTRACTS. The polymod
 // bytes flip their SOURCE sign (all routed destinations together), the env
-// bytes flip the sweep, FEEDBACK flips the loop. The 7-bit level rides
-// underneath (real wire files never set it, so imports read invert-off).
+// bytes flip the sweep, FEEDBACK flips the loop, LFO RATE flips the LFO
+// OUTPUT (the phase accumulator and its rate increment never see the flag -
+// a negative wrap would be undefined). The 7-bit level rides underneath
+// (real wire files never set it, so imports read invert-off).
 inline bool polarityByte(int rawIdx)
 {   return rawIdx == P5_POLY_ENV || rawIdx == P5_POLY_B ||
-           rawIdx == P5_ENV_FILTER || rawIdx == P5_FEEDBACK; }
+           rawIdx == P5_ENV_FILTER || rawIdx == P5_FEEDBACK ||
+           rawIdx == P5_LFO_RATE; }
 
 struct Patch {
     uint8_t raw[RAW_MAX];
