@@ -24,7 +24,7 @@ bool provider_init(const clap_preset_discovery_provider *p)
     clap_preset_discovery_location_t loc{};
     loc.kind = CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN;
     loc.name = "Muhammad factory + user patches";
-    loc.flags = CLAP_PRESET_DISCOVERY_IS_FACTORY_CONTENT;
+    loc.flags = CLAP_PRESET_DISCOVERY_IS_FACTORY_CONTENT | CLAP_PRESET_DISCOVERY_IS_USER_CONTENT;
     loc.location = nullptr;
     if (!d->indexer || !d->indexer->declare_location(d->indexer, &loc)) return false;
     clap_preset_discovery_soundpack_t pack{};
@@ -85,7 +85,11 @@ bool provider_get_metadata(const clap_preset_discovery_provider *p, uint32_t loc
         upid.id = "muhammad.unresolvable";
         receiver->add_plugin_id(receiver, &upid);
         receiver->set_soundpack_id(receiver, "muhammad.unresolvable.user");
-        receiver->set_flags(receiver, CLAP_PRESET_DISCOVERY_IS_FAVORITE);
+        // IS_USER_CONTENT is what makes hosts surface these under USER.
+        // IS_FAVORITE is a different concept entirely (starred presets) —
+        // tagging user patches with it made the USER category list nothing
+        // (owner-reported 2026-10-20; the bug predates the public repo).
+        receiver->set_flags(receiver, CLAP_PRESET_DISCOVERY_IS_USER_CONTENT);
         receiver->add_feature(receiver, "synthesizer");
     }
     return true;
