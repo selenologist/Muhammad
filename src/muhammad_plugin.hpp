@@ -90,10 +90,6 @@ struct Plugin {
     // main-thread context. Never from deactivate (host is tearing the graph
     // down around us) and never mid-process.
     void maybePingLatency();
-    // Lifecycle breadcrumb file (store dir / gui_trail.log): hosts whose child
-    // stderr is unreachable (Bitwig) can still be post-mortemed by the user
-    // with one `cat`. MAIN-THREAD call sites only - never from process().
-    void trail(const char *ev);
     void adoptPendingIdentity();
     std::atomic<int> pcReq_{-1};                      // requested slot from audio
     std::atomic<bool> idSync_{false};                 // applied on audio: main must adopt

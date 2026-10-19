@@ -534,7 +534,6 @@ void switchToFloat(Ctx &c)
     // inside setupFloating. The host keeps thinking it embedded us - it is
     // wrong, visibly, and that is the point.
     std::fprintf(stderr, "[p5gui] switching to FLOATING mid-session\n");
-    if (c.plugin) c.plugin->trail("switch_to_float");
     const Window anchor = c.parent;
     const uint32_t rw = c.w, rh = c.h;
     teardown(c);
@@ -695,9 +694,6 @@ bool gui_create(const clap_plugin_t *p, const char *api, bool is_floating)
             c.hostGui = (const clap_host_gui_t *)s->host->get_extension(s->host, CLAP_EXT_GUI);
         std::fprintf(stderr, "[p5gui] host clap.gui service %s\n", c.hostGui ? "present" : "absent");
     }
-    if (auto *s0 = static_cast<Plugin *>(p->plugin_data))
-    {   char b[64]; std::snprintf(b, sizeof b, "gui_create api=%s float=%d", api?api:"-", (int)is_floating);
-        s0->trail(b); }
     if (auto *cc = ctxFrom(p))
     {   if (api) std::strncpy(cc->guiApi, api, sizeof cc->guiApi - 1);
         cc->floating = is_floating || modeFloat();  // env can FORCE float
@@ -713,7 +709,6 @@ bool gui_create(const clap_plugin_t *p, const char *api, bool is_floating)
 void gui_destroy(const clap_plugin_t *p)
 {
     auto *s = static_cast<Plugin *>(p->plugin_data);
-    s->trail("gui_destroy");
     if (!s->gui) return;
     Ctx &c = *static_cast<Ctx *>(s->gui);
     unregisterTimer(c);
@@ -801,7 +796,6 @@ void gui_suggest_title(const clap_plugin_t *, const char *) {}
 bool gui_show(const clap_plugin_t *p)
 {
     std::fprintf(stderr, "[p5gui] show\n");
-    if (auto *s0 = static_cast<Plugin *>(p->plugin_data)) s0->trail("gui_show");
     auto *c = ctxFrom(p);
     if (!c) return false;
     if (c->floating && !c->win && !setupFloating(*c)) return false;
@@ -815,10 +809,9 @@ bool gui_show(const clap_plugin_t *p)
 }
 bool gui_hide(const clap_plugin_t *p)
 {
-    if (auto *s0 = static_cast<Plugin *>(p->plugin_data)) s0->trail("gui_hide");
     auto *c = ctxFrom(p);
     if (!c || !c->win) return false;
-    if (!c->mapped && c->plugin) { c->plugin->trail("gui_hide: already hidden"); return true; }
+    if (!c->mapped) return true;              // already hidden: idempotent
     if (c->keepVisible)
     {   std::fprintf(stderr, "[p5gui] host hide ignored: window is DETACHED\n");
         return true;                          // float window stays on screen
