@@ -24,6 +24,15 @@ project(muhammad-wrappers VERSION ${MUH_VER} LANGUAGES C CXX)
 # be on at this level or the shared-module link fails with R_X86_64_PC32.
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+# clap-wrapper's CMAKE_CXX_STANDARD handling is gated on PROJECT_IS_TOP_LEVEL
+# (its own CMakeLists) — as a subproject it inherits whatever WE set. Apple
+# clang's default is C++98, and the CLAP headers (1LL, trailing enumerator
+# commas) then die under its -Werror extension warnings; MSVC defaults to
+# pre-C++20 designated-initializer support in our code paths. 20 matches the
+# value the old top-level mac configure passed as CLAP_WRAPPER_CXX_STANDARD.
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 set(MUH_REPO "" CACHE PATH "muhammad repo root")
 set(CLAP_WRAPPER_ROOT "" CACHE PATH "clap-wrapper checkout")
 if(NOT EXISTS ${MUH_REPO}/CMakeLists.txt)

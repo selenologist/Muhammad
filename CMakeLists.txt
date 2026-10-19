@@ -14,7 +14,15 @@ endif()
 include_directories(vendor/tuning-library/include)   # header-only, MIT: tuning-library
 # the library needs C++20 concepts; grant them to the one TU that includes it
 set_source_files_properties(src/p5_store.cpp PROPERTIES COMPILE_OPTIONS "-std=gnu++20")
-set(PP_CXX_FLAGS "-O3 -ffp-contract=off")
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
+    set(PP_CXX_FLAGS "-O3 -ffp-contract=off")
+else()
+    # MSVC: /O2 arrives via CMAKE_BUILD_TYPE=Release; /fp:precise (the default)
+    # never forms FMA, which is exactly the no-contraction semantics the engine
+    # bit-exactness contract needs. Feeding gcc flags to cl.exe only produced a
+    # D9002 wall that hid real diagnostics (windows clapfirst CI).
+    set(PP_CXX_FLAGS "")
+endif()
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${PP_CXX_FLAGS}")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${PP_CXX_FLAGS}")
 
@@ -70,7 +78,11 @@ if(MUHAMMAD_GUI)
     endif()
     add_library(nanovg STATIC ${NANOVG_DIR}/gl3_impl.cpp ${NANOVG_DIR}/src/nanovg.c)
     target_include_directories(nanovg PUBLIC ${NANOVG_DIR}/src)
-    target_compile_options(nanovg PRIVATE -w)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
+        target_compile_options(nanovg PRIVATE -w)
+    elseif(MSVC)
+        target_compile_options(nanovg PRIVATE /W0)
+    endif()
     target_compile_definitions(nanovg PUBLIC GL_GLEXT_PROTOTYPES=1)
 
     add_library(p5_gui STATIC src/p5_gui.cpp)
