@@ -1,6 +1,6 @@
 # Muhammad
 
-**Version: 0.3.0**
+**Version: 0.2.2**
 
 ![Muhammad booting its recorded default patch, "Peace Be Upon Him"](docs/muhammad-panel.png)
 
@@ -13,7 +13,7 @@ through [SIMDe](https://github.com/simd-everywhere/simde) — the same portable
 vectorization layer Surge uses — so one source emits AVX2 on x86, NEON on ARM,
 and SSE2 as the fallback.
 
-## New in 0.3.0 (tester notes)
+## New in 0.2.2 (tester notes)
 
 - **Note-on clicks**: the occasional tick when hitting the same note again
   should be gone — this is still an *attempt*; please hammer repeated notes
@@ -158,7 +158,7 @@ its A/B build standalone.
   a knob stops or a param lands, because a host may next call with a LONGER
   chunk than the dirty call wrote — the second click class, now pinned by
   `test_splitinv`.
-* **Single-writer engine** (0.3.0). While active, the audio thread is
+* **Single-writer engine** (0.2.2). While active, the audio thread is
   the engine's only writer. Main-thread mutations (panel drags, flushed host
   params, preset/state loads, program changes) compute final values against a
   main-side `View` and post them to an SPSC command ring drained at the top of
