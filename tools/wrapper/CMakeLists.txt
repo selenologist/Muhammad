@@ -150,4 +150,11 @@ make_clapfirst_plugins(
         # of the clap id, so it is stable by construction.
         AUV2_MANUFACTURER_NAME "unresolvable"
         AUV2_MANUFACTURER_CODE "UNRS"
+        # The cmake-configuration branch of wrap_auv2 (the one clapfirst hits)
+        # needs the subtype explicitly — the id-hash fallback lives only in
+        # the build-helper binary path. mham = muhammad, fixed for host
+        # identity stability; aumu = AU Music Device, stated to silence the
+        # default warning and pin intent.
+        AUV2_SUBTYPE_CODE "mham"
+        AUV2_INSTRUMENT_TYPE "aumu"
         ASSET_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/assets)
