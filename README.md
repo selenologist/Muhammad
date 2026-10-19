@@ -1,6 +1,6 @@
 # Muhammad
 
-**Version: 0.1-alpha**
+**Version: 0.2.0**
 
 ![Muhammad booting its recorded default patch, "Peace Be Upon Him"](docs/muhammad-panel.png)
 
@@ -12,6 +12,43 @@ kernel processes the **eight voices as the eight lanes of a float32x8 vector**
 through [SIMDe](https://github.com/simd-everywhere/simde) — the same portable
 vectorization layer Surge uses — so one source emits AVX2 on x86, NEON on ARM,
 and SSE2 as the fallback.
+
+## New in 0.2.0 (tester notes)
+
+- **Note-on clicks**: the occasional tick when hitting the same note again
+  should be gone — this is still an *attempt*; please hammer repeated notes
+  and report anything that survives.
+- **Continuous control**: envelopes, LFOs, glide and every knob now update
+  per audio sample instead of stepping on a fixed control cadence. Slow
+  filter moves and automations glide; they no longer stumble.
+- **Right-click invert** (the dial turns white, the modulation subtracts):
+  *FIL. ENV* on the filter and in POLY MOD (envelope pulls cutoff down);
+  *OSC B* in POLY MOD (rising sirens fall); *LFO RATE* (vibrato starts the
+  other way, speed untouched); *FEEDBACK* as before. Inversions save with
+  your patches; old files load invert-off.
+- macOS builds ship as a **`.clap.zip`** — unzip, drop `muhammad.clap` into
+  your CLAP folder.
+
+## Right-click polarity knobs
+
+Five wire bytes carry bit 7 = **POLARITY**: `P5_ENV_FILTER`, `P5_POLY_ENV`,
+`P5_POLY_B`, `P5_LFO_RATE`, `P5_FEEDBACK` (extension byte 133). Right-click
+on the panel knob flips the flag; the dial renders white. Semantics:
+
+- The **polymod bytes flip their SOURCE sign** — the ENV or OSC B modulator
+  drives every routed destination (pitch A, pulse width, filter cutoff) with
+  inverted phase, exactly as if you fed the modulator through an inverter.
+  (OSC B only modulates when it has a wave shape selected — a shapeless B is
+  silent, on this engine as on the hardware.)
+- The **ENV bytes flip the sweep**: the filter envelope subtracts from cutoff.
+- **LFO RATE flips the LFO OUTPUT, never the phase**: the accumulator and its
+  increment are untouched (no negative-wrap semantics exist), so vibrato
+  rate is bit-for-bit unchanged and only its direction mirrors — including
+  the mod-wheel and noise-mix share of the wheel, which are the output.
+- The flag is invisible to the outside: host params and CC write the 7-bit
+  **level only** (the flag holds through automation); `get_value` masks the
+  flag; Sequential wire files never set bit 7, so imports read invert-off.
+  Saved native patches round-trip the flag inside the existing bytes.
 
 ## Attribution & licensing
 
@@ -32,24 +69,30 @@ and SSE2 as the fallback.
 ## Verification (the point of the exercise)
 
     tests/test_engine_ab: 5 scripted scenarios (poly chords, releases with
-    re-presses, self-oscillation, the factory bank) rendered three ways:
+    re-presses, self-oscillation, the factory bank) rendered through BOTH
+    kernels - the ported scalar reference and the SIMDe wide kernel:
 
-      * the melodee firmware's own hostsim (built in-tree via tests/ref_dump.c)
-      * the ported scalar reference kernel
-      * the SIMDe wide kernel
+    Result: **bit-exact, every sample**, across the whole matrix of
+    44.1k/48k x 1x/2x x scalar/wide. Rebuilt with -DSIMDE_NO_NATIVE (the
+    portable two-128-bit decomposition of every __m256 op - structurally
+    what NEON does on ARM) the whole suite is still bit-identical
+    (re-verified at 0.2.0). (SIMDe maps every float op to the exact
+    SSE2/AVX2 instruction; -ffp-contract=off forbids FMA fusion; the BLEP
+    saw uses correctly-rounded uint32->float via a 16+16-bit split.)
 
-    Result: **bit-exact at all three, every sample** — the SIMD path equals the
-    scalar port equals the firmware, at 44.1 kHz. (SIMDe maps every float op to
-    the exact SSE2/AVX2 instruction; `-ffp-contract=off` forbids FMA fusion;
-    the BLEP saw uses correctly-rounded uint32→float via a 16+16-bit split.)
+    The firmware-dump three-way equality is RETIRED as a contract: the
+    control path no longer transcribes the firmware's 32-sample tick, so
+    per-block bit-exactness against a hostsim dump stopped being a
+    meaningful property. The manual ref_dump harness still exists, run
+    from the firmware's own tree during validation sessions, not by this
+    build. What replaced it is the property hosts actually exercise:
 
-    The same scripts also run 44.1k/48k × 1x/2x × scalar/wide: every pairing
-    is bit-identical between the two kernels (the 2x path can only be
-    kernel-vs-kernel checked — the firmware has no 48k reference).
-
-    Width independence: rebuilt with -DSIMDE_NO_NATIVE (the portable
-    two-128-bit decomposition of every __m256 op — structurally what NEON
-    does on ARM) the whole suite is still bit-identical.
+    tests/test_splitinv: identical sample-time event streams render
+    bit-identical PCM through ANY process() call-length pattern (six
+    adversarial chunk schedules that end chunks at event offsets, both
+    kernels, 1x and 2x) - the invariance whose loss caused the note-on
+    clicks, and whose second-order version (unsettled SoA row tails after
+    short dirty calls) this test caught and pinned fixed.
 
     Machine: x86-64 with AVX2, gcc 13, -O3.
 
@@ -59,7 +102,7 @@ and SSE2 as the fallback.
 ## Layout
 
     src/p5_engine.hpp/.cpp      the control path, transcribed from voice.c
-                                (allocation, envelopes, block prep, p5_post)
+                                (allocation, per-sample envelopes/control, p5_post)
     src/p5_kernel_scalar.cpp    bit-exact reference kernel (p5_samples)
     src/p5_kernel_simd.cpp      the wide kernel: eight voices, one float32x8
     src/p5_math.hpp             the firmware's float helpers (clamp/abs/BLEP...)
@@ -74,13 +117,15 @@ and SSE2 as the fallback.
     vendor/clap/                the CLAP SDK headers as vendored by the
                                 vasynth reference
     tests/scenario.h            the shared note scripts
+    tests/test_splitinv.cpp     every host chunk schedule renders bit-identical
 
 ## Build
 
     cmake -B build -DMELODEE_DIR=/path/to/melodee
     cmake --build build -j
     build/muhammad.clap                    # the plugin (a single shared object)
-    build/test_engine_ab build/ref.bin    # the A/B, after ./build/ref_dump > build/ref.bin
+    build/test_engine_ab                    # kernel-vs-kernel A/B + alias floors
+    build/test_splitinv                     # host-split invariance (bit-identical)
     build/clap_smoke build/muhammad.clap
     build/bench_engine
 
@@ -96,6 +141,17 @@ its A/B build standalone.
   which keeps NEON/SSE2 fast.
 * **Uniform branching.** Patch flags (wave shapes, sync, poly-mod routes) are
   part-wide, so they branch the whole vector identically instead of selecting.
+* **Control at host sample rate** (0.2.0). The firmware's 32-sample control
+  tick and the uint8 knob stair are retired: part values are floats that
+  slew per sample, and every host sample materializes its SoA rows
+  (envelopes, VCA, pitch, modulation amounts) that BOTH kernels then read —
+  event placement inside a host block can no longer shift a sound. Bit-7
+  polarity flags are block-invariant by construction (host events drain
+  between renders) and are extracted once per `process()` call; the hot
+  path only multiplies. A settled refill keeps rows `i..31` valid whenever
+  a knob stops or a param lands, because a host may next call with a LONGER
+  chunk than the dirty call wrote — the second click class, now pinned by
+  `test_splitinv`.
 * **Adaptive dispatch** (Auto mode): below two live voices the scalar kernel
   runs — the wide kernel's fixed cost dominates for a lone note. Both kernels
   are bit-identical (verified), so switching mid-stream is inaudible.
@@ -106,24 +162,30 @@ its A/B build standalone.
   cutoff table is rebuilt for the host rate with the generator's own formula
   (`g = tan(pi fc/fs)/(1+...)` inverted and re-derived per index), so knob
   positions keep their Hertz at any sample rate. At exactly 44.1 kHz/1x the
-  dumped firmware table is used verbatim, keeping the bit-exact path intact.
-  (One benign leftover: the bend slew and per-block noise wheel advance per
-  control block, so their rates track the host clock ~8% at 48k.)
+  dumped firmware table is used verbatim, keeping the two-kernel A/B baseline
+  stable. (The old caveat — bend slew and wheel noise advancing per control
+  block — is gone: everything advances per host sample.)
 * **2x oversampling toggle** (param 81 "OVERSAMPLE 2X"): the firmware's own
   P5_OVERSAMPLE=2 design — oscillators/noise/filter integrate at twice the
-  host rate with halved increments, the CTL-wheel covers 2 entries per
+  host rate with halved increments, the wheel rows carry 2 entries per
   sub-sample, the cutoff table rebuilds at the internal rate — but the 2x
   stream is decimated ONCE, at the END, over the summed voice mix (the VCA
   runs per voice at the OS rate), using a transcription of the **sst-filters
   HalfRateFilter** soft order-12 chain (as bundled by Surge XT; ~82 dB into
   the stopband) instead of the firmware's 2-tap box average. The OS strategy
   is ours: the firmware's per-voice 2-tap arrangement was discarded, and a
-  decimator never sits inside a voice's FEEDBACK loop. Not bit-exact by design (the
-  decimator IS the difference); the 1x path remains bit-exact. Reports 3
-  samples via the CLAP latency extension; state blob v2 carries the flag.
-  Cost: 8 voices at 2× is ~400 ns/sample on the wide path (~12% of one core at 44.1k; the 1× path runs ~205 ns), and measured
-  on hard-sync saws it cleans the inter-harmonic alias floor from -74 dB to
-  -78 dB — modest because the firmware's BLEP already does the heavy lifting.
+  decimator never sits inside a voice's FEEDBACK loop. Not bit-exact against
+  the firmware dump by design (the decimator IS the difference); the two
+  kernels stay bit-identical at 1x and 2x (A/B certifies both). Reports 3
+  samples via the CLAP latency extension; the session state blob carries the
+  flag (current blob version: v11).
+  Cost (measured at 0.2.0, x86-64 AVX2 gcc13 -O3): 1x wide ~411 ns/sample
+  (~18% of one core at 44.1k; auto-dispatch ~422, scalar reference ~837,
+  1 voice ~143), 2x ~583 ns (~26%). Measured on hard-sync saws with a
+  Hann-windowed Goertzel, the inter-harmonic alias floor is -118.5 dB at 1x
+  and -122.6 dB at 2x - modest because the firmware's BLEP already does the
+  heavy lifting. (Unwindowed Goertzel measured leakage, not aliasing: the
+  audit numbers only mean something with the window.)
 * **The >110-velocity filter accent is a no-op on this engine** — the firmware
   computes `m.cutoff += (m.envq15*24)>>7` while `envq15` is still the forced-
   zero common-envelope value (p5 overwrites it *after* the accent line, in
@@ -176,9 +238,12 @@ same `p5ui::draw()`.
   no loader library. Unmaintained upstream is fine: pinned + self-maintained.
 - Embedding: `src/gui_x11.cpp` implements `clap-gui` for X11 (physical px,
   aspect-preserved resize 1560:416), reparents a GLX child window into the
-  host, and pumps via `clap.timer-support` (16 ms) + X events. Mouse
-  gestures go through `Plugin::guiSet` → drained into the host's output
-  event queue at the next `params.flush`, so automation stays authoritative.
+  host, and pumps via X events. Repaint MUST be driven by the input event
+  itself: real hosts may register `clap.timer-support` (16 ms) but never
+  fire it (older Bitwig does exactly this), so the timer is opportunistic
+  only. Mouse gestures go through `Plugin::guiSet` → drained into the
+  host's output event queue at the next `params.flush`, so automation stays
+  authoritative.
 - **Pitch knob ranges match the engine's law**, not the raw byte: OSC A/B
   FREQUENCY dials span the live 0..96 (keyboard pitch at raw 24 = pointer at
   ~25% — matching the firmware's `semis = raw/2 − 12`; raws above 96 are dead
@@ -201,9 +266,9 @@ same `p5ui::draw()`.
 EGL (surfaceless → device → display fallback) and pixel-compares against
 `tests/golden/*.png` (≤0.5 % of pixels beyond 2 % fuzz). It runs headless.
 
-Other platforms: Windows (`win32` HWND reparenting) is next when a display is
-available; macOS would add an NSView+GL3 shim (~150 lines, CI-built). The
-draw code is platform-neutral; only the embedding file changes.
+Windows (`gui_win32.cpp`) and macOS (`gui_mac.mm`) shims are shipped and
+CI-built with the panel — see Cross-compiling & CI nightlies below. The draw
+code is platform-neutral; only the embedding file changes.
 
 Disable with `-DMUHAMMAD_GUI=OFF` for headless engine-only builds.
 
@@ -229,7 +294,7 @@ New panel knobs: VEL>AMP (left of VOLUME), VEL>FLT (filter top row). The filter
 KEYBOARD switch is now a 3-detent KEYBD knob (0..2 = OFF/HALF/FULL — the engine
 quantises there), the LFO box is VIBRATO with its SAW/TRI/PULSE SHAPE buttons
 (the engine's waveform law is exactly these three flags averaged), and every
-one of raw params 0..56 now has a panel control. Host-only by necessity:
+one of raw params 0..57 now has a panel control. Host-only by necessity:
 PRESS>× need aftertouch, LFO INIT is wheel-state, BEND RANGE/PRIORITY were
 panel globals on the original, EDIT overlays ride params 64..71.
 
@@ -396,6 +461,9 @@ the component TUID pinned in `tools/muhammad_vst3_tuid.txt` (keep that file
 stable or hosts forget the plugin identity between builds). Output lands in
 `dist/wrappers/`: `muhammad.vst3` everywhere, `muhammad.component` (AUv2) on
 macOS, and the simple `muhammad` standalone host executable everywhere.
+On macOS the plugin itself is a bundle DIRECTORY (`muhammad.clap/Contents/…`) —
+release staging zips it as `muhammad-<ver>-macos-universal.clap.zip` (unzip →
+drop `muhammad.clap` in `~/Library/Application Support/CLAP` or `~/.clap`).
 
 Because the wrappers host `muhammad.clap` **by name at runtime**, a wrapper
 is only ever as current as the installed CLAP: drop `muhammad.clap` in the
@@ -554,3 +622,10 @@ shaped wheel survives the session.
   audibly (engine determinism preserved: same seed -> same render); A/B stays
   bit-exact (reference regenerated with byte 37 excepted); damper hold/decay
   asserted in clap_smoke (`held 0.1.. / lift < 0.001`).
+* 0.2.0: -DSIMDE_NO_NATIVE rebuild still bit-identical; split-invariance suite
+  (6 chunk schedules x 5 scenarios x scalar/wide x 1x/2x) bit-identical after
+  the settled-row-tail fix (the old gate left rows `n..31` never-written after
+  a short dirty call - heap reuse had been masking it in scratch probes);
+  wide 1x 411 ns/smp, 2x 583; alias floors -118.5/-122.6 dB (Hann Goertzel);
+  right-click polarity verified: LFO flag flips 21978/22048 samples while
+  vibrato zero-crossings hold 78-vs-80 (output flips, phase untouched).

@@ -58,9 +58,13 @@ jobs:
       - name: tests
         working-directory: build
         run: |
+          ./test_engine_ab
+          ./test_splitinv
           ./test_store
           ./test_tune
           ./test_mpe
+          ./test_quantnoise
+          ./test_trimdrift
           P5_STORE_DIR=/tmp/muh-ci ./clap_smoke ./muhammad.clap
         env:
           P5_STORE_DIR: /tmp/muh-ci
