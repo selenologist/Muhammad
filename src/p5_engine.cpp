@@ -562,11 +562,11 @@ void Engine::partSample(uint32_t i)
     ppS_[PP_FG][i]     = (32767.0f - resonance * (float)(curtis ? 100 : 45)) / 32768.0f;
     ppS_[PP_ENVAMT][i] = q[P5_ENV_FILTER] * (165.0f / 256.0f) * polEnv_;
     ppS_[PP_PAENV][i]  = q[P5_POLY_ENV] * (85.0f / 4096.0f) * polPoly_;
-    ppS_[PP_PAB][i]    = q[P5_POLY_B] * (35.0f / 4096.0f);
+    ppS_[PP_PAB][i]    = q[P5_POLY_B] * (35.0f / 4096.0f) * polPolyB_;
     ppS_[PP_PFENV][i]  = q[P5_POLY_ENV] * (226.0f / 256.0f) * polPoly_;
-    ppS_[PP_PFB][i]    = q[P5_POLY_B] * (226.0f / 256.0f);
+    ppS_[PP_PFB][i]    = q[P5_POLY_B] * (226.0f / 256.0f) * polPolyB_;
     ppS_[PP_PWENV][i]  = q[P5_POLY_ENV] * (64.0f / 32768.0f) * polPoly_;
-    ppS_[PP_PWB][i]    = q[P5_POLY_B] * (258.0f / 32768.0f);
+    ppS_[PP_PWB][i]    = q[P5_POLY_B] * (258.0f / 32768.0f) * polPolyB_;
     ppS_[PP_PWMA][i]   = (q[P5_PW_A] * 258.0f + (float)e_[4] * 256.0f) / 32768.0f;
     ppS_[PP_PWMB][i]   = (q[P5_PW_B] * 258.0f + (float)e_[5] * 256.0f) / 32768.0f;
     ppS_[PP_LA][i]     = f_clamp(q[P5_LEVEL_A] + (float)e_[6], 0.0f, 127.0f) * (258.0f / 32768.0f);
@@ -671,6 +671,7 @@ void Engine::process(int32_t *out, uint32_t n)
     // downstream — no bitwise work in the per-sample path.
     polEnv_  = 1.0f - 2.0f * (float)((p[P5_ENV_FILTER] >> 7) & 1u);
     polPoly_ = 1.0f - 2.0f * (float)((p[P5_POLY_ENV]  >> 7) & 1u);
+    polPolyB_ = 1.0f - 2.0f * (float)((p[P5_POLY_B] >> 7) & 1u);
     polFb_   = 1.0f - 2.0f * (float)((p[P5_FEEDBACK]  >> 7) & 1u);
     for (uint32_t i = 0; i < n; i++)
     {

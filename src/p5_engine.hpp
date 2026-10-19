@@ -249,7 +249,7 @@ private:
     bool smooth_ = false;
     bool paramDirty_ = true;                  // partSample() must rebuild the ppS_ rows
     // Block-invariant polarity signs (bit 7 of the flag bytes, see process()).
-    float polEnv_ = 1.0f, polPoly_ = 1.0f, polFb_ = 1.0f;
+    float polEnv_ = 1.0f, polPoly_ = 1.0f, polPolyB_ = 1.0f, polFb_ = 1.0f;
     float bendTgt_[16] = {};
     int32_t bendRawSeen_[16] = {};
     int wheelSeen_ = -1;
