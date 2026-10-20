@@ -87,8 +87,10 @@ set(MUH_IMPL_SRCS
 add_library(muhammad-impl STATIC ${MUH_IMPL_SRCS})
 # tuning-library needs concepts: the repo pins gnu++20 on p5_store.cpp alone
 # and the rest stays 17 — mirror that exactly (and C++17 as the project floor).
-set_source_files_properties(${MUH_REPO}/src/p5_store.cpp
-    PROPERTIES COMPILE_OPTIONS "-std=gnu++20")
+if(NOT MSVC)   # MSVC: /std:c++20 arrives via CMAKE_CXX_STANDARD=20 above
+    set_source_files_properties(${MUH_REPO}/src/p5_store.cpp
+        PROPERTIES COMPILE_OPTIONS "-std=gnu++20")
+endif()
 target_compile_features(muhammad-impl PRIVATE cxx_std_17)
 # clapfirst links this static impl into SHARED modules (the .clap asset and
 # the VST3 bundle): whole-archive PIC, and the PIC'd objects win over the

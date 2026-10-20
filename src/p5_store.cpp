@@ -189,7 +189,6 @@ bool saveMap()
 } // namespace p5store
 
 // ---- tunings (Surge tuning-library) ----------------------------------------
-#include <dirent.h>
 #include <Tunings.h>
 #include <TuningsImpl.h>
 #include <cmath>
@@ -204,18 +203,20 @@ std::string tuningsDir() { return baseDir() + "/Tunings"; }
 std::vector<std::string> listTunings()
 {
     std::vector<std::string> out;
-    DIR *d = opendir(tuningsDir().c_str());
-    if (!d) return out;
-    while (struct dirent *de = readdir(d))
+    std::error_code ec;
+    // std::filesystem, not dirent: mingw ships dirent.h but MSVC does not,
+    // and this TU already carries the fs alias (listPatches above). Same
+    // filter, same sort, same unique — the scan is the contract, not the API.
+    for (const auto &e : fs::directory_iterator(tuningsDir(), ec))
     {
-        const std::string n = de->d_name;
+        if (!e.is_regular_file()) continue;
+        const std::string n = e.path().filename().string();
         const size_t dot = n.rfind('.');
         if (dot == std::string::npos) continue;
         std::string ext = n.substr(dot);
         std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
         if (ext == ".scl" || ext == ".kbm") out.push_back(n);
     }
-    closedir(d);
     std::sort(out.begin(), out.end());
     out.erase(std::unique(out.begin(), out.end()), out.end());
     return out;

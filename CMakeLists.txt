@@ -19,7 +19,10 @@ if(MSVC)
 endif()
 include_directories(vendor/tuning-library/include)   # header-only, MIT: tuning-library
 # the library needs C++20 concepts; grant them to the one TU that includes it
-set_source_files_properties(src/p5_store.cpp PROPERTIES COMPILE_OPTIONS "-std=gnu++20")
+if(NOT MSVC)   # cl.exe has no -std=gnu++20 (D9002); MSVC gets C++20 via
+               # CMAKE_CXX_STANDARD (the wrapper project sets 20 at its scope)
+    set_source_files_properties(src/p5_store.cpp PROPERTIES COMPILE_OPTIONS "-std=gnu++20")
+endif()
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
     set(PP_CXX_FLAGS "-O3 -ffp-contract=off")
 else()
