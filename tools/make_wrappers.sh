@@ -102,15 +102,33 @@ TUID="$(cat "$REPO/tools/muhammad_vst3_tuid.txt")"
 # ---- configure + build (clapfirst: embedded wrappers) ---------------------
 # The TUID pins the VST3 identity; clapfirst derives it from the CLAP id when
 # unset, so pass it explicitly to keep host plugin databases stable.
-cmake -B "$WORK/clapfirst-build" "$REPO/tools/wrapper" \
-      -DCMAKE_BUILD_TYPE=Release \
-      -DMUH_REPO="$REPO" \
-      -DCLAP_WRAPPER_ROOT="$WORK/clap-wrapper" \
-      -DCLAP_SDK_ROOT="$STAGE" \
-      -DVST3_SDK_ROOT="$WORK/vst3sdk" \
-      -DCLAP_WRAPPER_DOWNLOAD_DEPENDENCIES=ON \
-      -DCLAP_VST3_TUID_STRING="$TUID" \
-      "${EXTRA[@]}"
+# Configure does NETWORK WORK (CPM.cmake release download, then rtaudio/
+# rtmidi/Gulrak fetches) and clap-wrapper's bootstrap file(DOWNLOAD) has no
+# retry — a runner timeout once killed macOS configure outright (flake of
+# 2026-10-20: "file DOWNLOAD cannot compute hash on failed download",
+# status [28 Timeout], cascading into "CPMAddPackage: unknown command").
+# Configure is idempotent, so retry the WHOLE invocation: transient network
+# faults clear in seconds; genuine CMake errors just fail three times in a
+# row (with logs) and still stop the build.
+CFG=(cmake -B "$WORK/clapfirst-build" "$REPO/tools/wrapper"
+      -DCMAKE_BUILD_TYPE=Release
+      -DMUH_REPO="$REPO"
+      -DCLAP_WRAPPER_ROOT="$WORK/clap-wrapper"
+      -DCLAP_SDK_ROOT="$STAGE"
+      -DVST3_SDK_ROOT="$WORK/vst3sdk"
+      -DCLAP_WRAPPER_DOWNLOAD_DEPENDENCIES=ON
+      -DCLAP_VST3_TUID_STRING="$TUID"
+      "${EXTRA[@]}")
+for attempt in 1 2 3; do
+    if "${CFG[@]}" > "$WORK/clapfirst-configure.log" 2>&1; then
+        cat "$WORK/clapfirst-configure.log"; break
+    fi
+    echo "[wrappers] configure attempt $attempt/3 failed (tail below)"
+    tail -15 "$WORK/clapfirst-configure.log"
+    [ "$attempt" = 3 ] && { echo "[wrappers] configure failed after 3 attempts"; exit 1; }
+    rm -rf "$WORK/clapfirst-build/CMakeCache.txt" "$WORK/clapfirst-build/CMakeFiles"
+    sleep 5
+done
 # --config Release matters on the VS generator (windows): it is
 # multi-config, ignores CMAKE_BUILD_TYPE, and DEFAULTS TO DEBUG.
 cmake --build "$WORK/clapfirst-build" --config Release --target muhammadw_all \
