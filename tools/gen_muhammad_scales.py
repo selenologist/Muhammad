@@ -15,9 +15,9 @@
 #               rounding cents/100 with collision shifting
 #   walk      = degrees>12: nothing to quantize, every key advances one degree
 #               (melodee's ALL mode); <=12 with a mask quantizes to nearest
-import re, sys
+import os, re, sys
 
-SRC = "/home/user/build/melodee/firmware/src/scales.h"
+SRC = os.environ.get("MELODEE", "/home/user/build/melodee") + "/firmware/src/scales.h"
 OUT = "src/p5_stock_scales.hpp"
 
 text = open(SRC).read()

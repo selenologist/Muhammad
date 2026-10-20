@@ -16,7 +16,7 @@
 
 cmake_minimum_required(VERSION 3.16)
 file(STRINGS ${CMAKE_CURRENT_LIST_DIR}/../../CMakeLists.txt MUH_VER_LINE LIMIT_COUNT 1 REGEX "set\\(P5_VERSION")
-string(REGEX MATCH "0\\.[0-9]+\\.[0-9]+" MUH_VER "${MUH_VER_LINE}")
+string(REGEX MATCH "[0-9]+\\.[0-9]+\\.[0-9]+" MUH_VER "${MUH_VER_LINE}")   # was 0\\.x: breaks at 1.0
 project(muhammad-wrappers VERSION ${MUH_VER} LANGUAGES C CXX)
 
 # clap-wrapper sets this in its own directory scope; the SDK/wrapper static
@@ -99,6 +99,13 @@ add_library(muhammad-impl STATIC ${MUH_IMPL_SRCS})
 set_source_files_properties(${MUH_REPO}/src/p5_store.cpp PROPERTIES
     COMPILE_OPTIONS "$<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-std=gnu++20>")
 target_compile_features(muhammad-impl PRIVATE cxx_std_17)
+# The engine math contract rides the TARGET here too (review B1): this
+# project re-compiles the engine sources; inheriting nothing from the repo's
+# top level, it silently built WITHOUT -ffp-contract=off — FMA fused in the
+# SIMD copy but not the scalar reference, so the shipped wrappers' kernels
+# were not bit-identical. MSVC /fp:precise (default) never forms FMA.
+target_compile_options(muhammad-impl PUBLIC
+    $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-O3;-ffp-contract=off>)
 # clapfirst links this static impl into SHARED modules (the .clap asset and
 # the VST3 bundle): whole-archive PIC, and the PIC'd objects win over the
 # non-PIC repo subproject copies that arrive via the p5_gui dependency edge.
@@ -117,14 +124,14 @@ if(APPLE)
 endif()
 
 # dual wide kernel, matching the repo layout when the compiler speaks GCC
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|i386|i686"
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64"
    AND (CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID MATCHES "Clang"))
     add_library(muhammad-impl-avx2 OBJECT ${MUH_REPO}/src/p5_kernel_simd.cpp)
     target_include_directories(muhammad-impl-avx2 PRIVATE ${MUH_REPO}/src
         ${MUH_REPO}/external ${MUH_REPO}/vendor/clap ${MUH_REPO}/vendor/tuning-library/include)
     target_compile_definitions(muhammad-impl-avx2 PRIVATE P5_SIMD_SYMBOL=p5KernelSimdAVX2 P5_HAVE_AVX2)
     set_property(TARGET muhammad-impl-avx2 PROPERTY POSITION_INDEPENDENT_CODE ON)
-    target_compile_options(muhammad-impl-avx2 PRIVATE -mavx2 -mfma)
+    target_compile_options(muhammad-impl-avx2 PRIVATE -mavx2 -mfma -ffp-contract=off)
     target_sources(muhammad-impl PRIVATE $<TARGET_OBJECTS:muhammad-impl-avx2>)
     target_compile_definitions(muhammad-impl PRIVATE P5_HAVE_AVX2)
 endif()

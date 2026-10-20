@@ -14,7 +14,7 @@ cat > "$DST/Contents/Info.plist" <<PLIST
   <key>CFBundleExecutable</key><string>muhammad</string>
   <key>CFBundleIdentifier</key><string>muhammad.unresolvable</string>
   <key>CFBundleName</key><string>Muhammad</string>
-  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundlePackageType</key><string>BNDL</string>   <!-- plugin bundle, not an app (CI hygiene) -->
   <key>CFBundleShortVersionString</key><string>${VER}</string>
   <key>CFBundleVersion</key><string>${VER}</string>
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>

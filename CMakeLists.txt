@@ -37,6 +37,14 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${PP_CXX_FLAGS}")
 
 find_library(MATH_LIBRARY m)
 
+# Every symbol was exported on Linux/macOS: nvg*, stb_*, p5::, pw:: sat in the
+# dynamic symbol table where any host or neighbouring plugin shipping nanovg
+# or stb could interpose them (review B6). clap_entry is CLAP_EXPORT-marked
+# (visibility("default")) and stays visible.
+set(CMAKE_CXX_VISIBILITY_PRESET hidden)
+set(CMAKE_C_VISIBILITY_PRESET hidden)
+set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
+
 # Build stamp: version + git hash + dirty marker + time, shown in the panel
 # corner and the descriptor, so a running binary identifies itself.
 find_program(GIT_EXE git)
@@ -55,6 +63,47 @@ set(ENGINE_SOURCES
     src/p5_kernel_scalar.cpp
     src/p5_kernel_simd.cpp
 )
+
+# The engine's math contract (-O3 + no FMA contraction) rides the TARGET,
+# not CMAKE_CXX_FLAGS: consumers that recompile these sources in their own
+# project (tools/wrapper) must not be able to lose it (review B1: the VST3/AU
+# builds fused FMAs in one kernel but not the other). PUBLIC: anything
+# linking p5_engine inherits it.
+add_library(p5_engine STATIC ${ENGINE_SOURCES})
+target_include_directories(p5_engine PUBLIC src external)
+target_compile_options(p5_engine PUBLIC
+    $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-O3;-ffp-contract=off>)
+if(MATH_LIBRARY)
+    target_link_libraries(p5_engine PUBLIC ${MATH_LIBRARY})
+endif()
+
+    # x86 ships the wide kernel twice: portable baseline + true AVX2 (SIMDe maps
+# to native instructions under -mavx2 -mfma). Engine::activate selects by
+# cpuid; the contract stays OFF so both paths are bit-identical.
+# Review B7: this block used to hide inside if(MUHAMMAD_GUI AND UNIX) -
+# Windows never got the AVX2 kernel, and CI never A/B-tested the SSE2 kernel
+# the Windows ship actually uses. 32-bit x86 is deliberately EXCLUDED: x87
+# excess precision breaks bit-exactness. Apple is skipped for the same reason
+# the universal slice would compile -mavx2 for arm64; single-arch x86_64 mac
+# builds can opt in with -DP5_AVX2=ON.
+set(P5_AVX2_OK OFF)
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64"
+   AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
+    if(NOT APPLE)
+        set(P5_AVX2_OK ON)
+    elseif(APPLE AND CMAKE_OSX_ARCHITECTURES STREQUAL "x86_64")
+        set(P5_AVX2_OK ON)
+    endif()
+endif()
+option(P5_AVX2 "true-AVX2 twin of the wide kernel (default: auto by platform)" ${P5_AVX2_OK})
+if(P5_AVX2)
+    add_library(p5_simd_avx2 OBJECT src/p5_kernel_simd.cpp)
+    target_include_directories(p5_simd_avx2 PRIVATE src external)
+    target_compile_definitions(p5_simd_avx2 PRIVATE P5_SIMD_SYMBOL=p5KernelSimdAVX2 P5_HAVE_AVX2)
+    target_compile_options(p5_simd_avx2 PRIVATE -mavx2 -mfma -ffp-contract=off)
+    target_link_libraries(p5_engine PUBLIC p5_simd_avx2)   # objects propagate transitively
+    target_compile_definitions(p5_engine PUBLIC P5_HAVE_AVX2)
+endif()
 
 # ---- GUI (NanoVG panel; Linux/X11 is the primary target) ---------------------
 # draw_panel + layout are platform-neutral; the embedding shim is per-OS.
@@ -117,23 +166,14 @@ if(MUHAMMAD_GUI)
     # headless golden-image test (see tools/check_goldens.sh)
 if(UNIX AND NOT APPLE)   # goldens need Mesa/EGL surfaces: Linux only
 # (macOS has no EGL at all - neither headers nor runtime)
-    # x86 ships the wide kernel twice: portable baseline + true AVX2 (SIMDe maps to
-# native instructions under -mavx2 -mfma). Engine::activate selects by cpuid;
-# contract stays OFF so both paths are bit-identical to the firmware reference.
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|i386|i686")
-    add_library(p5_simd_avx2 OBJECT src/p5_kernel_simd.cpp)
-    target_include_directories(p5_simd_avx2 PRIVATE src external)
-    target_compile_definitions(p5_simd_avx2 PRIVATE P5_SIMD_SYMBOL=p5KernelSimdAVX2)
-    target_compile_options(p5_simd_avx2 PRIVATE -mavx2 -mfma)
-    add_compile_definitions(P5_HAVE_AVX2)
-    list(APPEND ENGINE_SOURCES $<TARGET_OBJECTS:p5_simd_avx2>)
-endif()
+# NOTE: the AVX2 twin used to live INSIDE this branch (review B7) - it is
+# now a top-level option, so Windows/macOS/Linux all get it where valid.
 
-add_executable(render_golden tests/render_golden.cpp ${ENGINE_SOURCES})
+add_executable(render_golden tests/render_golden.cpp)
     target_include_directories(render_golden PRIVATE src vendor/clap external ${NANOVG_DIR}/src
                                      external/stb ${X11_INCLUDE_DIR})
     target_compile_definitions(render_golden PRIVATE GL_GLEXT_PROTOTYPES=1 P5_BUILD_INFO="${P5_BUILD_INFO}")
-    target_link_libraries(render_golden PRIVATE p5_gui ${MUHAMMAD_GL_LIBS} ${MATH_LIBRARY})
+    target_link_libraries(render_golden PRIVATE p5_engine p5_gui ${MUHAMMAD_GL_LIBS} ${MATH_LIBRARY})
 endif()
     endif()
 
@@ -144,12 +184,17 @@ add_library(muhammad_clap MODULE
     src/muhammad_discovery.cpp
     src/p5_store.cpp
     ${GUI_PLUGIN_SOURCES}
-    ${ENGINE_SOURCES}
 )
+target_link_libraries(muhammad_clap PRIVATE p5_engine)
 target_include_directories(muhammad_clap PRIVATE src vendor/clap external ${X11_INCLUDE_DIR})
+if(WIN32 OR (UNIX AND NOT APPLE))
+    # ship a self-contained C++ runtime: the .clap must load on boxes without
+    # a matching libstdc++ (review B2; the bare-Windows branch already did)
+    target_link_options(muhammad_clap PRIVATE -static-libgcc -static-libstdc++)
+endif()
 target_compile_definitions(muhammad_clap PRIVATE P5_BUILD_INFO="${P5_BUILD_INFO}" P5_VERSION="${P5_VERSION}")
 if(GUI_DEFINES)
-    target_compile_definitions(muhammad_clap PRIVATE ${GUI_DEFINES} P5_BUILD_INFO="${P5_BUILD_INFO}" P5_VERSION="${P5_VERSION}")
+    target_compile_definitions(muhammad_clap PRIVATE ${GUI_DEFINES})
     target_link_libraries(muhammad_clap PRIVATE p5_gui ${X11_LIBRARIES} ${MUHAMMAD_GL_LIBS})
 endif()
 if(WIN32)
@@ -171,7 +216,8 @@ endif()
 option(MUHAMMAD_TSAN "build test_threadsan under ThreadSanitizer" OFF)
 if(MUHAMMAD_TSAN AND NOT WIN32)
     add_executable(test_threadsan tests/test_threadsan.cpp
-        src/muhammad_plugin.cpp src/p5_store.cpp ${ENGINE_SOURCES})
+        src/muhammad_plugin.cpp src/p5_store.cpp)
+    target_link_libraries(test_threadsan PRIVATE p5_engine)
     target_include_directories(test_threadsan PRIVATE src vendor/clap external)
     target_compile_definitions(test_threadsan PRIVATE P5_BUILD_INFO="tsan" P5_VERSION="tsan")
     target_compile_options(test_threadsan PRIVATE -fsanitize=thread)
@@ -181,27 +227,31 @@ if(MUHAMMAD_TSAN AND NOT WIN32)
     endif()
 endif()
 
-add_executable(test_splitinv tests/test_splitinv.cpp ${ENGINE_SOURCES})
+add_executable(test_splitinv tests/test_splitinv.cpp)
+target_link_libraries(test_splitinv PRIVATE p5_engine)
 target_include_directories(test_splitinv PRIVATE src external)
 if(MATH_LIBRARY)
     target_link_libraries(test_splitinv PRIVATE ${MATH_LIBRARY})
 endif()
 
-add_executable(test_engine_ab tests/test_engine_ab.cpp ${ENGINE_SOURCES})
+add_executable(test_engine_ab tests/test_engine_ab.cpp)
+target_link_libraries(test_engine_ab PRIVATE p5_engine)
 target_include_directories(test_engine_ab PRIVATE src external)
 if(MATH_LIBRARY)
     target_link_libraries(test_engine_ab PRIVATE ${MATH_LIBRARY})
 endif()
 
 # ---- benchmark -----------------------------------------------------------------
-add_executable(test_quantnoise tests/test_quantnoise.cpp ${ENGINE_SOURCES})
+add_executable(test_quantnoise tests/test_quantnoise.cpp)
+target_link_libraries(test_quantnoise PRIVATE p5_engine)
 target_include_directories(test_quantnoise PRIVATE src external)
-if(TARGET m)
-    target_link_libraries(test_quantnoise PRIVATE m)
+if(MATH_LIBRARY)
+    target_link_libraries(test_quantnoise PRIVATE ${MATH_LIBRARY})
 endif()
 
 if(NOT WIN32)   # bench uses POSIX clock_gettime(CLOCK_MONOTONIC)
-add_executable(bench_engine tests/bench_engine.cpp ${ENGINE_SOURCES})
+add_executable(bench_engine tests/bench_engine.cpp)
+target_link_libraries(bench_engine PRIVATE p5_engine)
 target_include_directories(bench_engine PRIVATE src external)
 if(MATH_LIBRARY)
     target_link_libraries(bench_engine PRIVATE ${MATH_LIBRARY})
@@ -215,7 +265,8 @@ endif()
 # configured here. The generated tables under src/ are committed artifacts.
 
 
-add_executable(render_demo tests/render_demo.cpp ${ENGINE_SOURCES})
+add_executable(render_demo tests/render_demo.cpp)
+target_link_libraries(render_demo PRIVATE p5_engine)
 target_include_directories(render_demo PRIVATE src external)
 if(MATH_LIBRARY)
     target_link_libraries(render_demo PRIVATE ${MATH_LIBRARY})
@@ -224,7 +275,10 @@ endif()
 # ---- audio-thread allocation watchdog (LD_PRELOAD shim for clap_smoke) --------
 if(NOT WIN32)
 add_library(allocwatch SHARED tools/allocwatch.c)
-set_target_properties(allocwatch PROPERTIES PREFIX "")
+set_target_properties(allocwatch PROPERTIES PREFIX ""
+    C_VISIBILITY_PRESET default)   # it is LD_PRELOADED: aw_count/aw_blocks must
+                                   # be dynamically visible despite the global
+                                   # hidden default (B6)
 endif()
 
 find_library(X11_LIBRARY X11)
@@ -245,21 +299,49 @@ target_link_libraries(test_tune PRIVATE p5_gui nanovg)
 endif()
 
 add_executable(test_mpe tests/test_mpe.cpp ${ENGINE_SOURCES} src/p5_store.cpp)
+target_link_libraries(test_mpe PRIVATE p5_engine)
 target_include_directories(test_mpe PRIVATE src external)
-if(TARGET m)
-    target_link_libraries(test_mpe PRIVATE m)
+if(MATH_LIBRARY)
+    target_link_libraries(test_mpe PRIVATE ${MATH_LIBRARY})
 endif()
 
-add_executable(test_trimdrift tests/test_trimdrift.cpp ${ENGINE_SOURCES})
+add_executable(test_trimdrift tests/test_trimdrift.cpp)
+target_link_libraries(test_trimdrift PRIVATE p5_engine)
 target_include_directories(test_trimdrift PRIVATE src external)
-if(TARGET m)
-    target_link_libraries(test_trimdrift PRIVATE m)
+if(MATH_LIBRARY)
+    target_link_libraries(test_trimdrift PRIVATE ${MATH_LIBRARY})
 endif()
 
 # ---- patch store unit test (headless; P5_STORE_DIR override) -----------------
 if(NOT WIN32)
 add_executable(test_store tests/test_store.cpp src/p5_store.cpp)
 target_include_directories(test_store PRIVATE src)
+endif()
+
+# ---- ctest registration (review B10: a new test previously only ran if
+# someone hand-edited the workflow YAML) --------------------------------------
+enable_testing()
+add_test(NAME engine_ab COMMAND test_engine_ab)
+add_test(NAME engine_ab_sse2 COMMAND test_engine_ab)     # the SHIPPED portable wide kernel
+set_tests_properties(engine_ab_sse2 PROPERTIES ENVIRONMENT "P5_KERNEL=sse2")
+add_test(NAME splitinv COMMAND test_splitinv)
+add_test(NAME mpe COMMAND test_mpe)
+add_test(NAME trimdrift COMMAND test_trimdrift)
+add_test(NAME quantnoise COMMAND test_quantnoise)
+add_test(NAME store COMMAND test_store)
+add_test(NAME tune COMMAND test_tune)
+set_tests_properties(store PROPERTIES ENVIRONMENT "P5_STORE_DIR=${CMAKE_BINARY_DIR}/ctest-store")
+set_tests_properties(tune PROPERTIES ENVIRONMENT "P5_STORE_DIR=${CMAKE_BINARY_DIR}/ctest-store")
+set_tests_properties(mpe PROPERTIES ENVIRONMENT "P5_STORE_DIR=${CMAKE_BINARY_DIR}/ctest-store")
+if(NOT WIN32)
+add_test(NAME smoke COMMAND clap_smoke $<TARGET_FILE:muhammad_clap>)
+set_tests_properties(smoke PROPERTIES
+    ENVIRONMENT "P5_STORE_DIR=${CMAKE_BINARY_DIR}/ctest-store"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+if(MUHAMMAD_TSAN)
+    add_test(NAME threadsan COMMAND test_threadsan)
+    set_tests_properties(threadsan PROPERTIES ENVIRONMENT "P5_STORE_DIR=${CMAKE_BINARY_DIR}/ctest-store")
+endif()
 endif()
 
 # ---- CLAP smoke test: dlopens the built plugin and drives its surface --------

@@ -24,8 +24,13 @@ rm -rf "$DIST"; mkdir -p "$DIST"   # never trust leftovers: a stale (or
 say() { echo "[wrappers] $*"; }
 
 # ---- fetch the wrapper + Steinberg SDK (pinned tag, shallow) --------------
-if [ ! -d "$WORK/clap-wrapper" ]; then
-    git clone -q --depth 1 https://github.com/free-audio/clap-wrapper "$WORK/clap-wrapper"
+# clap-wrapper PINNED (review B8: HEAD + CPM floating rtaudio/rtmidi made
+# release builds irreproducible). v0.9.1 = newest tag as of 2026-10-20.
+# Layout guard: a stale HEAD/other-tag cache self-heals like AudioUnitSDK's.
+if [ ! -d "$WORK/clap-wrapper" ] || [ ! -f "$WORK/clap-wrapper/.pinned-v0.9.1" ]; then
+    rm -rf "$WORK/clap-wrapper"
+    git clone -q --depth 1 --branch v0.9.1 https://github.com/free-audio/clap-wrapper "$WORK/clap-wrapper"
+    touch "$WORK/clap-wrapper/.pinned-v0.9.1"
 fi
 if [ ! -d "$WORK/vst3sdk" ]; then
     git clone -q --depth 1 https://github.com/steinbergmedia/vst3sdk "$WORK/vst3sdk"
@@ -93,7 +98,7 @@ if [ "$(uname)" = "Darwin" ]; then
     # vst3sdk and the wrapper support >=17 by their own guard), deployment
     # 12.0 for the span-era availability annotations.
     EXTRA+=(-DCLAP_WRAPPER_BUILD_AUV2=ON -DAUDIOUNIT_SDK_ROOT="$WORK/AudioUnitSDK"
-            -DCLAP_WRAPPER_CXX_STANDARD=20 -DOSX_DEPLOYMENT_TARGET=12.0)
+            -DCLAP_WRAPPER_CXX_STANDARD=20 -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0)
 fi
 
 VER="$(grep -m1 'set(P5_VERSION' "$REPO/CMakeLists.txt" | sed 's/.*"\(.*\)".*/\1/')"

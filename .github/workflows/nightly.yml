@@ -12,6 +12,9 @@
 
 name: build
 
+permissions:
+  contents: read        # least-privilege default; the release job opts up (B: CI hygiene)
+
 on:
   schedule:
     - cron: '15 4 * * *'          # daily ~05:15 AEDT / 14:15 UTC+AEDT-ish; UTC 04:15
@@ -40,7 +43,12 @@ jobs:
 
   linux:
     needs: version
-    runs-on: ubuntu-24.04
+    # ubuntu-22.04: glibc 2.35. The 24.04 runner links __isoc23_* (glibc 2.38+)
+    # and GCC-13 libstdc++ symbols, and the .clap then REFUSES to load on
+    # Ubuntu 22.04 / Debian 12 / RHEL 9 boxes (review B2). The job below also
+    # prints the highest GLIBC_* version the binary demands, so this ceiling
+    # can never regress silently.
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - run: |
@@ -55,19 +63,18 @@ jobs:
             imagemagick x11-utils
       - run: cmake -B build -DCMAKE_BUILD_TYPE=Release
       - run: cmake --build build -j"$(nproc)"
-      - name: tests
+      - name: "tests (ctest registry - a new test runs without YAML edits, B10)"
+        working-directory: build
+        run: ctest --output-on-failure -E '^threadsan$'
+      - name: "audio-thread allocation watchdog (B11: allocwatch was never preloaded in CI)"
         working-directory: build
         run: |
-          ./test_engine_ab
-          ./test_splitinv
-          ./test_store
-          ./test_tune
-          ./test_mpe
-          ./test_quantnoise
-          ./test_trimdrift
-          P5_STORE_DIR=/tmp/muh-ci ./clap_smoke ./muhammad.clap
-        env:
-          P5_STORE_DIR: /tmp/muh-ci
+          LD_PRELOAD="$PWD/allocwatch.so" P5_STORE_DIR=/tmp/muh-ci \
+            ./clap_smoke ./muhammad.clap | tee /tmp/alloc.log
+          grep -q 'audio-thread allocs.*: 0' /tmp/alloc.log
+      - name: glibc ceiling of the shipped .clap
+        run: |
+          objdump -T build/muhammad.clap | grep -o 'GLIBC_[0-9.]*' | sort -V | tail -1
       - name: golden images
         # surfaceless EGL needs the Mesa RUNTIME driver (llvmpipe), not just
         # -dev headers: --no-install-recommends silently drops it otherwise.
@@ -79,20 +86,45 @@ jobs:
           path: build/muhammad.clap
       - name: wrappers (VST3 + standalone)
         run: bash tools/make_wrappers.sh
+      - name: tar the wrappers (execute bits survive; upload-artifact flattens modes)
+        run: tar -czf muhammad-${{ needs.version.outputs.ver }}-linux-x64-wrappers.tar.gz -C dist wrappers
       - uses: actions/upload-artifact@v4
         with:
-          name: muhammad-${{ needs.version.outputs.ver }}-linux-x64-wrappers
-          path: dist/wrappers
+          name: muhammad-${{ needs.version.outputs.ver }}-linux-x64-wrappers-tar
+          path: muhammad-${{ needs.version.outputs.ver }}-linux-x64-wrappers.tar.gz
 
   tsan:
+    needs: version
+    runs-on: ubuntu-22.04
     needs: version
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - run: cmake -B build -DMUHAMMAD_TSAN=ON -DMUHAMMAD_GUI=OFF -DCMAKE_BUILD_TYPE=Release
       - run: cmake --build build --target test_threadsan -j"$(nproc)"
-      - name: ThreadSanitizer stress (audio thread vs main-thread surface)
-        run: ./build/test_threadsan
+      - name: "ThreadSanitizer stress (audio thread runs process+flush+reset; main runs the panel)"
+        # setarch -R: some kernels lay out mmap() where GCC's libtsan shadow
+        # collides ("unexpected memory mapping" at startup - reproduced on
+        # 6.8 custom kernels). Disabling ASLR for the test run is the stock
+        # workaround and harmless when unneeded.
+        run: setarch "$(uname -m)" -R ./build/test_threadsan
+
+  asan-ubsan:
+    needs: version
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libx11-dev libgl1-mesa-dev libegl1-mesa-dev libglx-dev
+      - run: >
+          cmake -B build -DCMAKE_BUILD_TYPE=Debug -DMUHAMMAD_GUI=OFF
+          -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -O1"
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+      - run: cmake --build build -j"$(nproc)" 2>&1 | tail -5 || true
+      - name: state/preset parsers + engine under ASan+UBSan
+        working-directory: build
+        run: |
+          export ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=print_stacktrace=1
+          ctest --output-on-failure -E 'threadsan|smoke'
 
 
   windows:
@@ -122,10 +154,13 @@ jobs:
       - name: wrappers (VST3 + standalone)
         shell: bash
         run: bash tools/make_wrappers.sh
+      - name: tar the wrappers
+        shell: bash
+        run: tar -czf muhammad-${{ needs.version.outputs.ver }}-win-x64-wrappers.tar.gz -C dist wrappers
       - uses: actions/upload-artifact@v4
         with:
-          name: muhammad-${{ needs.version.outputs.ver }}-win-x64-wrappers
-          path: dist/wrappers
+          name: muhammad-${{ needs.version.outputs.ver }}-win-x64-wrappers-tar
+          path: muhammad-${{ needs.version.outputs.ver }}-win-x64-wrappers.tar.gz
 
   macos:
     needs: version
@@ -135,28 +170,33 @@ jobs:
       - run: >
           cmake -B build -DCMAKE_BUILD_TYPE=Release
           -DMUHAMMAD_GUI=ON -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
       - run: cmake --build build -j"$(sysctl -n hw.ncpu)"
-      - name: tests
+      - name: "tests (B13: macOS ran a subset while the README claimed more)"
         working-directory: build
         run: |
-          ./test_mpe
-          P5_STORE_DIR=/tmp/muh-ci ./clap_smoke ./muhammad.clap
+          ctest --output-on-failure -E 'threadsan'
       - name: bundle
         run: bash tools/make_mac_bundle.sh build/muhammad.clap dist/muhammad.clap
+      - name: "ad-hoc sign the bundle (B5: unsigned mac downloads die at Gatekeeper)"
+        run: codesign --force --deep --sign - dist/muhammad.clap || true
+      - name: "tar the bundle (upload-artifact drops Unix modes; B4)"
+        run: tar -czf muhammad-${{ needs.version.outputs.ver }}-macos-universal.clap.tar.gz -C dist muhammad.clap
       - uses: actions/upload-artifact@v4
         with:
-          name: muhammad-${{ needs.version.outputs.ver }}-macos-universal.clap
-          path: dist/muhammad.clap
+          name: muhammad-${{ needs.version.outputs.ver }}-macos-universal-tar
+          path: muhammad-${{ needs.version.outputs.ver }}-macos-universal.clap.tar.gz
       - name: wrappers (VST3 + AUv2 + standalone)
         run: bash tools/make_wrappers.sh
+      - name: tar the wrappers
+        run: tar -czf muhammad-${{ needs.version.outputs.ver }}-macos-wrappers.tar.gz -C dist wrappers
       - uses: actions/upload-artifact@v4
         with:
-          name: muhammad-${{ needs.version.outputs.ver }}-macos-wrappers
-          path: dist/wrappers
-          # keep the bundle directory structure in the zip
+          name: muhammad-${{ needs.version.outputs.ver }}-macos-wrappers-tar
+          path: muhammad-${{ needs.version.outputs.ver }}-macos-wrappers.tar.gz
 
   release:
-    needs: [version, linux, windows, windows-wrappers, macos]
+    needs: [version, linux, windows, windows-wrappers, macos, tsan]   # B14: never ship a tag TSan red-flagged
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     permissions:
@@ -165,11 +205,11 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: assets
-      - name: stage wrapper zips
+      - name: "stage wrapper tars (jobs upload tarballs: modes survive)"
         run: |
-          for d in assets/*-wrappers; do
-            [ -d "$d" ] || continue
-            (cd "$d" && zip -qr "$OLDPWD/$(basename "$d").zip" .)
+          for t in assets/*-wrappers-tar/*.tar.gz; do
+            [ -f "$t" ] || continue
+            cp "$t" .
           done
       - name: stage claps under unique names
         # Two upload shapes to flatten: linux/windows upload the FILE
@@ -208,7 +248,10 @@ jobs:
             Muhammad ${{ needs.version.outputs.ver }} — CLAP for linux-x64,
             win-x64 and macos-universal, plus wrapper bundles (VST3 on all
             platforms; macOS also gets AUv2; every platform gets the simple
-            standalone host). The wrappers load muhammad.clap by name at
-            runtime: put the .clap in your app's CLAP directory (~/.clap,
-            %LOCALAPPDATA%/Bitwig/... or ~/Library/Application Support/...)
-            and the .vst3/.component in the matching VST3/AU folder.
+            standalone host). The wrappers embed the engine and panel -
+            they need NO separate muhammad.clap installation (0.2.x
+            clap-first builds; B15 corrected the old text). Install the
+            .vst3/.component/standalone from the wrapper tarballs; keep file
+            modes by extracting with tar. macOS builds are ad-hoc signed:
+            first launch may need `xattr -dr com.apple.quarantine` on the
+            download.
