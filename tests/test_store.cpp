@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 #include <unistd.h>            // mkdtemp (POSIX; libc++ does not leak it via stdlib)
 #include <filesystem>
 
@@ -45,6 +46,26 @@ int main()
         check("findSlotFor misses unbound", !p5store::findSlotFor(none, sl));
     }
     std::filesystem::remove_all(tmp);
+    {   // baseDir contract (2026-10-20 regression): XDG_DOCUMENTS_DIR names a
+        // PARENT CANDIDATE, never the store itself — desktop sessions export
+        // it, and a raw return lost the /Muhammad Synth level: real users saw
+        // an empty USER page with patches on disk. Test WITHOUT P5_STORE_DIR.
+        unsetenv("P5_STORE_DIR");
+        char fh[] = "/tmp/muh-fakehome-XXXXXX";
+        if (mkdtemp(fh))
+        {   setenv("HOME", fh, 1);
+            const std::string docs = std::string(fh) + "/Documents";
+            std::filesystem::create_directories(docs);
+            setenv("XDG_DOCUMENTS_DIR", docs.c_str(), 1);
+            check("XDG parent + suffix", p5store::baseDir() == docs + "/Muhammad Synth");
+            setenv("XDG_DOCUMENTS_DIR", "$HOME/Documents", 1);   // unexpanded shape
+            check("$HOME form expands", p5store::baseDir() == docs + "/Muhammad Synth");
+            unsetenv("XDG_DOCUMENTS_DIR");
+            check("plain ~/Documents fallback", p5store::baseDir() == docs + "/Muhammad Synth");
+            std::filesystem::remove_all(fh);
+        }
+        setenv("P5_STORE_DIR", tmp, 1);
+    }
     std::printf(fails ? "store: FAILED\n" : "store: all ok\n");
     return fails ? 1 : 0;
 }

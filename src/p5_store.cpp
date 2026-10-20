@@ -24,14 +24,26 @@ std::string rawDir()
 {
     if (const char *over = std::getenv("P5_STORE_DIR")) return over;   // tests / overrides
     std::error_code ec;
-    // XDG user-dirs first, then plain ~/Documents, then ~/Music, then home.
-    if (const char *docs = std::getenv("XDG_DOCUMENTS_DIR")) if (*docs) return docs;
     const char *home = std::getenv("HOME");
 #ifdef _WIN32
     if (!home || !*home) home = std::getenv("USERPROFILE");
 #endif
     if (!home) home = ".";
     fs::path h(home);
+    // XDG user-dirs first, then plain ~/Documents, then ~/Music, then home —
+    // ALL as candidates for the PARENT; the store is always <parent>/Muhammad
+    // Synth. (The XDG branch used to RETURN the raw value: desktop sessions
+    // export XDG_DOCUMENTS_DIR, and those users got ~/Documents itself — a
+    // store one level up, listPatches empty, saved patches invisible in the
+    // PRESET browser. Owner-hit 2026-10-20; test_store pins the contract.)
+    // pam normally expands $HOME inside the var; expand it again if raw.
+    if (const char *docs = std::getenv("XDG_DOCUMENTS_DIR")) if (*docs)
+    {
+        std::string d = docs;
+        if (d.rfind("$HOME/", 0) == 0) d = std::string(home) + d.substr(5);
+        else if (d == "$HOME") d = home;
+        return (fs::path(d) / "Muhammad Synth").string();
+    }
     fs::path cand[] = {h / "Documents", h / "Music", h};
     for (const auto &p : cand)
         if (fs::is_directory(p, ec)) { h = p; break; }
