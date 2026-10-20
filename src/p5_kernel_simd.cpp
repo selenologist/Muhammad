@@ -171,7 +171,7 @@ inline V filterCoreV(HotV &h, V input, V cutoff, V k, V gain, int curtis, const 
     V cc = minv(maxv(cutoff, spl(0.0f)), spl((float)PW_TPT_TOP));
     VI i = cvtf2u(cc);
     V g0 = gather(tab, i);
-    V g1 = gather(tab, cvtf2u(minv(cc + spl(1.0f), spl((float)PW_TPT_TOP))));   // clamp, not iand: 160-entry table
+    V g1 = gather(tab, cvtf2u(minv(add(cc, spl(1.0f)), spl((float)PW_TPT_TOP))));   // clamp, not iand: 160-entry table
     V g = sel(castsi(cmt(spli(PW_TPT_TOP), i)), g0, add(g0, mul(sub(g1, g0), sub(cc, cvti2f(i)))));  // interp when i < TOP
     V g2 = mul(g, g), g3 = mul(g2, g), g4 = mul(g3, g);
     V recip = div(spl(1.0f), add(spl(1.0f), mul(k, g4)));

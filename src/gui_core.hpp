@@ -22,7 +22,7 @@ struct NVGcontext;
 
 namespace pw {
 
-class Plugin;            // muhammad_plugin.hpp (full type needed in gui_core.cpp)
+struct Plugin;           // muhammad_plugin.hpp defines it as struct (C4099 on MSVC)
 
 // Portable modifier bits. P5_MOD_SHIFT equals X11's ShiftMask (1u<<0) so the
 // X11 shim can pass ev.state straight through; P5_MOD_RIGHT is the sentinel

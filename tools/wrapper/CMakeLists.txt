@@ -33,6 +33,15 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+if(MSVC)
+    # C4996 'unsafe strcpy/sscanf/strncpy' is an MSVC-only deprecation the
+    # CRT honors via this switch; our code and Steinberg's both use plain,
+    # portable CRT calls deliberately (strncpy_s & co. exist only on MSVC).
+    # 4244/4267 stay ENABLED: every muhammad-side site was fixed at source, and
+    # the remaining third-party chatter is quieter than a rule that hides our own.
+    add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
+endif()
+
 set(MUH_REPO "" CACHE PATH "muhammad repo root")
 set(CLAP_WRAPPER_ROOT "" CACHE PATH "clap-wrapper checkout")
 if(NOT EXISTS ${MUH_REPO}/CMakeLists.txt)

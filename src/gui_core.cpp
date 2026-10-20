@@ -18,7 +18,9 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdarg>
-#include <unistd.h>
+#ifndef _MSC_VER
+#include <unistd.h>   // getpid for the stderr pid breadcrumb (MSVC: none, below)
+#endif
 #include <cstdio>
 #include <cstring>
 
@@ -931,7 +933,12 @@ void buildDebugText(GuiCore &c)
         const char *vd = (hh && hh->vendor) ? hh->vendor : "";
         const char *vr = (hh && hh->version) ? hh->version : "";
         line("host: %.40s%s%.20s v%.16s  wm[%.24s]  pid %ld",
-             nm, *vd ? " / " : "", vd, vr, c.hostName, (long)getpid());
+             nm, *vd ? " / " : "", vd, vr, c.hostName,
+#ifdef _MSC_VER
+             0L);   // pid breadcrumb: POSIX forensics, no getpid on MSVC
+#else
+             (long)getpid());
+#endif
     }
     {   static const char *const kProbe[] = { CLAP_EXT_GUI, CLAP_EXT_TIMER_SUPPORT, CLAP_EXT_LOG,
             CLAP_EXT_LATENCY, CLAP_EXT_AUDIO_PORTS_CONFIG, CLAP_EXT_NOTE_NAME, CLAP_EXT_STATE };

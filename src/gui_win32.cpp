@@ -37,6 +37,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <cmath>     // lroundf
 
 #include "gui_core.hpp"
 #include "muhammad_plugin.hpp"
@@ -253,7 +254,7 @@ LRESULT CALLBACK panelWndProc(HWND h, UINT msg, WPARAM wParam, LPARAM lParam)
             const uint32_t nh = (uint32_t)(unsigned)HIWORD(lParam);
             if (nw > 0 && nh > 0 && (nw != c.w || nh != c.h))
             {   c.w = nw; c.h = nh;
-                const long wantH2 = (long)nw * p5ui::kPanelH / p5ui::kPanelW;
+                const long wantH2 = lroundf((float)nw * p5ui::kPanelH / p5ui::kPanelW);
                 if (labs((long)nh - wantH2) <= 40)
                 {   c.topTries = 0; c.askNextMs = 0; c.giveUpOnHost = false; }
                 paintNow(c);

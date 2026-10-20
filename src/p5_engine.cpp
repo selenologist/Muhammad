@@ -824,7 +824,12 @@ void Engine::process(int32_t *out, uint32_t n)
         // Auto: below two live voices the vector kernel's fixed cost dominates,
         // so the scalar path wins; both compute bit-identical results (proven by
         // tests/test_engine_ab), switching mid-stream is safe.
-        const int lanes = __builtin_popcount(mask);
+        // Portable popcount (MSVC has no __builtin_popcount): 8-iteration
+        // Brian-Kernighan at BLOCK rate once per process() — GCC folds it to
+        // popcnt at -O3 anyway, and the integer semantics are identical.
+        unsigned mm = (unsigned)mask;
+        int lanes = 0;
+        while (mm) { mm &= mm - 1u; lanes++; }
         const bool wide = mode_ == KernelMode::Wide ||
                           (mode_ == KernelMode::Auto && lanes >= 2);
         if (wide) simdK_(*this, mask, out, n);

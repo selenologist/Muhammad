@@ -180,7 +180,7 @@ void draw(const Gui &g, const State &s, float w, float h)
         nvgStroke(g.vg);
         if (!b.header[0]) continue;
         nvgFontSize(g.vg, kTxtSize[T_HDR]);
-        const double tw = trackedWidth(g, b.header, kTxtTrack[T_HDR]);
+        const float tw = (float)trackedWidth(g, b.header, kTxtTrack[T_HDR]);  // nvg is float-native
         nvgBeginPath(g.vg);
         nvgRect(g.vg, b.x + b.w / 2 - tw / 2 - 4, b.y - 6, tw + 8, 12);
         nvgFillColor(g.vg, col(kColPanel));

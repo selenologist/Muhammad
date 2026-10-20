@@ -467,7 +467,7 @@ static double paramValue(Plugin *s, clap_id id)
         int v = s->view_.raw[kRawIndex[id]];
         if (p5::polarityByte(kRawIndex[id])) v &= 127;   // bit 7 = polarity, not level
         if (const KnobClamp *k = knobClamp(id)) {
-            if (k->defWhenZero && v == 0) v = k->def;   // raw 0 COUNT = "default 5"
+            if (k->defWhenZero && v == 0) v = (int)k->def;   // raw 0 COUNT = "default 5"
             if (v > (int)k->hi) v = (int)k->hi;         // saturating knobs
         } else if (v > 127) v = 127;                    // engine reads clamped too
         return (double)v;
