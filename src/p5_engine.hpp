@@ -95,6 +95,7 @@ public:
     int rawValue(int idx) const { return idx >= 0 && idx < (int)RAW_MAX ? patch_.raw[idx] : 0; }
     void noteOn(int note, int vel, int ch = 0);
     void noteOff(int note, int ch = -1);   // -1: any channel (firmware semantics)
+    void noteKill(int note, int ch = -1);  // choke/all-sound-off: end NOW, no release law
     void allNotesOff();                       // trk_all_off
     void silenceReset();                      // every voice and part state, as at boot
     void setBend(int raw) { bendRaw_[0] = i_clamp(raw, -8192, 8191); }

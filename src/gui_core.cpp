@@ -979,8 +979,8 @@ void buildDebugText(GuiCore &c)
     line("window: win %ux%u  parent %ux%u  ancestor %ux%u",
          c.w, c.h, c.parW, c.parH, c.ancW, c.ancH);
     line("audio: sr %.0f  block %u  oversample %d  polyphony %d  live %u  simd %s",
-         P->sr, P->minBlock, (P->refreshView(), P->view_.os), P->engine.polyphony(),
-         (unsigned)P->view_.live, P->engine.simdPath());
+         P->sr, P->minBlock, (P->refreshView(), P->model_.os), P->engine.polyphony(),
+         (unsigned)P->model_.live, P->engine.simdPath());
     line("patch: src %s  name %.20s", P->loadTag_, name);
     line("tuning: %.60s  tones %d  root %d  mask %03x  walk %d",
          P->tuneName_, (int)P->tuneToneCount_, P->tuneRoot_, (unsigned)P->tuneMask_,

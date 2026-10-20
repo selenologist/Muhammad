@@ -550,6 +550,24 @@ void Engine::allNotesOff()
     nmono_ = 0; monoNote_ = 0;
 }
 
+// NOTE_CHOKE / All Sound Off: the voice ends NOW - gate and both envelopes
+// drop to their idle state, and the standard death fade smooths the cut.
+void Engine::noteKill(int note, int ch)
+{
+    for (int i = 0; i < MAXV; i++)
+    {   Lane &l = lanes_[i];
+        if (!l.v.active || l.v.note != note) continue;
+        if (ch >= 0 && l.ch != (ch & 15)) continue;
+        l.v.gate = 0;
+        l.fenv = {}; l.aenv = {};
+    }
+    uint32_t k = 0;
+    for (uint32_t j = 0; j < nmono_; j++) if (monoStack_[j] != note) monoStack_[k++] = monoStack_[j];
+    nmono_ = k;
+    if (monoNote_ == note) monoNote_ = 0;   // only the killed winner clears the
+                                             // track; siblings keep their state
+}
+
 void Engine::setBendRangeSemitones(int ch, double up, double down)
 {
     const int q = (int)(up * 256.0 + (up >= 0 ? 0.5 : -0.5));

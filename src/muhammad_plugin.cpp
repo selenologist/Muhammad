@@ -6,6 +6,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <vector>
 #include <cstring>
 #include <thread>
 #include <cctype>
@@ -43,7 +44,6 @@ static const char *kOverlayNames[8] = {
 static const double kOverlayMin[8] = { -63, -63, -24, -24, -63, -63, -63, -63 };
 static const double kOverlayMax[8] = {  63,  63,  24,  24,  63,  63,  63,  63 };
 
-constexpr uint32_t PARAM_COUNT = 58 + NUM_OVERLAYS + 7;   // FEEDBACK rides index 57   // + trim, os, tune, program, bank, pan width, drift
 
 static bool isRawParam(clap_id id) { return id < 58; }
 
@@ -53,6 +53,30 @@ using KnobClamp = p5::KnobRange;
 static const KnobClamp *knobClamp(clap_id id) { return p5::knobRange((int)id); }
 
 static bool isOverlayParam(clap_id id) { return id >= 64 && id < 64 + NUM_OVERLAYS; }
+
+// clap_param_info_t.default_value: the INIT patch byte is the ground-truth
+// default for every wire knob (review 5.7: without defaults, host "reset to
+// default" sent TRIM to 0 = silence and coarse tuning to -12 semitones).
+double Plugin::defaultOf(clap_id id)
+{
+    static uint8_t initRaw[p5::RAW_MAX];
+    static bool built = false;
+    if (!built)
+    {   p5::Patch p; p5::patchInit(p);
+        std::memcpy(initRaw, p.raw, sizeof initRaw);
+        built = true; }
+    if (isRawParam(id))
+    {   int v = initRaw[kRawIndex[id]];
+        if (p5::polarityByte(kRawIndex[id])) v &= 127;
+        if (const KnobClamp *k = knobClamp(id)) { if (v > (int)k->hi) v = (int)k->hi; if (v < (int)k->lo) v = (int)k->lo; }
+        else if (v > 127) v = 127;
+        return (double)v;
+    }
+    if (isOverlayParam(id)) return 0.0;
+    if (id == PID_TRIM) return 0.5;
+    if (id == PID_DRIFT) { int v = initRaw[p5::P5_VINTAGE]; return v > 127 ? 127 : v; }
+    return 0.0;
+}
 
 const char *Plugin::nameOf(clap_id id)
 {
@@ -68,7 +92,8 @@ const char *Plugin::nameOf(clap_id id)
     return "?";
 }
 
-static void dispatchEvent(Plugin *s, const clap_event_header_t *ev);   // fwd: execCmd OP_EVENT
+static void dispatchEvent(Plugin *s, const clap_event_header_t *ev);   // fwd
+static void applyPcFromCache(Plugin *s, int slot);   // fwd: process() pending-PC drain
 
 void Plugin::applyRaw(int idx, int v)
 {
@@ -76,18 +101,21 @@ void Plugin::applyRaw(int idx, int v)
     postRaw(idx, v < 0 ? 0 : v > 255 ? 255 : v);
 }
 int Plugin::rawOf(int idx)
-{   refreshView(); return (idx >= 0 && idx < (int)p5::RAW_MAX) ? view_.raw[idx] : 0; }
+{   return (idx >= 0 && idx < (int)p5::RAW_MAX) ? model_.raw[idx] : 0; }
 int Plugin::rawOfView(int idx) { return rawOf(idx); }
 
-// ---- threaded discipline ------------------------------------------------------
-// One writer: the audio thread mutates the engine. The main thread posts
-// FINAL computed values into an SPSC ring drained at the top of process(),
-// and reads state through a seqlock view the audio thread publishes at the
-// end of every block. While inactive, main owns the engine outright and
-// every post executes directly - single-threaded paths (tests, CI, session
-// restore before activate, editing with transport stopped) are unchanged.
+// ---- threaded discipline (patch/patchMain) -----------------------------------
+// Main owns model_ (the authoritative persistent state) and never writes the
+// engine while active; it stages snapshots the audio thread pulls at block
+// top. The audio thread owns the engine and the host-facing base_/mod_
+// bookkeeping; what hosts change flows back through coalesced per-id reports
+// merged into model_ under a generation rule (a byte main wrote after the
+// audio's last apply stays main's - the newest intent wins, both directions).
+// Host flush/reset run on the AUDIO thread while active and apply directly
+// there - never through main's machinery (review C1). While inactive, main is
+// both threads: model_, engine and the atomics move together.
 
-void Plugin::copyEngineInto(View &v)
+void Plugin::copyEngineInto(Pub &v)
 {
     std::memcpy(v.raw, engine.patch().raw, sizeof v.raw);
     for (int i = 0; i < 8; i++) v.ov[i] = (int16_t)engine.overlay(i);
@@ -97,51 +125,14 @@ void Plugin::copyEngineInto(View &v)
             v.trimV[l][o][0] = (int16_t)sc; v.trimV[l][o][1] = (int16_t)of; }
     std::memcpy(v.dev, engine.tuningDeviation(), sizeof v.dev);
     v.tune = engine.tuneCents(); v.os = engine.oversample();
-    v.pan = engine.panWidth();   v.drift = engine.driftDepth();
-    v.wheel = engine.wheelPos(); v.live = engine.liveVoices();
+    v.pan = engine.panWidth();   v.live = engine.liveVoices();
+    v.wheel = engine.wheelPos();
     v.brUp = (float)engine.bendRangeUpDefault(); v.brDn = (float)engine.bendRangeDownDefault();
     v.rbrUp = engine.rawBendRangeUpDefault(); v.rbrDn = engine.rawBendRangeDownDefault();
-}
-
-// Replay a not-yet-consumed command onto a view snapshot. Idempotent, and
-// racy reads of a slot the consumer just recycled are harmless: an applied
-// entry is already in pub_, a recycled one is simply newer.
-static void applyViewCmd(Plugin::View &v, const Plugin::Cmd &c)
-{
-    switch (c.op)
-    {
-    case Plugin::OP_RAW:     v.raw[c.i0 & 255] = (uint8_t)c.i1; break;
-    case Plugin::OP_OVERLAY: if (c.i0 >= 0 && c.i0 < 8) v.ov[c.i0] = (int16_t)c.i1; break;
-    case Plugin::OP_TUNE:    v.tune = c.i1; break;
-    case Plugin::OP_OS:      v.os = c.i1; break;
-    case Plugin::OP_PAN:     v.pan = c.i1; break;
-    case Plugin::OP_TRIM:
-        if (c.i0 >= 0 && c.i0 < 8 && c.i1 >= 0 && c.i1 < 2)
-        {   v.trimV[c.i0][c.i1][0] = (int16_t)c.i2; v.trimV[c.i0][c.i1][1] = (int16_t)c.i3; }
-        break;
-    case Plugin::OP_BRDEF:   v.brUp = (float)c.d0; v.brDn = (float)c.d1; break;
-    case Plugin::OP_LOAD:    std::memcpy(v.raw, c.pl, 134); break;
-    case Plugin::OP_TUNING:
-        if (c.i0) std::memcpy(v.dev, c.pl, 256); else std::memset(v.dev, 0, 256);
-        break;
-    default: break;
-    }
-}
-
-void Plugin::refreshView()
-{
-    if (!active.load(std::memory_order_acquire))
-    {   copyEngineInto(view_);          // main owns the engine: direct snapshot
-        return; }
-    {   std::lock_guard<std::mutex> lk(viewMx_);   // real happens-before with the
-        view_ = pub_;                              // try-lock publishing audio
-    }
-    // the view must ALSO reflect everything posted but not yet drained:
-    // flush/readback order the host expects, without waiting for a block.
-    const uint32_t r = rr_.load(std::memory_order_relaxed);
-    const uint32_t w = rw_.load(std::memory_order_acquire);
-    for (uint32_t i = r; i != w; i = (i + 1u) & (RINGN - 1u))
-        applyViewCmd(view_, ring_[i]);
+    v.brSet = engine.rawBendRangeUpDefault() >= 0 || model_.brSet;   // resolved-def is authoritative once set
+    std::memcpy(v.base, base_, sizeof v.base);
+    std::memcpy(v.mod, mod_, sizeof v.mod);
+    v.appliedGen = appliedGenCursor_;
 }
 
 void Plugin::publishView()
@@ -150,129 +141,370 @@ void Plugin::publishView()
     copyEngineInto(pub_);             // (never blocks the audio thread)
 }
 
-bool Plugin::postCmd(const Cmd &c)
-{   // SPSC push. The consumer stalls only when the host is not calling
-    // process() (paused/free-wheeling): after a bounded wait main executes
-    // the command itself - safe because no audio callback is in flight if
-    // none has started for 50 ms, and plugin_start() re-drains the ring
-    // before the first block, so ordering against the next resume is fine.
-    Cmd copy = c;
-    for (int spins = 0;; spins++)
-    {   const uint32_t w = rw_.load(std::memory_order_relaxed);
-        const uint32_t n = (w + 1u) & (RINGN - 1u);
-        if (n != rr_.load(std::memory_order_acquire))
-        {   ring_[w] = copy; rw_.store(n, std::memory_order_release); return true; }
-        if (spins < 512) { std::this_thread::yield(); continue; }
-        auto &th = stallSince_;
-        const auto now = std::chrono::steady_clock::now();
-        if (th.time_since_epoch().count() == 0) { th = now; continue; }
-        if (now - th < std::chrono::milliseconds(50)) { std::this_thread::yield(); continue; }
-        th = {}; execCmd(copy); return false;               // audio stalled: apply here
-    }
-}
-
-void Plugin::drainCmds()
-{   const uint32_t w = rw_.load(std::memory_order_acquire);
-    for (uint32_t r = rr_.load(std::memory_order_relaxed); r != w; r = (r + 1u) & (RINGN - 1u))
-        execCmd(ring_[r]);
-    rr_.store(w, std::memory_order_relaxed);
-}
-
-void Plugin::execCmd(const Cmd &c)
+// Re-merge pub_/rep reports into model_. Called at main-thread entries
+// (get_value, frame start, save/load, activate edges). The lock is held by
+// audio only for a microsecond copy, so main blocking here is bounded.
+void Plugin::refreshView()
 {
-    switch (c.op)
-    {
-    case OP_RAW:     engine.editRaw(c.i0, c.i1); break;
-    case OP_OVERLAY: engine.setOverlay(c.i0, c.i1); break;
-    case OP_TUNE:    engine.setTuneCents(c.i1); break;
-    case OP_OS:      engine.setOverSample(c.i1); latencyDirty.store(true); break;
-    case OP_PAN:     engine.setPanWidth(c.i1); break;
-    case OP_TRIM:    engine.setVoiceTrim(c.i0, c.i1, c.i2, c.i3); break;
-    case OP_TUNING:  engine.setTuningDeviation(c.i0 ? (const int16_t *)c.pl : nullptr); break;
-    case OP_BRDEF:   engine.setBendRangeDefault((float)c.d0, (float)c.d1); break;
-    case OP_LOAD:    { p5::Patch p; std::memset(&p, 0, sizeof p);
-                        std::memcpy(p.raw, c.pl, 134);
-                        p.size = 133; p.model = 0x32; p.command = 3;
-                        engine.setPatch(p); } break;
-    case OP_RESET:   engine.silenceReset(); engine.setBend(0); engine.wheelReset();
-                     engine.setAftertouch(0); break;
-    case OP_EVENT:   dispatchEvent(this, reinterpret_cast<const clap_event_header_t *>(c.ev));
-                     break;
-    default: break;
+    if (!active.load(std::memory_order_acquire)) return;   // inactive: model IS truth
+    const Pub p = [this] { std::lock_guard<std::mutex> lk(viewMx_); Pub t = pub_; return t; }();
+    std::memcpy(hostBase_, p.base, sizeof p.base);
+    if (p.appliedGen == lastMergeGen_) { drainReports(p.appliedGen); return; }
+    lastMergeGen_ = p.appliedGen;
+    // Engine-side persistent fields merged ONLY where main has not written
+    // since the audio's last applied generation: main's edit is the newer
+    // truth (it is also already staged for the engine).
+    const uint32_t g = p.appliedGen;
+    bool touched = false;
+    for (int i = 0; i < (int)p5::RAW_MAX; i++)
+        if (rawGen_[i] <= g && model_.raw[i] != p.raw[i]) { model_.raw[i] = p.raw[i]; touched = true; }
+    for (int o = 0; o < 8; o++)
+        if (ovGen_[o] <= g && model_.ov[o] != p.ov[o]) { model_.ov[o] = p.ov[o]; touched = true; }
+    for (int l = 0; l < 8; l++) for (int o = 0; o < 2; o++) for (int k = 0; k < 2; k++)
+        if (trimGen_[l][o][k] <= g && model_.trimV[l][o][k] != p.trimV[l][o][k])
+        { model_.trimV[l][o][k] = p.trimV[l][o][k]; touched = true; }
+    if (devGen_ <= g && std::memcmp(model_.dev, p.dev, 256) != 0)
+    {   std::memcpy(model_.dev, p.dev, 256); touched = true; }
+    if (tuneGen_ <= g) model_.tune = p.tune;
+    if (osGen_ <= g)   model_.os = p.os;
+    if (panGen_ <= g)  model_.pan = p.pan;
+    if (brGen_ <= g)
+    {   model_.brUp = p.brUp; model_.brDn = p.brDn;
+        model_.rbrUp = p.rbrUp; model_.rbrDn = p.rbrDn; }
+    model_.live = p.live; model_.wheel = p.wheel;    // display-only
+    drainReports(g);
+    if (touched) changeTick_.fetch_add(1, std::memory_order_relaxed);
+}
+
+// audio->main coalesced reports: the LATEST value per id, no ordering needed
+// (each is the full base the engine now holds; generation rule as in pub).
+void Plugin::reportParam(clap_id id, double baseVal)
+{   // audio thread: write slot, then raise its mask bit (release). The
+    // consumer takes the bit first and may read a value being replaced by a
+    // NEWER base - which is also true, only fresher. Never torn.
+    if (id >= (clap_id)NIDS) return;
+    repSlot_[id].v = baseVal;
+    repSlot_[id].gen = appliedGenCursor_;
+    repMask_[id >> 6].fetch_or(uint64_t(1u) << (id & 63u), std::memory_order_release);
+}
+
+void Plugin::drainReports(uint32_t curGen)
+{
+    for (uint32_t w = 0; w < REPNW; w++)
+    {   uint64_t bits = repMask_[w].exchange(0, std::memory_order_acq_rel);
+        while (bits)
+        {   const int b = __builtin_ctzll(bits); bits &= bits - 1u;
+            const clap_id id = (clap_id)(w * 64 + b);
+            if (id >= (clap_id)NIDS) continue;
+            const Rep r = repSlot_[id];
+            hostBase_[id] = r.v;
+            if (isRawParam(id))
+            {   const int idx = kRawIndex[id];
+                if (rawGen_[idx] <= r.gen)
+                {   uint8_t v = (uint8_t)(r.v < 0 ? 0 : r.v > 255 ? 255 : r.v + 0.5);
+                    if (p5::polarityByte(idx)) v = (uint8_t)((model_.raw[idx] & 128) | (v & 127));
+                    if (model_.raw[idx] != v) { model_.raw[idx] = v; changeTick_.fetch_add(1, std::memory_order_relaxed); } } }
+            else if (id == PID_TUNE && tuneGen_ <= r.gen) model_.tune = (int)r.v;
+            else if (id == PID_OS && osGen_ <= r.gen)    model_.os = ((int)r.v > 0 ? 2 : 1);
+            else if (id == PID_PAN_WIDTH && panGen_ <= r.gen) model_.pan = (int)r.v;
+            else if (id == PID_DRIFT)
+            {   const int idx = p5::P5_VINTAGE;
+                if (rawGen_[idx] <= r.gen) model_.raw[idx] = (uint8_t)(r.v < 0 ? 0 : r.v > 127 ? 127 : r.v + 0.5); }
+        }
     }
 }
 
+static void requestHostParamFlush(Plugin *s);   // fwd (defined with the param paths)
+
+// ---- state mailbox (main -> audio) --------------------------------------------
+// Latest-WHOLE-STATE semantics: every main mutation stages the full model and
+// the audio applies the newest snapshot when it can. Coalescing is structural
+// (no per-motion queue, review H2): a stalled host cannot overflow anything,
+// and main NEVER executes engine code while active.
+void Plugin::stagePush()
+{   std::lock_guard<std::mutex> lk(viewMx_);
+    pushed_ = model_;
+    pushedGen_.store(gen_, std::memory_order_relaxed);
+    pushedValid_ = true;
+    pushedDirty_.store(true, std::memory_order_release);
+}
+
+// Which param id (if any) addresses a patch byte as its BASE value.
+static int paramIdForByte(int idx)
+{   for (int id = 0; id < 58; id++) if (kRawIndex[id] == idx) return id;
+    return -1; }
+
+void Plugin::applyPushed()
+{   // audio thread, top of every block. The lock is held by main only for a
+    // microsecond snapshot copy, so try_lock failing is a one-block delay,
+    // never a stall.
+    if (!pushedDirty_.load(std::memory_order_acquire)) return;
+    Model m; uint32_t pg;
+    {   std::unique_lock<std::mutex> lk(viewMx_, std::try_to_lock);
+        if (!lk.owns_lock()) return;
+        if (!pushedValid_) { pushedDirty_.store(false, std::memory_order_relaxed); return; }
+        m = pushed_; pg = pushedGen_.load(std::memory_order_relaxed);
+        pushedValid_ = false;
+        pushedDirty_.store(false, std::memory_order_relaxed);
+    }
+    appliedGenCursor_ = pg;
+    const uint32_t lg = loadGen_.load(std::memory_order_relaxed);
+    if (lg != appliedLoadGen_)
+    {   // a full LOAD happened on main: whole-patch semantics (the voices
+        // fade under E6, knob state snaps under E2, the wheel re-seeds).
+        appliedLoadGen_ = lg;
+        p5::Patch p; std::memset(&p, 0, sizeof p);
+        std::memcpy(p.raw, m.raw, 134);
+        p.size = 133; p.model = 0x32; p.command = 3;
+        engine.setPatch(p);
+    }
+    else
+    {   const uint8_t *cur = engine.patch().raw;
+        for (int i = 0; i < (int)p5::RAW_MAX; i++)
+        {   if (cur[i] == m.raw[i]) continue;
+            int v = m.raw[i];
+            // A host-modulated knob's ENGINE byte is base+mod, but the model
+            // carries the BASE (what the patch is, what saves must write).
+            const int id = paramIdForByte(i);
+            if (modActive_ && id >= 0 && mod_[id] != 0.0)
+            {   double e = (double)v + mod_[id];
+                if (e < 0.0) e = 0.0; if (e > 127.0) e = 127.0;
+                const int ev = (int)(e + 0.5);
+                if (p5::polarityByte(i)) v = (cur[i] & 128) | (ev & 127);
+                else v = ev;
+            }
+            engine.editRaw(i, v);
+        }
+        if (modActive_)
+            for (int id = 0; id < 58; id++)
+            {   if (mod_[id] == 0.0) continue;
+                double e = base_[id] + mod_[id];
+                if (e < 0.0) e = 0.0; if (e > 127.0) e = 127.0;
+                const int idx = kRawIndex[id];
+                int v = (int)(e + 0.5);
+                if (p5::polarityByte(idx)) v = (engine.rawValue(idx) & 128) | (v & 127);
+                engine.editRaw(idx, v);
+            }
+    }
+    for (int o = 0; o < 8; o++)
+        if (engine.overlay(o) != m.ov[o]) engine.setOverlay(o, m.ov[o]);
+    for (int l = 0; l < 8; l++)
+        for (int oc = 0; oc < 2; oc++)
+        {   int sc, of; engine.voiceTrim(l, oc, &sc, &of);
+            if (sc != m.trimV[l][oc][0] || of != m.trimV[l][oc][1])
+                engine.setVoiceTrim(l, oc, m.trimV[l][oc][0], m.trimV[l][oc][1]); }
+    if (std::memcmp(engine.tuningDeviation(), m.dev, 256) != 0)
+        engine.setTuningDeviation(m.dev);
+    if (engine.tuneCents() != m.tune) engine.setTuneCents(m.tune);
+    if (engine.oversample() != m.os)
+    {   engine.setOverSample(m.os);                 // 3-sample halfband latency
+        latencyDirty.store(true, std::memory_order_relaxed); }
+    if (engine.panWidth() != m.pan) engine.setPanWidth(m.pan);
+    engine.setBendRangeDefault(m.brUp, m.brDn);     // idempotent, keeps views exact
+}
+
+// main-thread, engine owned: apply the authoritative model to the engine.
+// Used at the activate edges and while inactive (there is no audio thread).
+void Plugin::applyModelToEngineDirect()
+{
+    p5::Patch p; std::memset(&p, 0, sizeof p);
+    std::memcpy(p.raw, model_.raw, 134);
+    p.size = 133; p.model = 0x32; p.command = 3;
+    engine.setPatch(p);
+    for (int o = 0; o < 8; o++) engine.setOverlay(o, model_.ov[o]);
+    for (int l = 0; l < 8; l++)
+        for (int oc = 0; oc < 2; oc++)
+            engine.setVoiceTrim(l, oc, model_.trimV[l][oc][0], model_.trimV[l][oc][1]);
+    engine.setTuningDeviation(model_.dev);
+    engine.setTuneCents(model_.tune);
+    engine.setOverSample(model_.os);
+    engine.setPanWidth(model_.pan);
+    engine.setBendRangeDefault(model_.brUp, model_.brDn);
+    appliedLoadGen_ = loadGen_.load(std::memory_order_relaxed);
+}
+
+// ---- output-event ring (main -> audio -> host out_events) ---------------------
+void Plugin::postOut(OutKind k, clap_id id, double v)
+{   // main produces, audio consumes. Full queue: the LATEST-value nature of
+    // OK_VALUE means dropping the OLDEST queued same-id entry is safe, but
+    // SPSC forbids touching past the head - so drop NEWEST on overflow and
+    // let the next change (or the next par_flush/get_value echo) resync.
+    const uint32_t w = ow_.load(std::memory_order_relaxed);
+    const uint32_t n = (w + 1u) & (OQ_RING - 1u);
+    if (n == or_.load(std::memory_order_acquire)) { outDropped_++; return; }
+    outRing_[w] = OutEv{ (uint8_t)k, (uint16_t)id, v };
+    ow_.store(n, std::memory_order_release);
+}
+
+void Plugin::drainOut(const clap_output_events_t *out)
+{   // audio thread. Each queued OK_VALUE is the GUI's/harness's NEW BASE for
+    // the param: record it, re-apply the engine byte with the host modulation
+    // on top, and echo the value to the host (review H1: this happens from
+    // BOTH process() and params.flush(), so playback edits reach the host).
+    const uint32_t w = ow_.load(std::memory_order_acquire);
+    for (uint32_t r = or_.load(std::memory_order_relaxed); r != w; r = (r + 1u) & (OQ_RING - 1u))
+    {   const OutEv e = outRing_[r];
+        const clap_id id = (clap_id)e.id;
+        if (e.kind == OK_VALUE)
+        {   if (id < (clap_id)NIDS) base_[id] = e.v;
+            if (isRawParam(id))
+            {   const int idx = kRawIndex[id];
+                double eff = e.v + (modActive_ ? mod_[id] : 0.0);
+                if (eff < 0.0) eff = 0.0; if (eff > 127.0) eff = 127.0;
+                int v = (int)(eff + 0.5);
+                if (p5::polarityByte(idx)) v = (engine.rawValue(idx) & 128) | (v & 127);
+                engine.editRaw(idx, v);
+            }
+            else if (id >= 64 && id < 64 + NUM_OVERLAYS)
+                engine.setOverlay((int)(id - 64), (int)(e.v + (e.v < 0 ? -0.5 : 0.5)));
+            else if (id == PID_TUNE) engine.setTuneCents((int)(e.v + (e.v < 0 ? -0.5 : 0.5)));
+            else if (id == PID_PAN_WIDTH) engine.setPanWidth((int)(e.v + 0.5));
+            else if (id == PID_DRIFT) engine.setDriftDepth((int)(e.v + 0.5));
+        }
+        if (!out) continue;
+        clap_event_param_value pe{};
+        clap_event_param_gesture ge{};
+        const clap_event_header_t *hp = nullptr;
+        if (e.kind == OK_VALUE)
+        {   pe.header.type = CLAP_EVENT_PARAM_VALUE;
+            pe.header.size = sizeof pe;
+            pe.header.time = 0;
+            pe.header.space_id = CLAP_CORE_EVENT_SPACE_ID;
+            pe.header.flags = CLAP_EVENT_IS_LIVE;
+            pe.note_id = -1; pe.port_index = -1; pe.channel = -1; pe.key = -1;
+            pe.param_id = id; pe.cookie = nullptr; pe.value = e.v;
+            hp = &pe.header;
+        }
+        else
+        {   ge.header.type = e.kind == OK_BEGIN ? CLAP_EVENT_PARAM_GESTURE_BEGIN
+                                                : CLAP_EVENT_PARAM_GESTURE_END;
+            ge.header.size = sizeof ge;
+            ge.header.time = 0;
+            ge.header.space_id = CLAP_CORE_EVENT_SPACE_ID;
+            ge.header.flags = CLAP_EVENT_IS_LIVE;
+            ge.param_id = id;
+            hp = &ge.header;
+        }
+        out->try_push(out, hp);
+    }
+    or_.store(w, std::memory_order_release);
+}
+
+void Plugin::beginGesture(clap_id id)
+{   if (id >= PEND_IDS || dragOpen_[id]) return;
+    dragOpen_[id] = true;
+    postOut(OK_BEGIN, id, 0.0);
+    if (!active.load(std::memory_order_relaxed))
+        requestHostParamFlush(this);        // inactive: main-thread flush will emit it
+}
+void Plugin::endGesture(clap_id id)
+{   if (id >= PEND_IDS || !dragOpen_[id]) return;
+    dragOpen_[id] = false;
+    postOut(OK_END, id, 0.0);
+    if (!active.load(std::memory_order_relaxed))
+        requestHostParamFlush(this);
+}
+
+// ---- posting helpers: mutate model_ (generation-stamped), then stage ---------
 void Plugin::postRaw(int idx, int v)
 {
     if (idx < 0 || idx >= (int)p5::RAW_MAX) return;
-    view_.raw[idx] = (uint8_t)v;                            // optimistic: sync sees it now
+    if (v < 0) v = 0; if (v > 255) v = 255;
+    model_.raw[idx] = (uint8_t)v;
+    rawGen_[idx] = ++gen_;            // stamped even when unchanged: MAIN wrote last
+    if (model_.raw[idx] == (uint8_t)v && pushedValid_ == false) {}
+    changeTick_.fetch_add(1, std::memory_order_relaxed);
     if (!active.load(std::memory_order_relaxed)) { engine.editRaw(idx, v); return; }
-    Cmd c{}; c.op = OP_RAW; c.i0 = idx; c.i1 = v; postCmd(c);
+    stagePush();
 }
 void Plugin::postOverlay(int i, int v)
 {
     if (i < 0 || i >= 8) return;
-    view_.ov[i] = (int16_t)v;
+    model_.ov[i] = (int16_t)v;
+    ovGen_[i] = ++gen_;
+    changeTick_.fetch_add(1, std::memory_order_relaxed);
     if (!active.load(std::memory_order_relaxed)) { engine.setOverlay(i, v); return; }
-    Cmd c{}; c.op = OP_OVERLAY; c.i0 = i; c.i1 = v; postCmd(c);
+    stagePush();
 }
 void Plugin::postTune(int v)
 {
-    view_.tune = v;
+    model_.tune = v;
+    tuneGen_ = ++gen_;
+    changeTick_.fetch_add(1, std::memory_order_relaxed);
     if (!active.load(std::memory_order_relaxed)) { engine.setTuneCents(v); return; }
-    Cmd c{}; c.op = OP_TUNE; c.i1 = v; postCmd(c);
+    stagePush();
 }
 void Plugin::postOS(int v)
 {
-    view_.os = v;
+    model_.os = v;
+    osGen_ = ++gen_;                 // always stamped (report-vs-load ordering)
+    changeTick_.fetch_add(1, std::memory_order_relaxed);
     if (!active.load(std::memory_order_relaxed))
     {   engine.setOverSample(v);
         if (host && host->get_extension)
         {   auto *l = (const clap_host_latency_t *)host->get_extension(host, CLAP_EXT_LATENCY);
             if (l && l->changed) l->changed(host); }
         return; }
-    Cmd c{}; c.op = OP_OS; c.i1 = v; postCmd(c);
+    // Latency moves with the decimator. A changed() ping while active is the
+    // old Bitwig "plugin misbehaving" wall; request_restart() is the spec's
+    // answer (latency.h) and is legal from MAIN only - deferred to the next
+    // main-thread entry (maybePingLatency), applied by the host's re-activate.
+    latencyDirty.store(true, std::memory_order_relaxed);
+    restartPending_ = true;
+    stagePush();
 }
 void Plugin::postPan(int v)
 {
-    view_.pan = v;
+    model_.pan = v;
+    panGen_ = ++gen_;
+    changeTick_.fetch_add(1, std::memory_order_relaxed);
     if (!active.load(std::memory_order_relaxed)) { engine.setPanWidth(v); return; }
-    Cmd c{}; c.op = OP_PAN; c.i1 = v; postCmd(c);
+    stagePush();
 }
 void Plugin::postTrimPair(int lane, int osc, int sc, int of)
 {
     if (lane < 0 || lane >= 8 || osc < 0 || osc > 1) return;
-    view_.trimV[lane][osc][0] = (int16_t)sc; view_.trimV[lane][osc][1] = (int16_t)of;
+    model_.trimV[lane][osc][0] = (int16_t)sc; model_.trimV[lane][osc][1] = (int16_t)of;
+    trimGen_[lane][osc][0] = trimGen_[lane][osc][1] = ++gen_;
+    changeTick_.fetch_add(1, std::memory_order_relaxed);
     if (!active.load(std::memory_order_relaxed)) { engine.setVoiceTrim(lane, osc, sc, of); return; }
-    Cmd c{}; c.op = OP_TRIM; c.i0 = lane; c.i1 = osc; c.i2 = sc; c.i3 = of; postCmd(c);
+    stagePush();
 }
 void Plugin::postTuning(const int16_t *dev)
 {
-    if (dev) std::memcpy(view_.dev, dev, 256);
-    else std::memset(view_.dev, 0, 256);
+    if (dev) std::memcpy(model_.dev, dev, 256);
+    else std::memset(model_.dev, 0, 256);
+    devGen_ = ++gen_;
+    changeTick_.fetch_add(1, std::memory_order_relaxed);
     if (!active.load(std::memory_order_relaxed)) { engine.setTuningDeviation(dev); return; }
-    Cmd c{}; c.op = OP_TUNING; c.i0 = dev ? 1 : 0;
-    if (dev) std::memcpy(c.pl, dev, 256);
-    postCmd(c);
+    stagePush();
 }
 void Plugin::postBendDefault(float up, float dn)
 {
-    view_.brUp = up; view_.brDn = dn;
+    model_.brUp = up; model_.brDn = dn;
+    brGen_ = ++gen_;
+    changeTick_.fetch_add(1, std::memory_order_relaxed);
     if (!active.load(std::memory_order_relaxed)) { engine.setBendRangeDefault(up, dn); return; }
-    Cmd c{}; c.op = OP_BRDEF; c.d0 = up; c.d1 = dn; postCmd(c);
+    stagePush();
 }
 void Plugin::postLoad(const p5::Patch &p)
 {
-    std::memcpy(view_.raw, p.raw, sizeof view_.raw);        // sync sees the new patch
+    std::memcpy(model_.raw, p.raw, sizeof model_.raw);      // sync sees the new patch
+    for (int i = 0; i < (int)p5::RAW_MAX; i++) rawGen_[i] = ++gen_;
+    loadGen_.fetch_add(1, std::memory_order_relaxed);       // whole-patch semantics
+    changeTick_.fetch_add(1, std::memory_order_relaxed);
     if (!active.load(std::memory_order_relaxed)) { engine.setPatch(p); return; }
-    Cmd c{}; c.op = OP_LOAD; std::memcpy(c.pl, p.raw, 134); postCmd(c);
+    stagePush();
 }
 void Plugin::postReset()
 {
     if (!active.load(std::memory_order_relaxed))
     {   engine.silenceReset(); engine.setBend(0); engine.wheelReset(); engine.setAftertouch(0);
         return; }
-    Cmd c{}; c.op = OP_RESET; postCmd(c);
+    // plugin_reset while active runs ON the audio thread and applies there
+    // directly; this helper is only reached from main-thread paths while the
+    // transport is stopped. (If a host ever calls it from a wrong thread, the
+    // engine is the audio's: nothing to do - the reset was applied already.)
 }
 
 // ---- descriptor --------------------------------------------------------------
@@ -310,12 +542,16 @@ static bool rawByteCarriesMeaning(int idx)
 // Bit 7 = knob POLARITY (p5::polarityByte): host/CC writes address the 7-bit
 // LEVEL only — the flag holds — and the host surface never sees it.
 
-// The engine's ONE writer while active: applyParamNow runs exclusively on the
-// audio thread (dispatchEvent inside process(), or the execCmd drain) - or on
-// main while INACTIVE, when no audio thread exists and main owns everything.
-// Main-thread callers while active go through applyParam, which posts final
-// values and never touches the engine.
-static void requestHostParamFlush(Plugin *s);   // fwd (audio-side PROGRAM echo)
+// One writer PER VALUE, decided by the CLAP thread ANNOTATION (review C1):
+// Plugin::applyValue/applyMod run on the AUDIO thread while active (host
+// events via process()/flush, the out-ring drain) and on MAIN while inactive
+// (single-threaded paths, tests, transport stopped). They set the host-facing
+// BASE value and write BASE+MOD to the engine - the spec's law, the value
+// heard is param_value + param_mod (review C2: PARAM_MOD is an OFFSET, never
+// an absolute value). Main-thread callers while ACTIVE never reach them:
+// applyParam mutates model_ and queues the base for the audio thread.
+static void requestHostParamFlush(Plugin *s);   // fwd (out paths)
+static double paramValue(Plugin *s, clap_id id); // fwd (readback of model_)
 
 static p5::Patch factoryPatch(int k)          // mirror of Engine::loadFactory
 {
@@ -329,7 +565,9 @@ static p5::Patch factoryPatch(int k)          // mirror of Engine::loadFactory
     return p;
 }
 
-static void applyParamNow(Plugin *s, clap_id id, double value)
+// The engine byte a host/panel value addresses, after this parameter's
+// display clamp (shared law so engine, host surface and save agree).
+static double clampHostValue(clap_id id, double value)
 {
     if (isRawParam(id)) {
         int v = (int)(value < 0 ? 0 : value + 0.5);
@@ -337,119 +575,172 @@ static void applyParamNow(Plugin *s, clap_id id, double value)
             if (v < (int)k->lo) v = (int)k->lo;
             if (v > (int)k->hi) v = (int)k->hi;
         } else if (v > 127 && !rawByteCarriesMeaning(kRawIndex[id])) v = 127;
-        if (p5::polarityByte(kRawIndex[id]))               // knob/CC/automation write
-            v = (s->engine.rawValue(kRawIndex[id]) & 128) | (v & 127);   // LEVEL; polarity holds
-        s->engine.editRaw(kRawIndex[id], v);
+        return (double)v;
+    }
+    if (isOverlayParam(id)) return value;
+    if (id == PID_TRIM) return value < 0 ? 0 : value > 2 ? 2 : value;
+    if (id == PID_OS) return value > 0.5 ? 1 : 0;
+    if (id == PID_TUNE) { int v = (int)(value + (value < 0 ? -0.5 : 0.5)); return v < -100 ? -100 : v > 100 ? 100 : v; }
+    if (id == PID_PROGRAM) return value < 0 ? 0 : value > (double)(PW_FACTORY_N - 1) ? (double)(PW_FACTORY_N - 1) : value;
+    if (id == PID_BANK) { double mx = PW_FACTORY_N / 8 - 1; return value < 0 ? 0 : value > mx ? mx : value; }
+    if (id == PID_PAN_WIDTH) { int v = (int)(value + 0.5); return v < 0 ? 0 : v > 127 ? 127 : v; }
+    if (id == PID_DRIFT) { int v = (int)(value + 0.5); return v < 0 ? 0 : v > 127 ? 127 : v; }
+    return value;
+}
+
+// engine-side write: base + (active ? report-to-main : model-echo)
+void Plugin::applyValue(clap_id id, double value)
+{
+    const double base = clampHostValue(id, value);
+    if (id < NIDS) base_[id] = base;
+    const bool live = active.load(std::memory_order_relaxed);   // who I am: audio iff active
+
+    if (isRawParam(id))
+    {
+        const int idx = kRawIndex[id];
+        double e = base + mod_[id];
+        if (e < 0.0) e = 0.0; if (e > 127.0) e = 127.0;
+        int v = (int)(e + 0.5);
+        if (p5::polarityByte(idx))                       // bit 7 = polarity: LEVEL write, flag holds
+            v = (engine.rawValue(idx) & 128) | (v & 127);
+        engine.editRaw(idx, v);
+        if (idx == p5::P5_VINTAGE) base_[PID_DRIFT] = base;   // the byte-37 alias pair
     }
     else if (isOverlayParam(id))
-        s->engine.setOverlay((int)(id - 64), (int)(value < 0 ? value - 0.5 : value + 0.5));
-    else if (id == PID_TRIM) s->trim.store((float)value, std::memory_order_relaxed);
-    else if (id == PID_OS) {
-        s->engine.setOverSample(value > 0.5 ? 2 : 1);
-        // Latency changed with the decimator - but hosts dislike a ping while
-        // activated (old Bitwig logs "plugin misbehaving"). Defer; the mid-
-        // session gap is inaudible, the warning is not. (Ping only when the
-        // owner thread is main and inactive - the audio path just flags it.)
-        if (!s->active.load(std::memory_order_relaxed))
-        {   if (s->host && s->host->get_extension)
-            {   auto *l = (const clap_host_latency_t *)s->host->get_extension(s->host, CLAP_EXT_LATENCY);
-                if (l && l->changed) l->changed(s->host); }
+    {   double e = base + mod_[id];
+        engine.setOverlay((int)(id - 64), (int)(e + (e < 0 ? -0.5 : 0.5))); }
+    else if (id == PID_TRIM)
+        trim.store((float)(base + mod_[id]), std::memory_order_relaxed);
+    else if (id == PID_OS)
+    {   engine.setOverSample(base > 0.5 ? 2 : 1);
+        if (!live)
+        {   if (host && host->get_extension)
+            {   auto *l = (const clap_host_latency_t *)host->get_extension(host, CLAP_EXT_LATENCY);
+                if (l && l->changed) l->changed(host); }
         }
-        else s->latencyDirty.store(true, std::memory_order_relaxed);
+        else { latencyDirty.store(true, std::memory_order_relaxed); restartPending_ = true; }
     }
     else if (id == PID_TUNE)
-        s->engine.setTuneCents((int)(value < 0 ? value - 0.5 : value + 0.5));
+    {   double e = base + mod_[id]; engine.setTuneCents((int)(e + (e < 0 ? -0.5 : 0.5))); }
     else if (id == PID_PROGRAM)
     {
-        const int k = (int)(value + 0.5);
-        if (s->active.load(std::memory_order_relaxed))
-        {   // in-band program event mid-render: the audio thread owns the engine,
-            // so load here and hand identity + host sync to main via adopt.
-            const int cur = s->programA_.load(std::memory_order_relaxed);
+        const int k = (int)(base + 0.5);
+        if (live)
+        {   // in-band program event mid-render: the audio thread owns the
+            // engine - load HERE. Identity + host echo: adopt at main.
+            const int cur = programA_.load(std::memory_order_relaxed);
             if (cur < 0 && k == 0) return;                   // placeholder echo
             if (cur >= 0 && k == cur) return;
             if (k >= 0 && k < (int)PW_FACTORY_N)
-            {   s->engine.loadFactory((uint32_t)k);
-                s->programA_.store(k, std::memory_order_relaxed);
-                s->idSyncSlot_ = k; s->adoptMode_.store(1, std::memory_order_relaxed);
-                s->idSync_.store(true, std::memory_order_release);
-                requestHostParamFlush(s); }
+            {   engine.loadFactory((uint32_t)k);
+                // mirror the new bytes into the base bookkeeping (C2): a
+                // loaded patch REPLACES the base values of the wire knobs.
+                for (int pid = 0; pid < 58; pid++)
+                {   int v = engine.rawValue(kRawIndex[pid]);
+                    if (p5::polarityByte(kRawIndex[pid])) v &= 127;
+                    else if (v > 127 && !rawByteCarriesMeaning(kRawIndex[pid])) v = 127;
+                    base_[pid] = v; }
+                base_[PID_DRIFT] = base_[37];
+                for (clap_id pid = 0; pid < 58; pid++) reportParam(pid, base_[pid]);
+                reportParam(PID_DRIFT, base_[PID_DRIFT]);   // main merges the new patch NOW
+                programA_.store(k, std::memory_order_relaxed);
+                idSyncSlot_.store(k, std::memory_order_relaxed);
+                adoptMode_.store(1, std::memory_order_relaxed);
+                idSync_.store(true, std::memory_order_release);
+                // echo of the rescan: only legal from the SAME entry point's
+                // out list (request_flush is [!audio-thread], params.h:380) -
+                // if we are mid-process/flush, curOut_ is set and emit lands;
+                // otherwise main adopts and echoes at the next entry.
+                emitResync();
+            }
             return;
         }
-        // Host echo guard (inactive path): while the patch is not a factory pick
-        // we report PROGRAM=0 as a placeholder; a pushed-back 0 must not silently
-        // replace what the user just picked. Only a real change drives a load.
-        if (s->program < 0 && k == 0) return;                // placeholder echo, always
-        if (s->program >= 0 && k == s->program) return;
-        s->loadProgram(k);
+        // Host echo guard (inactive path): while the patch is not a factory
+        // pick we report PROGRAM=0 as a placeholder; a pushed-back 0 must not
+        // silently replace what the user just picked. Only a real change
+        // drives a load.
+        if (program < 0 && k == 0) return;
+        if (program >= 0 && k == program) return;
+        loadProgram(k);
+        return;
     }
-    else if (id == PID_BANK) {
-        int v = (int)(value + 0.5);
-        if (v < 0) v = 0;
-        if (v > (int)PW_FACTORY_N / 8 - 1) v = (int)PW_FACTORY_N / 8 - 1;
-        s->bank.store(v);
-    }
-    else if (id == PID_PAN_WIDTH) {
-        int v = (int)(value + 0.5);
-        if (v < 0) v = 0;
-        if (v > 127) v = 127;
-        s->engine.setPanWidth(v);
-    }
-    else if (id == PID_DRIFT) {
-        int v = (int)(value + 0.5);
-        if (v < 0) v = 0;
-        if (v > 127) v = 127;
-        s->engine.setDriftDepth(v);
-    }
+    else if (id == PID_BANK) bank.store((int)base);
+    else if (id == PID_PAN_WIDTH)
+    {   double e = base + mod_[id]; engine.setPanWidth(e < 0 ? 0 : e > 127 ? 127 : (int)(e + 0.5)); }
+    else if (id == PID_DRIFT)
+    {   double e = base + mod_[id]; engine.setDriftDepth((int)(e + 0.5));
+        base_[37] = base; }
+    // base_/trim are audio-owned while live: the ONLY channel back to main is
+    // the coalesced report (program loads cover themselves via loadFactory's
+    // base mirror + the pub raw merge).
+    if (live && id < NIDS && id != PID_PROGRAM && id != PID_BANK)
+    {   reportParam(id, base);
+        if (isRawParam(id) && kRawIndex[id] == p5::P5_VINTAGE) reportParam(PID_DRIFT, base); }
 }
 
-// MAIN-thread entry (guiSet, flush-time sets, main-path CC aliases). While
-// active NOTHING here touches the engine: every write is computed against the
-// view, published optimistically for sync, and posted for the audio owner.
+// PARAM_MOD: a modulation OFFSET on top of the base (events with a per-
+// note/polyphonic address are not modelled by this engine - ignore them and
+// keep the monophonic offset at the -1 wildcard address).
+void Plugin::applyMod(clap_id id, double amount)
+{
+    if (id >= NIDS) return;
+    if (id == PID_PROGRAM || id == PID_BANK || id == PID_OS) return;   // not modulatable (5.1/5.9)
+    const bool was = (mod_[id] != 0.0);
+    mod_[id] = amount;
+    modActive_ += (amount != 0.0) ? (was ? 0 : 1) : (was ? -1 : 0);
+    if (modActive_ < 0) modActive_ = 0;
+    applyValue(id, base_[id]);
+}
+
+// Emit current values for every wire param + the sidecar knobs into the
+// host's output list (in-band program load: the whole patch moved).
+void Plugin::emitResync()
+{
+    const clap_output_events_t *out = curOut_;
+    if (!out) return;
+    for (clap_id id = 0; id < 58; id++)
+    {   clap_event_param_value pe{};
+        pe.header.type = CLAP_EVENT_PARAM_VALUE; pe.header.size = sizeof pe;
+        pe.header.time = 0; pe.header.space_id = CLAP_CORE_EVENT_SPACE_ID;
+        pe.header.flags = CLAP_EVENT_IS_LIVE;
+        pe.note_id = -1; pe.port_index = -1; pe.channel = -1; pe.key = -1;
+        pe.param_id = id; pe.cookie = nullptr;
+        int v = engine.rawValue(kRawIndex[id]);
+        if (p5::polarityByte(kRawIndex[id])) v &= 127;
+        else if (v > 127 && !rawByteCarriesMeaning(kRawIndex[id])) v = 127;
+        pe.value = (double)v;
+        out->try_push(out, &pe.header); }
+}
+
+// MAIN-thread entry while active (guiSet, resync echoes): mutate model_
+// (generation-stamped), queue the base for the audio out-drain, never touch
+// the engine (review C1: the single writer stays the audio thread).
 static void applyParam(Plugin *s, clap_id id, double value)
 {
-    if (!s->active.load(std::memory_order_relaxed)) { applyParamNow(s, id, value); return; }
-    if (isRawParam(id)) {
-        const int idx = kRawIndex[id];
-        int v = (int)(value < 0 ? 0 : value + 0.5);
-        if (const KnobClamp *k = knobClamp(id)) {
-            if (v < (int)k->lo) v = (int)k->lo;
-            if (v > (int)k->hi) v = (int)k->hi;
-        } else if (v > 127 && !rawByteCarriesMeaning(idx)) v = 127;
-        s->refreshView();
-        if (p5::polarityByte(idx)) v = (s->view_.raw[idx] & 128) | (v & 127);
+    if (!s->active.load(std::memory_order_relaxed)) { s->applyValue(id, value); return; }
+    const double base = clampHostValue(id, value);
+    if (isRawParam(id))
+    {   const int idx = kRawIndex[id];
+        int v = (int)(base + 0.5);
+        if (p5::polarityByte(idx)) v = (s->model_.raw[idx] & 128) | (v & 127);
         s->postRaw(idx, v);
+        if (idx == p5::P5_VINTAGE) s->markPending(PID_DRIFT, base);
     }
-    else if (isOverlayParam(id))
-        s->postOverlay((int)(id - 64), (int)(value < 0 ? value - 0.5 : value + 0.5));
-    else if (id == PID_TRIM) s->trim.store((float)value, std::memory_order_relaxed);
-    else if (id == PID_OS) s->postOS(value > 0.5 ? 2 : 1);
-    else if (id == PID_TUNE) s->postTune((int)(value < 0 ? value - 0.5 : value + 0.5));
+    else if (isOverlayParam(id)) s->postOverlay((int)(id - 64), (int)(base + (base < 0 ? -0.5 : 0.5)));
+    else if (id == PID_TRIM) s->trim.store((float)base, std::memory_order_relaxed);
+    else if (id == PID_OS) s->postOS((int)base > 0 ? 2 : 1);
+    else if (id == PID_TUNE) s->postTune((int)base);
     else if (id == PID_PROGRAM)
-    {
-        const int k = (int)(value + 0.5);
+    {   const int k = (int)(base + 0.5);
         if (s->program < 0 && k == 0) return;                // placeholder echo
         if (s->program >= 0 && k == s->program) return;
-        s->loadProgram(k);                                  // main-side: posts the patch
+        s->loadProgram(k);                                   // main-side: posts the patch
+        return;                                              // (loadProgram echoes params)
     }
-    else if (id == PID_BANK) {
-        int v = (int)(value + 0.5);
-        if (v < 0) v = 0;
-        if (v > (int)PW_FACTORY_N / 8 - 1) v = (int)PW_FACTORY_N / 8 - 1;
-        s->bank.store(v);
-    }
-    else if (id == PID_PAN_WIDTH) {
-        int v = (int)(value + 0.5);
-        if (v < 0) v = 0;
-        if (v > 127) v = 127;
-        s->postPan(v);
-    }
-    else if (id == PID_DRIFT) {
-        int v = (int)(value + 0.5);
-        if (v < 0) v = 0;
-        if (v > 127) v = 127;
-        s->postRaw(p5::P5_VINTAGE, v);
-    }
+    else if (id == PID_BANK) s->bank.store((int)base);
+    else if (id == PID_PAN_WIDTH) s->postPan((int)base);
+    else if (id == PID_DRIFT) s->postRaw(p5::P5_VINTAGE, (int)base);
+    s->markPending(id, paramValue(s, id));
 }
 
 
@@ -462,9 +753,8 @@ static void requestHostParamFlush(Plugin *s)
 
 static double paramValue(Plugin *s, clap_id id)
 {
-    s->refreshView();
     if (isRawParam(id)) {
-        int v = s->view_.raw[kRawIndex[id]];
+        int v = s->model_.raw[kRawIndex[id]];
         if (p5::polarityByte(kRawIndex[id])) v &= 127;   // bit 7 = polarity, not level
         if (const KnobClamp *k = knobClamp(id)) {
             if (k->defWhenZero && v == 0) v = (int)k->def;   // raw 0 COUNT = "default 5"
@@ -472,14 +762,17 @@ static double paramValue(Plugin *s, clap_id id)
         } else if (v > 127) v = 127;                    // engine reads clamped too
         return (double)v;
     }
-    if (isOverlayParam(id)) return (double)s->view_.ov[(int)(id - 64)];
+    if (isOverlayParam(id)) return (double)s->model_.ov[(int)(id - 64)];
     if (id == PID_TRIM) return (double)s->trim.load(std::memory_order_relaxed);
-    if (id == PID_OS) return (double)(s->view_.os - 1);
-    if (id == PID_TUNE) return s->view_.tune;
-    if (id == PID_PROGRAM) return s->program < 0 ? 0 : s->program;
+    if (id == PID_OS) return (double)(s->model_.os - 1);
+    if (id == PID_TUNE) return s->model_.tune;
+    if (id == PID_PROGRAM)
+    {   const int pa = s->programA_.load(std::memory_order_relaxed);
+        if (pa >= 0) return pa;                 // an audio-side load is the truth
+        return s->program < 0 ? 0 : s->program; }
     if (id == PID_BANK) return (double)s->bank.load();
-    if (id == PID_PAN_WIDTH) return s->view_.pan;
-    if (id == PID_DRIFT) { int v = s->view_.raw[p5::P5_VINTAGE]; return v > 127 ? 127 : v; }
+    if (id == PID_PAN_WIDTH) return s->model_.pan;
+    if (id == PID_DRIFT) { int v = s->model_.raw[p5::P5_VINTAGE]; return v > 127 ? 127 : v; }
     return 0;
 }
 
@@ -492,24 +785,24 @@ bool Plugin::knobPolarity(clap_id id)
 
 void Plugin::guiSetLocal(clap_id id, double v)
 {
-    // Gesture in progress: the engine follows instantly; the host learns the
-    // FINAL value at gesture end. Pushing per-motion events would make the
-    // host echo the whole drag history back at us as input events, and the
-    // stale echoes re-apply old positions — the audible "catch-up trail".
+    // Gesture in progress: the engine follows instantly (via model_ push),
+    // the host learns values through the queued out_events stream, wrapped
+    // in BEGIN/END so it can record automation and group undo (review H1).
+    beginGesture(id);
     applyParam(this, id, v);
 }
 
 void Plugin::guiSet(clap_id id, double v)
 {
     applyParam(this, id, v);
-    markPending(id, paramValue(this, id));
-    requestHostParamFlush(this);
+    if (!active.load(std::memory_order_relaxed)) requestHostParamFlush(this);
 }
 
 void Plugin::guiSync(clap_id id)
 {
     markPending(id, paramValue(this, id));
-    requestHostParamFlush(this);
+    endGesture(id);
+    if (!active.load(std::memory_order_relaxed)) requestHostParamFlush(this);
 }
 
 void Plugin::loadProgram(int k)
@@ -530,7 +823,7 @@ void Plugin::loadProgram(int k)
 
 void Plugin::markSource(int kind, int idx, const std::string &file)
 {
-    std::memcpy(srcRaw_, view_.raw, 133);   // callers post/own the view first
+    std::memcpy(srcRaw_, model_.raw, 133);    // callers post/own the model first
     hasSrc_ = true;
     floatValid_ = false;
     // one identity truth: every source-bearing load re-stamps curSrc_ here
@@ -544,11 +837,16 @@ void Plugin::markSource(int kind, int idx, const std::string &file)
     (void)idx;
 }
 
-bool Plugin::loadUserPatch(const std::string &name)
-{
+bool Plugin::loadUserPatchExact(const std::string &file)
+{   // The picker and the host browser list RAW filenames; loading must use
+    // the same token, never a re-sanitized one (review 5.8: files with
+    // spaces/parens/non-ASCII used to silently load INIT).
+    if (file.empty() || file.size() > 128) return false;
+    if (file.find('/') != std::string::npos || file.find('\\') != std::string::npos ||
+        file.find("..") != std::string::npos) return false;              // S13: no traversal
     loadTag_ = "user";
-    uint8_t raw[134];                  // the extension byte, or the honest 0
-    if (!p5store::loadPatch(name, raw)) return false;
+    uint8_t raw[134];
+    if (!p5store::loadPatch(file, raw)) return false;
     p5::Patch p;
     std::memset(&p, 0, sizeof p);
     std::memcpy(p.raw, raw, 134);      // full store, feedback/polarity included
@@ -556,17 +854,19 @@ bool Plugin::loadUserPatch(const std::string &name)
     postLoad(p);
     program = -1;
     programA_.store(-1, std::memory_order_relaxed);
-    markSource(1, -1, p5store::sanitize(name));
-    curSrc_.kind = p5store::SourceKind::File; curSrc_.factory = 0; curSrc_.file = p5store::sanitize(name);
-    for (clap_id id = 0; id < 58; id++)
-        markPending(id, paramValue(this, id));
-    requestHostParamFlush(this);
+    markSource(1, -1, file);
+    curSrc_.kind = p5store::SourceKind::File; curSrc_.factory = 0; curSrc_.file = file;
+    syncAllParams();
     return true;
 }
 
+bool Plugin::loadUserPatch(const std::string &name)
+{   return loadUserPatchExact(p5store::sanitize(name));
+}
+
+
 void Plugin::syncAllParams()
-{
-    for (clap_id id = 0; id < 58; id++) markPending(id, paramValue(this, id));
+{   for (clap_id id = 0; id < 58; id++) markPending(id, paramValue(this, id));
     requestHostParamFlush(this);
 }
 
@@ -592,11 +892,16 @@ void Plugin::loadSource(const p5store::Source &s)
 }
 
 void Plugin::rebuildSlotCache()
-{   // MAIN thread: every retrieval slot gets its 133 bytes resolved NOW, so a
-    // MIDI program change on the audio thread is only a memcpy.
-    const int back = 1 - cacheSel_.load(std::memory_order_relaxed);   // fill the BACK
-    uint8_t (*raw)[134] = back ? slotRawB_ : slotRaw_;                // buffer, flip
-    int16_t *codeB = back ? slotCodeB_ : slotCode_;                   // when complete
+{   // MAIN thread: every retrieval slot gets its raw bytes resolved NOW, so a
+    // MIDI program change on the audio thread is only a memcpy. The publish
+    // is a generation handshake (odd = in flight, S4.4): a reader that races
+    // a double rebuild DEFERS the PC one block instead of memcpy-ing torn
+    // bytes into the engine.
+    const uint32_t g0 = cacheGen_.load(std::memory_order_relaxed);
+    cacheGen_.store(g0 + 1, std::memory_order_release);         // odd: filling
+    const int back = 1 - cacheSel_.load(std::memory_order_relaxed);
+    uint8_t (*raw)[134] = back ? slotRawB_ : slotRaw_;
+    int16_t *codeB = back ? slotCodeB_ : slotCode_;
     for (int i = 0; i < (int)PW_FACTORY_N; i++)
     {
         const p5store::Source s = p5store::slot(i);
@@ -617,6 +922,7 @@ void Plugin::rebuildSlotCache()
     }
     cacheSel_.store(back, std::memory_order_release);
     slotReady_.store(true, std::memory_order_release);
+    cacheGen_.store(g0 + 2, std::memory_order_release);         // even: complete
 }
 
 void Plugin::adoptPendingIdentity()
@@ -624,7 +930,7 @@ void Plugin::adoptPendingIdentity()
     // the string-bearing identity and GUI sync here, never in process().
     if (!idSync_.exchange(false)) return;
     refreshView();
-    std::memcpy(srcRaw_, view_.raw, 134); hasSrc_ = true; floatValid_ = false;
+    std::memcpy(srcRaw_, model_.raw, 134); hasSrc_ = true; floatValid_ = false;
     if (adoptMode_.load(std::memory_order_relaxed) == 1)
     {   const int k = programA_.load(std::memory_order_relaxed);
         program = k; bank.store(k / 8); lastProgClick_ = k % 8;
@@ -632,33 +938,59 @@ void Plugin::adoptPendingIdentity()
         srcFile_.clear();
     }
     else
-    {   const int sel = cacheSel_.load(std::memory_order_relaxed);
-        const int code = sel ? slotCodeB_[idSyncSlot_] : slotCode_[idSyncSlot_];
+    {   const int slot = idSyncSlot_.load(std::memory_order_relaxed);
+        const int sel = cacheSel_.load(std::memory_order_relaxed);
+        const int code = sel ? slotCodeB_[slot] : slotCode_[slot];
         program = (code >= 0 && code < (int)PW_FACTORY_N) ? code : -1;
-        lastProgClick_ = idSyncSlot_ % 8;
-        const p5store::Source src = p5store::slot(idSyncSlot_);
+        lastProgClick_ = slot % 8;
+        const p5store::Source src = p5store::slot(slot);
         curSrc_ = src;
         if (src.kind == p5store::SourceKind::File) srcFile_ = src.file; else srcFile_.clear();
     }
     for (clap_id id = 0; id < 58; id++) markPending(id, paramValue(this, id));
+    markPending(PID_PROGRAM, program < 0 ? 0 : program);
+    markPending(PID_BANK, (double)bank.load());
     requestHostParamFlush(this);
+    changeTick_.fetch_add(1, std::memory_order_relaxed);
 }
 
 static void applyPcFromCache(Plugin *s, int slot)   // AUDIO thread only
 {
     if (!s->slotReady_.load(std::memory_order_acquire)) return;
     if (slot < 0 || slot >= (int)PW_FACTORY_N) return;
-    const int sel = s->cacheSel_.load(std::memory_order_acquire);
-    p5::Patch p;
-    std::memset(&p, 0, sizeof p);
-    std::memcpy(p.raw, sel ? s->slotRawB_[slot] : s->slotRaw_[slot], 134);
-    p.size = 133; p.model = 0x32; p.command = 3;
-    s->engine.setPatch(p);                        // pure POD state, no I/O
-    s->idSyncSlot_ = slot;                        // identity + host sync: main adopts
-    s->adoptMode_.store(0, std::memory_order_relaxed);
-    s->idSync_.store(true, std::memory_order_release);
-    requestHostParamFlush(s);                     // documented thread-safe request
+    uint8_t raw[134];
+    for (int tries = 0; tries < 3; tries++)
+    {   const uint32_t g = s->cacheGen_.load(std::memory_order_acquire);
+        if (g & 1u) { s->pendingPc_.store(slot, std::memory_order_release); return; }  // filling
+        const int sel = s->cacheSel_.load(std::memory_order_acquire);
+        std::memcpy(raw, sel ? s->slotRawB_[slot] : s->slotRaw_[slot], 134);
+        if (s->cacheGen_.load(std::memory_order_acquire) == g) goto applied;           // stable
+    }
+    s->pendingPc_.store(slot, std::memory_order_release);      // rebuild racing: next block
+    return;
+applied:
+    {
+        p5::Patch p;
+        std::memset(&p, 0, sizeof p);
+        std::memcpy(p.raw, raw, 134);
+        p.size = 133; p.model = 0x32; p.command = 3;
+        s->engine.setPatch(p);                        // pure POD state, no I/O
+        for (clap_id id = 0; id < 58; id++)
+        {   int v = s->engine.rawValue(kRawIndex[id]);
+            if (p5::polarityByte(kRawIndex[id])) v &= 127;
+            else if (v > 127 && !rawByteCarriesMeaning(kRawIndex[id])) v = 127;
+            s->base_[id] = v; }
+        s->base_[PID_DRIFT] = s->base_[37];
+        for (clap_id pid = 0; pid < 58; pid++) s->reportParam(pid, s->base_[pid]);
+        s->reportParam(PID_DRIFT, s->base_[PID_DRIFT]);
+        s->idSyncSlot_.store(slot, std::memory_order_relaxed);    // identity: main adopts
+        s->adoptMode_.store(0, std::memory_order_relaxed);
+        s->idSync_.store(true, std::memory_order_release);
+        s->emitResync();        // values to pr->out_events (process context);
+                                // request_flush is [!audio-thread] - never here
+    }
 }
+
 
 void Plugin::programSlot(int slot)
 {
@@ -687,16 +1019,17 @@ void Plugin::recallBasicInit()
 
 void Plugin::maybePingLatency()
 {
-    // DELIBERATELY NEVER PINGS. Both safe-looking moments are proven unsafe
-    // on Bitwig 5.0.4 by its own logs:
-    //  - deactivate: re-enters a dying instance (delete-crash path);
-    //  - mid-session from the GUI pump: "Plugin misbehaving Muhammad:
-    //    plugin reported latency change while activated" (BitwigStudio.log
-    //    23:59:26, from our own build d190737).
-    // Latency deltas therefore take effect at the next activate/start, when
-    // the host re-reads get_latency() itself. The mid-session gap is 21
-    // samples at 48k - inaudible, and the honest Bitwig contract.
-    // (flag stays set; nothing to do.)
+    // Main-thread entry (GUI tick / refresh): announce a latency move that
+    // happened WHILE ACTIVE with request_restart() - the spec's latency
+    // contract (latency.h allows changed() only in activate; a ping from the
+    // pump was the old Bitwig "plugin misbehaving" wall, and from deactivate
+    // it re-enters a dying instance). The host re-activates, re-reads
+    // get_latency() and delay-compensation lands within a frame.
+    if (!restartPending_) return;
+    if (!active.load(std::memory_order_relaxed)) { restartPending_ = false; return; }
+    if (host && host->request_restart)
+    {   restartPending_ = false;
+        host->request_restart(host); }
 }
 
 void Plugin::savePatchNamed(const std::string &name)
@@ -706,13 +1039,16 @@ void Plugin::savePatchNamed(const std::string &name)
     if (n.empty()) return;
     refreshView();                        // commitWheelToPatch mirrored on main:
     p5::Patch p = {};                     // wheel position IS the saved depth
-    std::memcpy(p.raw, view_.raw, 134);
-    p.raw[p5::P5_LFO_INITIAL] = (uint8_t)(view_.wheel & 127);
+    std::memcpy(p.raw, model_.raw, 134);
+    p.raw[p5::P5_LFO_INITIAL] = (uint8_t)(model_.wheel & 127);
     p.size = 133; p.model = 0x32; p.command = 3;
     std::memset(p.raw + p5::P5_NAME, ' ', p5::P5_NAME_LEN);
     const size_t len = n.size() < p5::P5_NAME_LEN ? n.size() : p5::P5_NAME_LEN;
     std::memcpy(p.raw + p5::P5_NAME, n.data(), len);
-    postLoad(p);
+    // Name-only edit: patch the 20 name BYTES, never a whole-patch LOAD -
+    // re-postLoad()ing killed every sounding voice just to set a name (5.8).
+    for (int i = 0; i < p5::P5_NAME_LEN; i++) postRaw(p5::P5_NAME + i, p.raw[p5::P5_NAME + i]);
+    postRaw(p5::P5_LFO_INITIAL, p.raw[p5::P5_LFO_INITIAL]);
     program = -1;
     programA_.store(-1, std::memory_order_relaxed);
     p5store::savePatch(n, p.raw);
@@ -757,11 +1093,11 @@ void Plugin::presetRecall()
     // PRESET: un-float; press again (nothing touched since) and the floating edits come BACK
     if (!hasSrc_) return;
     refreshView();
-    const uint8_t *cur = view_.raw;
+    const uint8_t *cur = model_.raw;
     if (!panelDirty() && floatValid_ && std::memcmp(cur, floatSnap_, 133) != 0)
     {   // second press right after a recall: restore the pre-recall panel state
         p5::Patch p = {};
-        std::memcpy(p.raw, view_.raw, 134);
+        std::memcpy(p.raw, model_.raw, 134);
         std::memcpy(p.raw, floatSnap_, 133);
         p.size = 133; p.model = 0x32; p.command = 3;
         postLoad(p);
@@ -774,30 +1110,18 @@ void Plugin::presetRecall()
         floatValid_ = true;
     }
     p5::Patch p = {};
-    std::memcpy(p.raw, view_.raw, 134);
+    std::memcpy(p.raw, model_.raw, 134);
     std::memcpy(p.raw, srcRaw_, 133);
     p.size = 133; p.model = 0x32; p.command = 3;
     postLoad(p);
     syncAllParams();
 }
 
-// ---- events ------------------------------------------------------------------
-static void dispatchNoteOn(Plugin *s, int key, int vel, int ch = 0)
-{
-    if (key < 0 || key > 127) return;
-    if (vel <= 0) vel = 1;
-    if (vel > 127) vel = 127;
-    s->engine.noteOn(key, vel, ch);
-}
 
 // Sequential "Prophet-5 (Rev4 family) MIDI Implementation 1.4" received-CC
-// table -> raw wire parameter indices (the NRPN numbering equals our raw
-// enum: GLIDE 13, ENV-FLT-AMT 40, BEND RANGE 86, RETRIGGER 87 — verified
-// against the official PDF). Specials (1/7/13/32/64/74/85/120/121/123) are
-// handled around this table. -1 = unassigned.
+// table -> raw wire PARAM ids (see CC_MAP.md; verified against the impl PDF).
 static int ccRawParam(int cc)
-{   // Sequential Rev4-family CC -> raw wire parameter (impl 1.4); -1 = none.
-    switch (cc)
+{   switch (cc)
     {
     case   3: return 0;   case   9: return 1;   case  14: return 2;   case  15: return 3;
     case  20: return 4;   case  21: return 8;   case  22: return 9;   case  23: return 10;
@@ -807,9 +1131,6 @@ static int ccRawParam(int cc)
     case  52: return 6;   case  53: return 26;  case  54: return 27;  case  55: return 28;
     case  56: return 29;  case  57: return 30;  case  58: return 31;  case  59: return 32;
     case  60: return 33;  case  61: return 34;  case  62: return 35;  case  63: return 36;
-    // (70/71 originally returned BYTE numbers 86/87 but callers treat the
-    // result as a clap PID: CC70 silently aliased DRIFT and CC71 was a no-op.
-    // BEND RANGE is PID 55 (byte 86), RETRIGGER PID 56 (byte 87).)
     case  70: return 55;  case  71: return 56;  case  73: return 17;  case  86: return 38;
     case  87: return 39;  case  89: return 40;  case  90: return 41;  case 102: return 42;
     case 103: return 43;  case 104: return 44;  case 105: return 45;  case 106: return 46;
@@ -820,44 +1141,97 @@ static int ccRawParam(int cc)
     }
 }
 
-static void noteOffGated(Plugin *s, int key, int ch = -1)
-{   // CC64 damper: notes RELEASED under the pedal keep holding until it lifts
-    if (key >= 0 && key < 128 && s->sustain_)
-    {
-        if (!s->heldFlag_[key]) { s->heldFlag_[key] = 1; s->heldNotes_[s->heldCnt_++] = (uint8_t)key; }
+// ---- events ------------------------------------------------------------------
+static void dispatchNoteOn(Plugin *s, int key, int vel, int ch = 0)
+{
+    if (key < 0 || key > 127) return;
+    if (vel <= 0) vel = 1;
+    if (vel > 127) vel = 127;
+    const int c = (ch >= 0 && ch < 16) ? ch : 0;        // CLAP -1 wildcard -> part channel
+    if (s->heldFlag_[c][key])
+    {   // re-struck under the pedal: it must NOT die at pedal-up (review 5.10)
+        s->heldFlag_[c][key] = 0;
+        const int n = s->heldCnt2_[c];
+        for (int i = 0; i < n; i++)
+            if (s->heldNotes_[c][i] == key)
+            {   for (int j = i; j + 1 < n; j++) s->heldNotes_[c][j] = s->heldNotes_[c][j + 1];
+                s->heldCnt2_[c] = n - 1; break; }
     }
-    else if (key >= 0 && key < 128) s->engine.noteOff(key, ch);
+    s->engine.noteOn(key, vel, c);
 }
 
-static void panicVoices(Plugin *s)
-{   // CC120/123: everything off, sustain memory cleared
-    for (int k = 0; k < 128; k++) s->engine.noteOff(k);
-    std::memset(s->heldFlag_, 0, sizeof s->heldFlag_);
-    s->heldCnt_ = 0;
+// CC64 damper PER MIDI CHANNEL (MPE-correct): a note released on a pedalled
+// channel keeps holding until THAT pedal lifts.
+static void noteOffGated(Plugin *s, int key, int ch = -1)
+{
+    if (key < 0)
+    {   for (int k = 0; k < 128; k++) noteOffGated(s, k, ch);   // wildcard all-off
+        return; }
+    if (key >= 128) return;
+    if (ch >= 0 && ch < 16 && (s->sustainCh_ & (1u << ch)))
+    {   if (!s->heldFlag_[ch][key])
+        {   s->heldFlag_[ch][key] = 1; s->heldNotes_[ch][s->heldCnt2_[ch]++] = (uint8_t)key; }
+        return; }
+    if (ch >= 0 && ch < 16) s->heldFlag_[ch][key] = 0;
+    s->engine.noteOff(key, ch);
 }
 
+static void panicVoices(Plugin *s, bool kill)   // CC120 kills, CC123 releases
+{
+    for (int k = 0; k < 128; k++)
+        if (kill) s->engine.noteKill(k); else s->engine.noteOff(k);
+    for (int c = 0; c < 16; c++)
+    {   std::memset(s->heldFlag_[c], 0, sizeof s->heldFlag_[c]);
+        std::memset(s->heldNotes_[c], 0, sizeof s->heldNotes_[c]);
+        s->heldCnt2_[c] = 0; }
+}
+
+
+// ---- events ------------------------------------------------------------------
+// dispatchEvent runs on the ENGINE-OWNING thread: audio while active (in-band
+// process() events and params.flush - review C1), main while inactive.
 static void dispatchEvent(Plugin *s, const clap_event_header_t *ev)
 {
+    switch (ev->type)
+    {   case CLAP_EVENT_NOTE_ON: case CLAP_EVENT_NOTE_OFF:
+        case CLAP_EVENT_NOTE_CHOKE: case CLAP_EVENT_NOTE_END:
+        case CLAP_EVENT_PARAM_VALUE: case CLAP_EVENT_PARAM_MOD:
+            // S13: a foreign space whose type number collides must not be
+            // read through the core struct layout.
+            if (ev->space_id != CLAP_CORE_EVENT_SPACE_ID) return;
+        default: break;
+    }
     switch (ev->type) {
     case CLAP_EVENT_NOTE_ON: {
         auto *e = reinterpret_cast<const clap_event_note *>(ev);
-        dispatchNoteOn(s, e->key, (int)(e->velocity * 127.0 + 0.5), e->channel & 15);
+        dispatchNoteOn(s, e->key, (int)(e->velocity * 127.0 + 0.5), e->channel);
         break;
     }
     case CLAP_EVENT_NOTE_OFF: {
         auto *e = reinterpret_cast<const clap_event_note *>(ev);
-        noteOffGated(s, e->key, e->channel & 15);   // MPE: same key, other channels survive
+        noteOffGated(s, e->key, e->channel);
         break;
     }
     case CLAP_EVENT_NOTE_CHOKE: {
         auto *e = reinterpret_cast<const clap_event_note *>(ev);
-        s->engine.noteOff(e->key);            // choke bypasses the damper
+        if (e->key < 0) for (int k = 0; k < 128; k++) s->engine.noteKill(k, e->channel);
+        else            s->engine.noteKill(e->key, e->channel);   // choke KILLS (5.10)
         break;
     }
-    case CLAP_EVENT_PARAM_VALUE:
-    case CLAP_EVENT_PARAM_MOD: {
+    case CLAP_EVENT_NOTE_END: {
+        auto *e = reinterpret_cast<const clap_event_note *>(ev);
+        noteOffGated(s, e->key, e->channel);
+        break;
+    }
+    case CLAP_EVENT_PARAM_VALUE: {
         auto *e = reinterpret_cast<const clap_event_param_value *>(ev);
-        applyParamNow(s, e->param_id, e->value);
+        s->applyValue(e->param_id, e->value);
+        break;
+    }
+    case CLAP_EVENT_PARAM_MOD: {
+        auto *e = reinterpret_cast<const clap_event_param_mod *>(ev);
+        if (e->note_id < 0 && e->port_index < 0 && e->channel < 0 && e->key < 0)
+            s->applyMod(e->param_id, e->amount);      // per-voice mods: not modelled
         break;
     }
     case CLAP_EVENT_MIDI: {
@@ -880,35 +1254,41 @@ static void dispatchEvent(Plugin *s, const clap_event_header_t *ev)
                     const double semis = (double)(s->rpnV_[ch] >> 7) + (double)(s->rpnV_[ch] & 127) / 128.0;
                     s->engine.setBendRangeSemitones(ch, semis, semis);   // RPN is symmetric
                 }
-                else { const int r = ccRawParam(d1); if (r >= 0) applyParamNow(s, (clap_id)r, d2); }
+                else { const int r = ccRawParam(d1); if (r >= 0) s->applyValue((clap_id)r, d2); }
             }
             else if (d1 == 2) s->engine.setBendRangeSemitones(ch, d2, d2);   // MPE absolute RCS
-            else if (d1 == 0) applyParamNow(s, PID_BANK, d2 / 8);      // CC0: bank cursor
+            else if (d1 == 0) s->applyValue(PID_BANK, d2 / 8);      // CC0: bank cursor
             else if (d1 == 7) s->ccVol = d2 * (1.0f / 127.0f);
             else if (d1 == 13) s->ccExp = d2 * (1.0f / 127.0f);
-            else if (d1 == 32) applyParamNow(s, PID_BANK, d2 % (int)(PW_FACTORY_N / 8));
+            else if (d1 == 32) s->applyValue(PID_BANK, d2 % (int)(PW_FACTORY_N / 8));
             else if (d1 == 64)
-            {   // CC64 damper
+            {   // CC64 damper, per channel
                 const bool on = d2 >= 64;
-                if (s->sustain_ && !on)
-                {   // pedal lifts: everything the pedal was holding goes off
-                    for (int i = 0; i < s->heldCnt_; i++) { s->engine.noteOff(s->heldNotes_[i]); s->heldFlag_[s->heldNotes_[i]] = 0; }
-                    s->heldCnt_ = 0;
+                const uint16_t bit = (uint16_t)(1u << ch);
+                if ((s->sustainCh_ & bit) && !on)
+                {   for (int i = 0; i < s->heldCnt2_[ch]; i++)
+                    {   const uint8_t hk = s->heldNotes_[ch][i];
+                        s->engine.noteOff(hk, ch); s->heldFlag_[ch][hk] = 0; }
+                    s->heldCnt2_[ch] = 0;
                 }
-                s->sustain_ = on;
+                if (on) s->sustainCh_ |= bit; else s->sustainCh_ = (uint16_t)(s->sustainCh_ & ~bit);
             }
             else if (d1 == 74) s->engine.setBrightness(d2);
-            else if (d1 == 85) applyParamNow(s, PID_DRIFT, d2);        // Rev4 CC85 "vintage" == our DRIFT
+            else if (d1 == 85) s->applyValue(PID_DRIFT, d2);         // Rev4 CC85 "vintage" == DRIFT
             // Muhammad extensions (MMA-unassigned in both Rev4 impl and GM;
             // see CC_MAP.md): live control of FEEDBACK + the sidecar knobs.
-            else if (d1 == 42) applyParamNow(s, 57, d2);                    // FEEDBACK 0..127
-            else if (d1 == 43) applyParamNow(s, PID_PAN_WIDTH, d2);         // PAN WIDTH 0..127
-            else if (d1 == 44) applyParamNow(s, PID_OS, d2 >= 64 ? 1 : 0);  // OVERSAMPLE toggle
-            else if (d1 == 45) applyParamNow(s, PID_TUNE, (d2 - 64) * 100 / 63); // MASTER TUNE +-100c
-            else if (d1 == 48) applyParamNow(s, PID_TRIM, (d2 * 3) / 128);  // OUTPUT trim 0..2
-            else if (d1 == 120 || d1 == 123) panicVoices(s);
-            else if (d1 == 121) { s->ccVol = s->ccExp = 1.0f; s->engine.setBrightness(0); }
-            else { const int r = ccRawParam(d1); if (r >= 0) applyParamNow(s, (clap_id)r, d2); }
+            else if (d1 == 42) s->applyValue((clap_id)57, d2);                    // FEEDBACK 0..127
+            else if (d1 == 43) s->applyValue(PID_PAN_WIDTH, d2);                  // PAN WIDTH 0..127
+            else if (d1 == 44) s->applyValue(PID_OS, d2 >= 64 ? 1 : 0);           // OVERSAMPLE toggle
+            else if (d1 == 45) s->applyValue(PID_TUNE, (d2 - 64) * 100 / 63);     // MASTER TUNE +-100c
+            else if (d1 == 48) s->applyValue(PID_TRIM, (d2 * 3) / 128);           // OUTPUT trim 0..2
+            else if (d1 == 120) panicVoices(s, true);    // All Sound Off: KILL
+            else if (d1 == 123) panicVoices(s, false);   // All Notes Off: release
+            else if (d1 == 121)
+            {   s->ccVol = s->ccExp = 1.0f; s->engine.setBrightness(0);
+                s->engine.setAftertouch(0); s->engine.wheelReset();
+                for (int c = 0; c < 16; c++) { s->rpnM_[c] = s->rpnL_[c] = 127; s->rpnV_[c] = 0; } }
+            else { const int r = ccRawParam(d1); if (r >= 0) s->applyValue((clap_id)r, d2); }
             break;
         case 0xC0: applyPcFromCache(s, d1 < 8 ? s->bank * 8 + d1 : d1); break;  // audio-safe cache memcpy
         case 0xD0: s->engine.setAftertouch(d2); break;   // channel pressure: part-level (AT->flt)
@@ -932,11 +1312,11 @@ static bool plugin_init(const clap_plugin_t *p)
 #else
                  "gui-x11"
 #endif
-                 ", 7-bit law, coalesced gestures, xembed)\n",
+                 ", base+mod, audio-side flush)\n",
                  kDescriptor.version);
     auto *s = fromPlugin(p);
     if (!s) return false;
-    for (int i = 0; i < 16; i++) { s->rpnM_[i] = s->rpnL_[i] = 127; s->rpnV_[i] = 0; }  // RPN deselected on ALL channels
+    for (int i = 0; i < 16; i++) { s->rpnM_[i] = s->rpnL_[i] = 127; s->rpnV_[i] = 0; }
     return true;
 }
 
@@ -956,20 +1336,50 @@ static void plugin_destroy(const clap_plugin_t *p)
     delete s;
 }
 
+// Snapshot the wire params into the audio-side base bookkeeping (fresh
+// activate: the engine's patch is the model, base_ mirrors its display law).
+void Plugin::mirrorBaseFromEngine()
+{
+    for (clap_id id = 0; id < 58; id++)
+    {   int v = engine.rawValue(kRawIndex[id]);
+        if (p5::polarityByte(kRawIndex[id])) v &= 127;
+        else if (v > 127 && !rawByteCarriesMeaning(kRawIndex[id])) v = 127;
+        base_[id] = v; }
+    for (clap_id id = 64; id < 64 + NUM_OVERLAYS; id++) base_[id] = engine.overlay(id - 64);
+    base_[PID_TRIM] = trim.load(std::memory_order_relaxed);
+    base_[PID_OS] = model_.os - 1;
+    base_[PID_TUNE] = model_.tune;
+    base_[PID_PROGRAM] = program < 0 ? 0 : program;
+    base_[PID_BANK] = bank.load();
+    base_[PID_PAN_WIDTH] = model_.pan;
+    base_[PID_DRIFT] = base_[37];
+}
+
 static bool plugin_activate(const clap_plugin_t *p, double sample_rate, uint32_t min_block, uint32_t)
 {
     auto *s = fromPlugin(p);
     s->sr = sample_rate;
     s->minBlock = min_block;
-    s->engine.activate(sample_rate);
-    s->engine.setSmoothing(true);   // PC playability; the A/B harness keeps it off
-    s->engine.setPcMode(true);      // LFO INITIAL = wheel state at patch load
+    s->engine.activate(sample_rate);      // rate-dependent state ONLY (review C3)
+    s->engine.setSmoothing(true);         // PC playability; the A/B harness keeps it off
+    s->engine.setPcMode(true);            // LFO INITIAL = wheel state at patch load
     s->engine.setReleaseCut(1.0f / 16384.0f);   // cut tails -24 dB deeper than firmware (-84 dBFS)
-    p5store::loadMap();             // bank/program retrieval map
+    p5store::loadMap();                   // bank/program retrieval map
     s->rebuildSlotCache();
-    s->rw_.store(0); s->rr_.store(0);          // ring: clean slate per activation
-    s->stallSince_ = {};
-    s->publishView();                            // seed the view before going live
+    // Re-push the authoritative model (patch/patchMain contract): whatever
+    // the engine forgot at its rate reset, the model restamps.
+    s->applyModelToEngineDirect();
+    s->mirrorBaseFromEngine();
+    s->appliedGenCursor_ = s->gen_;
+    s->lastMergeGen_ = 0;
+    s->ow_.store(0); s->or_.store(0);
+    for (auto &m : s->repMask_) m.store(0, std::memory_order_relaxed);
+    s->pendingPc_.store(-1); s->pcReq_.store(-1);
+    s->idSync_.store(false); s->restartPending_ = false;
+    s->latencyDirty.store(false);
+    s->programA_.store(s->program, std::memory_order_relaxed);   // echo guard mirrors truth (5.8)
+    for (int i = 0; i < Plugin::PEND_IDS; i++) s->dragOpen_[i] = false;
+    s->publishView();                     // seed before going live
     s->active.store(true, std::memory_order_release);
     return true;
 }
@@ -978,48 +1388,65 @@ static void plugin_deactivate(const clap_plugin_t *p)
 {
     auto *s = fromPlugin(p);
     s->active.store(false, std::memory_order_release);
-    s->drainCmds();          // main owns the engine again: finish anything pending
+    // Audio is gone; main reclaims the engine. Apply the model (covers any
+    // push staged while the host stopped calling process()), then silence
+    // performance state: voices that survived a host-side deactivate would
+    // drone on the next activation without a note-off (review 5.10).
+    s->applyModelToEngineDirect();
+    s->engine.silenceReset();
+    s->engine.setBend(0); s->engine.wheelReset(); s->engine.setAftertouch(0);
+    for (int i = 0; i < 16; i++) s->engine.setBendChannel(i, 0);
+    s->sustainCh_ = 0;
+    for (int c = 0; c < 16; c++)
+    {   std::memset(s->heldFlag_[c], 0, sizeof s->heldFlag_[c]); s->heldCnt2_[c] = 0; }
     s->publishView();
-    // Latency is NEVER announced during deactivate. The ping makes the host
-    // re-query us and reconfigure graph latency - from INSIDE a teardown,
-    // which is a prime way to crash a JUCE engine deleting a track (the
-    // Bitwig device-delete crash). It is also pointless: hosts re-read
-    // get_latency() at every activate, so a change that happened while
-    // active takes effect at the next activation. Keep the flag for
-    // in-session transitions... there are none: activation state is the
-    // only place latency is consulted.
+    // Latency is NEVER announced here: the ping makes the host re-query and
+    // reconfigure the graph from inside a teardown (the Bitwig
+    // device-delete crash). Hosts re-read get_latency() at every activate.
+    s->restartPending_ = false;
     s->latencyDirty.store(false, std::memory_order_relaxed);
 }
 
 static bool plugin_start(const clap_plugin_t *p)
-{   // posts queued while the host was paused (or via the stalled-producer
-    // fallback): apply any residue on MAIN before the first audio block, so
-    // order against the resume is deterministic.
-    auto *s = fromPlugin(p);
-    s->drainCmds(); s->publishView();
-    return true; }
+{   // start_processing runs on the AUDIO thread; process() drains everything
+    // at block top, so there is deliberately nothing to do here.
+    (void)p; return true; }
 static void plugin_stop(const clap_plugin_t *) {}
 
 static void plugin_reset(const clap_plugin_t *p)
 {
     auto *s = fromPlugin(p);
-    s->postReset();   // direct while inactive; posted to the owner while active
+    if (!s) return;
+    // [audio-thread & active] or [main & inactive]: the engine OWNER calls
+    // this, so it applies DIRECTLY - never through the posting machinery
+    // (review C1). silenceReset keeps trims/pan/patch and re-dirties panG.
+    s->engine.silenceReset();
+    s->engine.setBend(0); s->engine.wheelReset(); s->engine.setAftertouch(0);
+    s->engine.setBrightness(0);
+    for (int i = 0; i < 16; i++) { s->engine.setBendChannel(i, 0);
+        s->rpnM_[i] = s->rpnL_[i] = 127; s->rpnV_[i] = 0; }
+    s->ccVol = s->ccExp = 1.0f;
+    s->sustainCh_ = 0;
+    for (int c = 0; c < 16; c++)
+    {   std::memset(s->heldFlag_[c], 0, sizeof s->heldFlag_[c]); s->heldCnt2_[c] = 0; }
+    s->pendingPc_.store(-1);
 }
 
 // render `frames` samples into the host buffers (mono engine duplicated to L/R)
 static void renderChunk(Plugin *s, clap_audio_buffer_t *ab, uint32_t from, uint32_t frames)
 {
+    const bool stereo = ab->channel_count >= 2 && ab->data32[1] != nullptr;   // S13
     while (frames) {
         uint32_t k = frames > 32 ? 32 : frames;
         s->engine.process(s->scratch, k);
-        float *L = ab->data32[0] + from, *R = ab->data32[1] + from;
+        float *L = ab->data32[0] + from, *R = stereo ? ab->data32[1] + from : nullptr;
         const float trim = (float)s->trim.load(std::memory_order_relaxed) * (1.0f / 32768.0f) * s->ccVol * s->ccExp;
         const bool pan = s->engine.panActive();
         const int32_t *rbuf = s->engine.mixR();
         for (uint32_t i = 0; i < k; i++) {
             float v = (float)s->scratch[i] * trim;
             L[i] = v;
-            R[i] = pan ? (float)rbuf[i] * trim : v;
+            if (R) R[i] = pan ? (float)rbuf[i] * trim : v;
         }
         from += k;
         frames -= k;
@@ -1029,14 +1456,7 @@ static void renderChunk(Plugin *s, clap_audio_buffer_t *ab, uint32_t from, uint3
 static clap_process_status plugin_process(const clap_plugin_t *p, const clap_process_t *pr)
 {
 #if defined(__SSE__) || defined(__SSE2__)
-    {   // Denormal audit (Oct 2026): the only state that can creep sub-normal
-        // is the triangle voice's x32767/32768 tail (tens of minutes held
-        // silent inside one note); filter z is flushed at 1e-20 by the
-        // firmware's own quirk guard, halfband state resets per note, and the
-        // DC caps idle at exact zero on voiceless blocks. FTZ|DAZ costs
-        // nothing while denormals are absent, and ~100x per op when they hit.
-        // Idempotent; leaves the host's own MXCSR alone if already set.
-        const unsigned csr = _mm_getcsr();
+    {   const unsigned csr = _mm_getcsr();
         if ((csr & (0x8000u | 0x40u)) != (0x8000u | 0x40u)) _mm_setcsr(csr | 0x8000u | 0x40u);
     }
 #endif
@@ -1046,7 +1466,14 @@ static clap_process_status plugin_process(const clap_plugin_t *p, const clap_pro
     clap_audio_buffer_t *ab = &pr->audio_outputs[0];
     if (!ab || !ab->data32 || !ab->data32[0]) return CLAP_PROCESS_ERROR;
 
-    s->drainCmds();                       // main's posted mutations, now ours to apply
+    s->curOut_ = pr->out_events;                   // in-band echoes land here
+    s->applyPushed();                              // main's authoritative latest state
+    s->drainOut(pr->out_events);                   // GUI values + gestures reach the host
+                                                   // from process() TOO (review H1): a
+                                                   // spec-following host answers
+                                                   // request_flush with process(), not flush
+    const int pp = s->pendingPc_.exchange(-1, std::memory_order_acq_rel);
+    if (pp >= 0) applyPcFromCache(s, pp);          // PC deferred by cache contention
     const clap_input_events_t *in = pr->in_events;
     uint32_t pos = 0;
     if (in) {
@@ -1060,7 +1487,8 @@ static clap_process_status plugin_process(const clap_plugin_t *p, const clap_pro
         }
     }
     if (pos < count) renderChunk(s, ab, pos, count - pos);
-    s->publishView();                     // main's next read sees this block's truth
+    s->curOut_ = nullptr;
+    s->publishView();                              // main's next read sees this block's truth
     return CLAP_PROCESS_CONTINUE;
 }
 
@@ -1069,9 +1497,10 @@ static uint32_t lat_get(const clap_plugin_t *p)
     auto *s = fromPlugin(p);
     if (!s) return 0u;
     s->refreshView();
-    return s->view_.os == 2 ? 3u : 0u;
+    return s->model_.os == 2 ? 3u : 0u;
 }
 const clap_plugin_latency_t kLatency = { lat_get };
+
 
 static const void *plugin_get_extension(const clap_plugin_t *, const char *id)
 {
@@ -1079,7 +1508,8 @@ static const void *plugin_get_extension(const clap_plugin_t *, const char *id)
     if (!std::strcmp(id, CLAP_EXT_NOTE_PORTS)) return &kNotePorts;
     if (!std::strcmp(id, CLAP_EXT_PARAMS)) return &kParams;
     if (!std::strcmp(id, CLAP_EXT_STATE)) return &kState;
-    if (!std::strcmp(id, CLAP_EXT_PRESET_LOAD)) return &kPresetLoad;
+    if (!std::strcmp(id, CLAP_EXT_PRESET_LOAD) ||
+        !std::strcmp(id, CLAP_EXT_PRESET_LOAD_COMPAT)) return &kPresetLoad;
     if (!std::strcmp(id, CLAP_EXT_LATENCY)) return &kLatency;
 #ifdef P5_GUI
     if (!std::strcmp(id, CLAP_EXT_GUI)) return &kGui;
@@ -1140,26 +1570,31 @@ static bool par_get_info(const clap_plugin_t *, uint32_t index, clap_param_info_
     else if (index < 58 + NUM_OVERLAYS + 2) { id = PID_OS; info->min_value = 0; info->max_value = 1; }
     else if (index < 58 + NUM_OVERLAYS + 3) { id = PID_TUNE; info->min_value = -100; info->max_value = 100; }
     else if (index < 58 + NUM_OVERLAYS + 4) { id = PID_PROGRAM; info->min_value = 0; info->max_value = PW_FACTORY_N - 1; }
-    // (the +5 case existed nowhere in the original chain: BANK swallowed
-    // PAN_WIDTH's index and DRIFT hung off the trailing else - enumeration
-    // now yields exactly one id per index, FEEDBACK-era count 73 exposes it)
     else if (index < 58 + NUM_OVERLAYS + 5) { id = PID_BANK; info->min_value = 0; info->max_value = PW_FACTORY_N / 8 - 1; }
     else if (index < 58 + NUM_OVERLAYS + 6) { id = PID_PAN_WIDTH; info->min_value = 0; info->max_value = 127; }
     else { id = PID_DRIFT; info->min_value = 0; info->max_value = 127; }
     info->id = id;
+    info->default_value = Plugin::defaultOf(id);           // 5.7: hosts must see a default
     const bool stepped = isRawParam(id) || id == PID_TUNE || id == PID_PROGRAM || id == PID_BANK ||
                          id == PID_PAN_WIDTH || id == PID_DRIFT;
-    info->flags = CLAP_PARAM_IS_AUTOMATABLE | CLAP_PARAM_IS_MODULATABLE |
-                  (stepped ? CLAP_PARAM_IS_STEPPED : 0);
+    // C2/5.9: PROGRAM, BANK and OVERSAMPLE are discrete patch/perf switches -
+    // automating or modulating them re-loads factories at audio rate and
+    // moves latency without notice. They stay panel/CC-only.
+    const bool switchish = id == PID_PROGRAM || id == PID_BANK || id == PID_OS;
+    info->flags = (switchish ? 0u : (CLAP_PARAM_IS_AUTOMATABLE | CLAP_PARAM_IS_MODULATABLE)) |
+                  (stepped ? CLAP_PARAM_IS_STEPPED : 0u);
     std::snprintf(info->name, sizeof info->name, "%s", Plugin::nameOf(id));
     std::snprintf(info->module, sizeof info->module,
                   isRawParam(id) ? "P5" : isOverlayParam(id) ? "EDIT" : "PERFORM");
     return true;
 }
+static bool knownParamId(clap_id id)
+{   return isRawParam(id) || isOverlayParam(id) || (id >= PID_TRIM && id <= PID_DRIFT); }
 static bool par_get_value(const clap_plugin_t *p, clap_id id, double *out)
 {
     auto *s = fromPlugin(p);
-    if (!s) return false;
+    if (!s || !knownParamId(id)) return false;          // 5.7: unknown ids answer FALSE
+    s->refreshView();                                   // merge audio truth first
     *out = paramValue(s, id);
     return true;
 }
@@ -1197,41 +1632,24 @@ static void par_flush(const clap_plugin_t *p, const clap_input_events_t *in, con
 {
     auto *s = fromPlugin(p);
     if (!s || !in) return;
-    uint32_t n = in->size(in);
-    for (uint32_t i = 0; i < n; i++) {
-        const clap_event_header_t *ev = in->get(in, i);
+    // params.flush is [active ? audio-thread : main-thread] (params.h:303).
+    // In BOTH cases this thread is the engine's owner while the call runs,
+    // so the input is dispatched DIRECTLY (review C1: no postCmd, no
+    // viewMx_ from audio, no second producer on any queue). GUI values and
+    // gestures reach the host from here too, and a publish makes the flush
+    // readback (get_value right after) immediate.
+    const bool live = s->active.load(std::memory_order_relaxed);
+    if (live) s->curOut_ = out;
+    s->applyPushed();
+    s->drainOut(out);
+    const uint32_t n = in->size(in);
+    for (uint32_t i = 0; i < n; i++)
+    {   const clap_event_header_t *ev = in->get(in, i);
         if (!ev) continue;
-        if (!s->active.load(std::memory_order_relaxed)) { dispatchEvent(s, ev); continue; }
-        // FLUSH CONTRACT: params.get_value must reflect flushed values right
-        // away. Param events ride applyParam (posts to the audio owner AND
-        // updates the view optimistically); note/MIDI events are relayed as
-        // copies for the next block - hosts do not read state off them.
-        if (ev->type == CLAP_EVENT_PARAM_VALUE || ev->type == CLAP_EVENT_PARAM_MOD)
-        {   const auto *pv = reinterpret_cast<const clap_event_param_value *>(ev);
-            applyParam(s, pv->param_id, pv->value);
-            continue; }
-        if (ev->size > 64u) continue;                   // oversized (live-expr)
-        Plugin::Cmd c{};
-        c.op = Plugin::OP_EVENT;
-        c.i0 = (int)ev->size;
-        std::memcpy(c.ev, ev, (size_t)c.i0);
-        s->postCmd(c);
-    }
-    // drain GUI-initiated changes so the host's UI/automation sees them
-    // (coalesced: at most one value per param, so a fast drag cannot leave a
-    // catch-up trail behind the pointer)
-    if (!out) return;
-    for (clap_id id = 0; id < Plugin::PEND_IDS; id++) {
-        if (!s->pendSet[id]) continue;
-        s->pendSet[id] = false;
-        clap_event_param_value e{};
-        e.header.type = CLAP_EVENT_PARAM_VALUE;
-        e.header.time = 0;
-        e.param_id = id;
-        e.cookie = nullptr;
-        e.value = s->pendVal[id];
-        out->try_push(out, &e.header);
-    }
+        dispatchEvent(s, ev); }
+    const int pp = s->pendingPc_.exchange(-1, std::memory_order_acq_rel);
+    if (pp >= 0) applyPcFromCache(s, pp);
+    if (live) { s->curOut_ = nullptr; s->publishView(); }
 }
 const clap_plugin_params_t kParams = { par_count, par_get_info, par_get_value,
                                        par_value_to_text, par_text_to_value, par_flush };
@@ -1239,140 +1657,168 @@ const clap_plugin_params_t kParams = { par_count, par_get_info, par_get_value,
 // ---- state (versioned binary blob) --------------------------------------------
 #define PW_STATE_MAGIC 0x5035434Cu            // "P5CL"
 #define PW_STATE_VERSION 11u   // v11: patch grew to 134 bytes (byte 133 = FEEDBACK)
-static bool wr(const clap_ostream_t *o, const void *b, size_t n)
-{ return o->write(o, b, (uint64_t)n) == (int64_t)n; }
+
+// Host streams may deliver SHORT reads and writes (stream.h) - the old
+// single-shot compare against n failed chunking hosts outright (review H5).
+static bool wrAll(const clap_ostream_t *o, const void *b, size_t n)
+{   size_t off = 0;
+    while (off < n)
+    {   const int64_t w = o->write(o, (const char *)b + off, (uint64_t)(n - off));
+        if (w <= 0) return false;
+        off += (size_t)w; }
+    return true; }
+
 static bool state_save(const clap_plugin_t *p, const clap_ostream_t *out)
 {
     auto *s = fromPlugin(p);
     s->adoptPendingIdentity();
-    s->refreshView();
+    s->refreshView();                       // model_ = the whole truth now
+    char buf[2048]; size_t off = 0;   // whole v11 blob packed here (see W guard)
+    auto W = [&](const void *b, size_t n) { if (off + n > sizeof buf) return false;
+                                            std::memcpy(buf + off, b, n); off += n; return true; };
     uint32_t head[2] = { PW_STATE_MAGIC, PW_STATE_VERSION };
-    int16_t ov[8];
-    for (int i = 0; i < 8; i++) ov[i] = s->view_.ov[i];
-    float trim = s->trim.load(std::memory_order_relaxed);
-    int32_t os = s->view_.os;
-    int16_t gui[3] = { (int16_t)s->view_.tune, (int16_t)s->program, (int16_t)s->bank.load() };
-    int16_t pan = (int16_t)s->view_.pan;
-    int16_t tr[32];   // per-voice, per-oscillator: [lane][osc][scale,offset]
+    int16_t gui[3] = { (int16_t)s->model_.tune, (int16_t)s->program, (int16_t)s->bank.load() };
+    int16_t tr[32];
     for (int i = 0; i < 8; i++)
         for (int k = 0; k < 2; k++)
-        { tr[4*i+2*k] = s->view_.trimV[i][k][0]; tr[4*i+2*k+1] = s->view_.trimV[i][k][1]; }
-    int16_t dev[128];
-    std::memcpy(dev, s->view_.dev, sizeof dev);
-    int16_t br[2] = { (int16_t)s->view_.rbrUp, (int16_t)s->view_.rbrDn };
+        { tr[4*i+2*k] = s->model_.trimV[i][k][0]; tr[4*i+2*k+1] = s->model_.trimV[i][k][1]; }
+    float trim = s->trim.load(std::memory_order_relaxed);
+    int32_t os = s->model_.os;
+    int16_t pan = (int16_t)s->model_.pan;
+    int16_t br[2] = { (int16_t)s->model_.rbrUp, (int16_t)s->model_.rbrDn };
     int32_t tn = s->tuneToneCount_;
     double tt[64] = {};
     for (int i = 0; i < s->tuneToneCount_ && i < 64; i++) tt[i] = s->tuneTones_[i];
     int32_t tmeta[3] = { s->tuneRoot_, (int32_t)s->tuneMask_, s->tuneWalk_ };
-    return wr(out, head, sizeof head) && wr(out, s->view_.raw, 134) &&
-           wr(out, ov, sizeof ov) && wr(out, &trim, sizeof trim) && wr(out, &os, sizeof os) &&
-           wr(out, gui, sizeof gui) && wr(out, &pan, sizeof pan) &&
-           wr(out, tr, sizeof tr) &&
-           wr(out, dev, sizeof dev) && wr(out, br, sizeof br) &&
-           wr(out, s->tuneName_, sizeof s->tuneName_) &&
-           wr(out, &tn, sizeof tn) && wr(out, tt, sizeof tt) && wr(out, tmeta, sizeof tmeta);
+    if (!(W(head, sizeof head) && W(s->model_.raw, 134) && W(s->model_.ov, sizeof s->model_.ov)
+          && W(&trim, sizeof trim) && W(&os, sizeof os) && W(gui, sizeof gui) && W(&pan, sizeof pan)
+          && W(tr, sizeof tr) && W(s->model_.dev, sizeof s->model_.dev) && W(br, sizeof br)
+          && W(s->tuneName_, sizeof s->tuneName_) && W(&tn, sizeof tn) && W(tt, sizeof tt)
+          && W(tmeta, sizeof tmeta)))
+        return false;
+    return wrAll(out, buf, off);
 }
-static bool rd(const clap_istream_t *i, void *b, size_t n)
-{ return i->read(i, b, (uint64_t)n) == (int64_t)n; }
+
+namespace {
+struct RCursor { const char *p; size_t n = 0, off = 0; bool ok = true;
+    bool rd(void *b, size_t k)
+    {   if (!ok || off + k > n) { ok = false; return false; }
+        std::memcpy(b, p + off, k); off += k; return true; } };
+}
+
 static bool state_load(const clap_plugin_t *p, const clap_istream_t *in)
 {
     auto *s = fromPlugin(p);
+    // Read the whole stream first (size-capped), parse into locals, and only
+    // POST on a complete parse: a failure mid-blob used to leave tune/pan/
+    // trims half-applied (review H5: non-transactional load).
+    // Host streams legally answer SHORTER than asked - or 0/negative when the
+    // full request cannot be satisfied. Halve the request on a miss so the
+    // tail of the blob is always reachable (a host that answers 0 for any
+    // request past EOF still terminates cleanly).
+    std::vector<char> blob;
+    {   char tmp[512];
+        for (int guard = 0; guard < (1 << 22);)
+        {   size_t want = 512;
+            bool advanced = false;
+            while (want >= 1)
+            {   const int64_t r = in->read(in, tmp, want);
+                if (r > 0)
+                {   blob.insert(blob.end(), tmp, tmp + r);
+                    if (blob.size() > (4096u * 1024u)) return false;
+                    advanced = true; guard++; break; }
+                want >>= 1; }
+            if (!advanced) break; } }
+    RCursor c{ blob.data(), blob.size(), 0, true };
     uint32_t head[2];
-    if (!rd(in, head, sizeof head)) return false;
+    if (!c.rd(head, sizeof head)) return false;
     if (head[0] != PW_STATE_MAGIC || head[1] == 0u || head[1] > PW_STATE_VERSION) return false;
-    int16_t migDr = -1;                 // v5..v9 side-channel drift (see below)
-    size_t rsz = 133;                   // patch bytes in this blob (v11+: 134)
-    uint8_t raw[134] = {}; int16_t ov[8]; float trim; int32_t os = 1;
-    if (head[1] == 1u) {
-        struct StateBlobV1 { uint32_t magic, version; uint8_t raw[133]; int16_t overlay[8]; float trim; } b;
-        b.magic = head[0]; b.version = head[1];
-        if (!rd(in, &b.raw, sizeof b - offsetof(StateBlobV1, raw))) return false;   // includes v1 padding
-        std::memcpy(raw, b.raw, 133);
-        std::memcpy(ov, b.overlay, sizeof ov);
-        trim = b.trim;
-    } else {
-        // v10 and older stored 133 wire bytes; the v11 extension byte keeps
-        // its honest default 0 (accepting files that predate it).
-        rsz = head[1] >= 11u ? 134u : 133u;   // v11 grew the blob: save side
-                                        // writes 134, and the tail memcpy must
-                                        // actually USE rsz (it silently dropped
-                                        // FEEDBACK until now)
-        if (!rd(in, raw, rsz) || !rd(in, ov, sizeof ov) ||
-            !rd(in, &trim, sizeof trim) || !rd(in, &os, sizeof os)) return false;
-        if (head[1] >= 3u) {
-            int16_t gui[3] = {0, -1, 0};
-            if (!rd(in, gui, sizeof gui)) return false;
-            s->postTune(gui[0]);
-            s->program = gui[1];
-            s->bank = gui[2];
-            if (head[1] >= 4u) { int16_t pan = 0; if (rd(in, &pan, sizeof pan)) s->postPan(pan); }
+
+    // parsed-into-locals targets
+    uint8_t raw[134] = {}; size_t rsz = 133;
+    int16_t ov[8] = {}; float trim = 0.5f; int32_t os = 1;
+    int tune = 0, program = -1, bankv = 0, pan = 0;
+    int16_t tr[32] = {}; int trn = 0;
+    int16_t dev[128] = {}; bool hasDev = false; int16_t br[2] = { 256, 256 }; bool hasBr = false;
+    char name[40] = "12-TET"; int32_t migDr = -1;
+    int32_t tn = 0; double tt[64] = {}; bool hasTones = false;
+    int16_t migDr16 = -1;                    // v5..v9 side-channel drift
+    int32_t tmeta[3] = { 0, 0, 0 };
+
+    if (head[1] == 1u)
+    {   if (!c.rd(raw, 133)) return false;
+        uint8_t pad; if (!c.rd(&pad, 1)) return false;          // v1 struct padding
+        if (!c.rd(ov, sizeof ov) || !c.rd(&trim, sizeof trim)) return false;
+        rsz = 133;
+    }
+    else
+    {   rsz = head[1] >= 11u ? 134u : 133u;
+        if (!c.rd(raw, rsz) || !c.rd(ov, sizeof ov) ||
+            !c.rd(&trim, sizeof trim) || !c.rd(&os, sizeof os)) return false;
+        if (head[1] >= 3u)
+        {   int16_t gui[3] = { 0, -1, 0 };
+            if (!c.rd(gui, sizeof gui)) return false;
+            tune = gui[0]; program = gui[1]; bankv = gui[2];
+            if (head[1] >= 4u) { int16_t pv = 0; if (!c.rd(&pv, sizeof pv)) return false; pan = pv; }
             if (head[1] >= 5u)
-            {
-                int16_t tr[32];
-                // v5..v9 stored drift in a side int16; v10+ carries it in patch
-                // byte 37 (already read above). Old sessions migrate by having
-                // the stored depth overwrite the byte - exactly once, here.
-                if (head[1] <= 9u)
-                {   if (!rd(in, &migDr, sizeof migDr)) return false; }
-                // (applied AFTER setPatch below: v10+ takes depth from patch
-                // byte 37; for v5..v9 blobs the stored side-value must win,
-                // because their byte 37 predates the re-scope and is opaque)
-                const int nvals = head[1] >= 6u ? 32 : 16;
-                if (!rd(in, tr, (size_t)nvals * sizeof tr[0])) return false;
-                for (int i = 0; i < 8; i++)
-                {
-                    if (head[1] >= 6u)
-                        for (int k = 0; k < 2; k++) s->postTrimPair(i, k, tr[4*i+2*k], tr[4*i+2*k+1]);
-                    else  /* v5: one trim per voice, apply to both oscillators */
-                        for (int k = 0; k < 2; k++) s->postTrimPair(i, k, tr[2*i], tr[2*i+1]);
-                }
+            {   // the historical side-channel drift field is int16 (v5..v9)
+                if (head[1] <= 9u && !c.rd(&migDr16, sizeof migDr16)) return false;
+                migDr = migDr16;
+                trn = head[1] >= 6u ? 32 : 16;
+                if (!c.rd(tr, (size_t)trn * sizeof tr[0])) return false;
                 if (head[1] >= 7u)
-                {
-                    static int16_t dev[128];
-                    int16_t br[2];
-                    if (!rd(in, dev, sizeof dev)) return false;
-                    for (int k = 0; k < 128; k++)   // deviation table is a ±512
+                {   if (!c.rd(dev, sizeof dev)) return false;
+                    for (int k = 0; k < 128; k++)
                     { if (dev[k] < -512) dev[k] = -512; if (dev[k] > 512) dev[k] = 512; }
-                    if (!rd(in, br, sizeof br)) return false;
-                    if (!rd(in, s->tuneName_, sizeof s->tuneName_)) return false;
-                    s->tuneName_[sizeof s->tuneName_ - 1] = 0;
-                    s->postTuning(dev);
-                    if (br[0] >= 0 && br[1] >= 0)
-                        s->postBendDefault(br[0] / 256.0f, br[1] / 256.0f);
-                    s->tuneToneCount_ = 0;
+                    hasDev = true;
+                    if (!c.rd(br, sizeof br)) return false;
+                    hasBr = true;
+                    if (!c.rd(name, sizeof name)) return false;
+                    name[sizeof name - 1] = 0;
                     if (head[1] >= 8u)
-                    {   int32_t tn = 0;
-                        double tt[64];
-                        if (!rd(in, &tn, sizeof tn)) return false;
-                        if (!rd(in, tt, sizeof tt)) return false;
-                        if (tn >= 2 && tn <= 64)
-                        {   s->tuneToneCount_ = tn;
-                            for (int i = 0; i < tn; i++) s->tuneTones_[i] = tt[i]; }
-                        if (head[1] >= 9u)
-                        {   int32_t tmeta[3];
-                            if (!rd(in, tmeta, sizeof tmeta)) return false;
-                            s->tuneRoot_ = tmeta[0]; s->tuneMask_ = (uint16_t)tmeta[1]; s->tuneWalk_ = tmeta[2];
-                        }
-                    }
+                    {   if (!c.rd(&tn, sizeof tn)) return false;
+                        if (!c.rd(tt, sizeof tt)) return false;
+                        hasTones = true;
+                        if (head[1] >= 9u && !c.rd(tmeta, sizeof tmeta)) return false; }
                 }
             }
         }
     }
-    // migDr (declared above): v5..v9 blobs stored drift in a side int16.
-    // Applied AFTER setPatch - those blobs predate the byte-37 re-scope, so
-    // their stored depth beats whatever opaque value their byte 37 carries.
+    if (!c.ok) return false;                       // nothing posted yet (H5)
+
+    // bounds: host numbers are guessed-at data
+    { if (program < -1 || program >= (int)PW_FACTORY_N) program = -1;
+      if (bankv < 0 || bankv > 127) bankv = 0;
+      if (!(trim >= 0.0f && trim <= 2.0f)) trim = 0.5f;   // H4: the PARAM range is 0..2
+                                                           // (CC48 reaches 2); NaN -> default
+      if (os != 2) os = 1; }
+
     p5::Patch patch;
     std::memset(&patch, 0, sizeof patch);
-    std::memcpy(patch.raw, raw, rsz);            // rsz=134 for v11: the FEEDBACK
-    patch.size = 133; patch.model = 0x32; patch.command = 3;   // byte (and its
-    s->postLoad(patch);                          // polarity bit) comes back
-    s->programA_.store(-1, std::memory_order_relaxed);
-    if (migDr >= 0) s->postRaw(p5::P5_VINTAGE, migDr < 0 ? 0 : migDr > 127 ? 127 : migDr);
-    // Host-supplied numbers are GUESSED-AT DATA, not truth: bound everything
-    // the parser read before it can index a table or steer the engine.
-    { const int pr_ = s->program; if (pr_ < -1 || pr_ >= (int)PW_FACTORY_N) s->program = -1;
-    const int bk_ = s->bank.load(); if (bk_ < 0 || bk_ > 127) s->bank.store(0); }
-    if (!(trim >= 0.0f && trim <= 1.0f)) trim = 0.0f;      // also kills NaN
+    std::memcpy(patch.raw, raw, rsz);
+    patch.size = 133; patch.model = 0x32; patch.command = 3;
+    s->postTune(tune);
+    s->postLoad(patch);
+    s->program = program;
+    s->programA_.store(program, std::memory_order_relaxed);   // 5.8: echo guard starts synced
+    s->bank.store(bankv);
+    s->postPan(pan);
+    for (int i = 0; i < 8; i++)
+        if (trn >= 32) s->postTrimPair(i, 0, tr[4*i], tr[4*i+1]),
+                       s->postTrimPair(i, 1, tr[4*i+2], tr[4*i+3]);
+        else if (trn >= 16) s->postTrimPair(i, 0, tr[2*i], tr[2*i+1]),
+                            s->postTrimPair(i, 1, tr[2*i], tr[2*i+1]);
+    if (head[1] <= 9u && migDr >= 0)
+        s->postRaw(p5::P5_VINTAGE, migDr > 127 ? 127 : migDr);
+    if (hasDev) s->postTuning(dev);
+    std::memcpy(s->tuneName_, name, sizeof s->tuneName_);
+    if (hasBr && br[0] >= 0 && br[1] >= 0)
+        s->postBendDefault(br[0] / 256.0f, br[1] / 256.0f);
+    if (hasTones && tn >= 2 && tn <= 64)
+    {   s->tuneToneCount_ = tn;
+        for (int i = 0; i < tn; i++) s->tuneTones_[i] = tt[i]; }
+    else s->tuneToneCount_ = 0;
+    if (head[1] >= 9u) { s->tuneRoot_ = tmeta[0]; s->tuneMask_ = (uint16_t)tmeta[1]; s->tuneWalk_ = tmeta[2]; }
     s->markSource(0, s->program, s->srcFile_);   // restored session floats as saved
     if (s->program >= 0 && !std::memcmp(patch.raw, PW_FACTORY_RAW[s->program], 133)
         && patch.raw[133] == 0)   // factory identity only while the extension byte is 0
@@ -1381,9 +1827,10 @@ static bool state_load(const clap_plugin_t *p, const clap_istream_t *in)
     { s->curSrc_.kind = p5store::SourceKind::File; s->curSrc_.file = s->srcFile_; }
     for (int i = 0; i < 8; i++) s->postOverlay(i, ov[i]);
     s->trim.store(trim, std::memory_order_relaxed);
-    s->postOS((int)os);
+    s->postOS(os);
     return true;
 }
+
 const clap_plugin_state_t kState = { state_save, state_load };
 
 // ---- preset load (built-in factory programs) -----------------------------------
@@ -1392,26 +1839,39 @@ static bool preset_from_location(const clap_plugin_t *p, uint32_t location_kind,
                                  const char *location, const char *load_key)
 {
     auto *s = fromPlugin(p);
-    if (location_kind == CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN && load_key &&
-        !std::strncmp(load_key, "user:", 5)) return s->loadUserPatch(load_key + 5);
-    if (location_kind == CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN && load_key &&
-        !std::strcmp(load_key, "init")) { s->recallBasicInit(); return true; }
-    (void)location;
     if (location_kind != CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN || !load_key) return false;
-    int k = atoi(load_key);
-    if (k < 0 || k > (int)PW_FACTORY_N) return false;
-    if (k == 0 && s->loadUserPatch("Peace Be Upon Him")) return true;
-    if (k == 0) {
-        p5::Patch i; p5::patchInit(i); p5::patchDefaultName(i);
-        s->postLoad(i); s->program = -1; s->programA_.store(-1); s->markSource(0, 0, std::string());
-        for (clap_id id = 0; id < 58; id++) s->markPending(id, paramValue(s, id));
-        requestHostParamFlush(s);
-        return true;
+    (void)location;
+    bool ok = false;
+    if (!std::strncmp(load_key, "user:", 5))
+        ok = s->loadUserPatchExact(load_key + 5);
+    else if (!std::strcmp(load_key, "init"))
+    {   s->recallBasicInit(); ok = true; }
+    else
+    {   char *end = nullptr;
+        const long k = std::strtol(load_key, &end, 10);
+        if (!end || *end != '\0' || k < 0 || k > (long)PW_FACTORY_N) return false;   // 5.8: garbage must FAIL, not load 0
+        if (k == 0)
+        {   if (s->loadUserPatch("Peace Be Upon Him")) ok = true;
+            else { p5::Patch i; p5::patchInit(i); p5::patchDefaultName(i);
+                   s->postLoad(i); s->program = -1; s->programA_.store(-1);
+                   s->markSource(0, 0, std::string()); s->syncAllParams(); ok = true; } }
+        else
+        {   s->loadProgram((int)(k - 1));   // 5.8: through the SAME path as panel clicks
+            ok = true; }
     }
-    else s->postLoad(factoryPatch(k - 1));
-    return true;
+    if (ok && s->host && s->host->get_extension)
+    {   s->refreshView();
+        // tell the host it landed: rescan values + loaded() (5.8)
+        auto *hp = (const clap_host_params_t *)s->host->get_extension(s->host, CLAP_EXT_PARAMS);
+        if (hp && hp->rescan) hp->rescan(s->host, CLAP_PARAM_RESCAN_VALUES);
+        auto *hl = (const clap_host_preset_load_t *)s->host->get_extension(s->host, CLAP_EXT_PRESET_LOAD);
+        if (hl && hl->loaded) hl->loaded(s->host, location_kind, location, load_key);
+    }
+    return ok;
 }
+
 const clap_plugin_preset_load_t kPresetLoad = { preset_from_location };
+
 // A brand-new instance shows the default patch (bare INIT content, curated
 // name) so the first thing you see when loading is "Peace Be Upon Him".
 static void seedDefaultPatch(Plugin *s)
