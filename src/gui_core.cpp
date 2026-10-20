@@ -253,6 +253,15 @@ void fillState(GuiCore &c, p5ui::State &st)
             if (c.bindPending && same(c.bindSrc, row)) st.pickerBind = i;
             st.pickerCount++;
         }
+        // Ground truth when the USER page is blank: stderr is invisible in
+        // Bitwig's plugin-host child, so the panel shows the directory it
+        // actually scanned. (Click-safe: the load path bounds-checks against
+        // userRows, and a tap on this row resolves to nothing.)
+        if (c.pickerTab == 1 && c.userRows.empty() && c.pickerPage == 0)
+        {   std::snprintf(st.pickerRows[0], 44, "empty: %s",
+                          p5store::baseDir().c_str());
+            st.pickerCount = 1;
+        }
     }
     else if (c.modal == 1 || c.modal == 2 || c.modal == 3 ||
              c.modal == 8 || c.modal == 9)          // 5/6 = pages, not text modals
