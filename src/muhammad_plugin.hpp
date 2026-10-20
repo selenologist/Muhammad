@@ -237,6 +237,7 @@ struct Plugin {
     void presetRecall();                              // PRESET: back to loaded source
     const std::string &currentFile() const { return srcFile_; }
     void markSource(int kind, int idx, const std::string &file);  // after any load
+    void markHostDirty();                     // host_state->mark_dirty on panel edits
     int assignTarget() const { return bank * 8 + (program >= 0 ? program % 8 : lastProgClick_); }
     void noteProgramClick(int p8) { lastProgClick_ = p8 & 7; }
 
@@ -251,6 +252,11 @@ struct Plugin {
     // dirty-state / repaint propagation: bumped by every main-side mutation
     // and merged publish (gui shims repaint on movement only).
     std::atomic<uint32_t> changeTick_{1};
+
+    // background main-thread timer (adopt identity + latency announce even
+    // with the panel closed; opportunistic on hosts that never fire timers)
+    clap_id bgTimerId_ = 0;
+    bool bgTimerOn_ = false;
 
     // ---- gui_core facades (never let the panel touch the engine directly)
     int  rawOfView(int idx);

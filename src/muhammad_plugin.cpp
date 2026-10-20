@@ -413,8 +413,8 @@ void Plugin::postRaw(int idx, int v)
     if (v < 0) v = 0; if (v > 255) v = 255;
     model_.raw[idx] = (uint8_t)v;
     rawGen_[idx] = ++gen_;            // stamped even when unchanged: MAIN wrote last
-    if (model_.raw[idx] == (uint8_t)v && pushedValid_ == false) {}
     changeTick_.fetch_add(1, std::memory_order_relaxed);
+    markHostDirty();
     if (!active.load(std::memory_order_relaxed)) { engine.editRaw(idx, v); return; }
     stagePush();
 }
@@ -424,6 +424,7 @@ void Plugin::postOverlay(int i, int v)
     model_.ov[i] = (int16_t)v;
     ovGen_[i] = ++gen_;
     changeTick_.fetch_add(1, std::memory_order_relaxed);
+    markHostDirty();
     if (!active.load(std::memory_order_relaxed)) { engine.setOverlay(i, v); return; }
     stagePush();
 }
@@ -432,6 +433,7 @@ void Plugin::postTune(int v)
     model_.tune = v;
     tuneGen_ = ++gen_;
     changeTick_.fetch_add(1, std::memory_order_relaxed);
+    markHostDirty();
     if (!active.load(std::memory_order_relaxed)) { engine.setTuneCents(v); return; }
     stagePush();
 }
@@ -440,6 +442,7 @@ void Plugin::postOS(int v)
     model_.os = v;
     osGen_ = ++gen_;                 // always stamped (report-vs-load ordering)
     changeTick_.fetch_add(1, std::memory_order_relaxed);
+    markHostDirty();
     if (!active.load(std::memory_order_relaxed))
     {   engine.setOverSample(v);
         if (host && host->get_extension)
@@ -459,6 +462,7 @@ void Plugin::postPan(int v)
     model_.pan = v;
     panGen_ = ++gen_;
     changeTick_.fetch_add(1, std::memory_order_relaxed);
+    markHostDirty();
     if (!active.load(std::memory_order_relaxed)) { engine.setPanWidth(v); return; }
     stagePush();
 }
@@ -468,6 +472,7 @@ void Plugin::postTrimPair(int lane, int osc, int sc, int of)
     model_.trimV[lane][osc][0] = (int16_t)sc; model_.trimV[lane][osc][1] = (int16_t)of;
     trimGen_[lane][osc][0] = trimGen_[lane][osc][1] = ++gen_;
     changeTick_.fetch_add(1, std::memory_order_relaxed);
+    markHostDirty();
     if (!active.load(std::memory_order_relaxed)) { engine.setVoiceTrim(lane, osc, sc, of); return; }
     stagePush();
 }
@@ -477,6 +482,7 @@ void Plugin::postTuning(const int16_t *dev)
     else std::memset(model_.dev, 0, 256);
     devGen_ = ++gen_;
     changeTick_.fetch_add(1, std::memory_order_relaxed);
+    markHostDirty();
     if (!active.load(std::memory_order_relaxed)) { engine.setTuningDeviation(dev); return; }
     stagePush();
 }
@@ -485,6 +491,7 @@ void Plugin::postBendDefault(float up, float dn)
     model_.brUp = up; model_.brDn = dn;
     brGen_ = ++gen_;
     changeTick_.fetch_add(1, std::memory_order_relaxed);
+    markHostDirty();
     if (!active.load(std::memory_order_relaxed)) { engine.setBendRangeDefault(up, dn); return; }
     stagePush();
 }
@@ -494,6 +501,7 @@ void Plugin::postLoad(const p5::Patch &p)
     for (int i = 0; i < (int)p5::RAW_MAX; i++) rawGen_[i] = ++gen_;
     loadGen_.fetch_add(1, std::memory_order_relaxed);       // whole-patch semantics
     changeTick_.fetch_add(1, std::memory_order_relaxed);
+    markHostDirty();
     if (!active.load(std::memory_order_relaxed)) { engine.setPatch(p); return; }
     stagePush();
 }
@@ -751,6 +759,32 @@ static void requestHostParamFlush(Plugin *s)
     auto *hp = (const clap_host_params_t *)s->host->get_extension(s->host, CLAP_EXT_PARAMS);
     if (hp && hp->request_flush) hp->request_flush(s->host);
 }
+
+// The panel changing anything project-worthy marks the host's session dirty
+// (review 5.12: hosts never prompted to save after polarity/trim/tuning or
+// GUI preset changes).
+void Plugin::markHostDirty()
+{
+    if (!host || !host->get_extension) return;
+    auto *hs = (const clap_host_state_t *)host->get_extension(host, CLAP_EXT_STATE);
+    if (hs && hs->mark_dirty) hs->mark_dirty(host);
+}
+
+static Plugin *fromPlugin(const clap_plugin_t *p);   // fwd (vtable section)
+static void plugin_on_timer(const clap_plugin_t *p, clap_id id)
+{   auto *s = fromPlugin(p);
+    if (s && s->bgTimerOn_ && id == s->bgTimerId_)
+    {   s->adoptPendingIdentity();
+        s->maybePingLatency();
+        s->refreshView();
+        return; }
+#ifdef P5_GUI
+    if (kTimerSupport.on_timer) kTimerSupport.on_timer(p, id);
+#else
+    (void)p; (void)id;
+#endif
+}
+static const clap_plugin_timer_support_t kTimerDispatch = { plugin_on_timer };
 
 static double paramValue(Plugin *s, clap_id id)
 {
@@ -1382,6 +1416,14 @@ static bool plugin_activate(const clap_plugin_t *p, double sample_rate, uint32_t
     for (int i = 0; i < Plugin::PEND_IDS; i++) s->dragOpen_[i] = false;
     s->publishView();                     // seed before going live
     s->active.store(true, std::memory_order_release);
+    // Main-thread background timer: identity adoption + latency announce run
+    // even with the panel closed. On hosts that never fire timers (older
+    // Bitwig) everything still works opportunistically at GUI/save entries.
+    if (s->host && s->host->get_extension)
+    {   auto *t = (const clap_host_timer_support_t *)s->host->get_extension(s->host, CLAP_EXT_TIMER_SUPPORT);
+        if (t && t->register_timer && !s->bgTimerOn_)
+        {   if (t->register_timer(s->host, 100000, &s->bgTimerId_)) s->bgTimerOn_ = true; }
+    }
     return true;
 }
 
@@ -1406,6 +1448,10 @@ static void plugin_deactivate(const clap_plugin_t *p)
     // device-delete crash). Hosts re-read get_latency() at every activate.
     s->restartPending_ = false;
     s->latencyDirty.store(false, std::memory_order_relaxed);
+    if (s->bgTimerOn_ && s->host && s->host->get_extension)
+    {   auto *t = (const clap_host_timer_support_t *)s->host->get_extension(s->host, CLAP_EXT_TIMER_SUPPORT);
+        if (t && t->unregister_timer) t->unregister_timer(s->host, s->bgTimerId_);
+        s->bgTimerOn_ = false; }
 }
 
 static bool plugin_start(const clap_plugin_t *p)
@@ -1512,9 +1558,9 @@ static const void *plugin_get_extension(const clap_plugin_t *, const char *id)
     if (!std::strcmp(id, CLAP_EXT_PRESET_LOAD) ||
         !std::strcmp(id, CLAP_EXT_PRESET_LOAD_COMPAT)) return &kPresetLoad;
     if (!std::strcmp(id, CLAP_EXT_LATENCY)) return &kLatency;
+    if (!std::strcmp(id, CLAP_EXT_TIMER_SUPPORT)) return &kTimerDispatch;
 #ifdef P5_GUI
     if (!std::strcmp(id, CLAP_EXT_GUI)) return &kGui;
-    if (!std::strcmp(id, CLAP_EXT_TIMER_SUPPORT)) return &kTimerSupport;
 #endif
     return nullptr;
 }
@@ -1707,7 +1753,10 @@ struct RCursor { const char *p; size_t n = 0, off = 0; bool ok = true;
         std::memcpy(b, p + off, k); off += k; return true; } };
 }
 
+static bool state_load_impl(const clap_plugin_t *p, const clap_istream_t *in);
 static bool state_load(const clap_plugin_t *p, const clap_istream_t *in)
+{   try { return state_load_impl(p, in); } catch (...) { return false; } }   // S3
+static bool state_load_impl(const clap_plugin_t *p, const clap_istream_t *in)
 {
     auto *s = fromPlugin(p);
     // Read the whole stream first (size-capped), parse into locals, and only

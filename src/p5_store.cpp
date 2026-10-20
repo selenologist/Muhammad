@@ -83,11 +83,19 @@ bool savePatch(const std::string &name, const uint8_t raw[134])
     if (!ensureDir()) return false;
     const std::string n = sanitize(name);
     if (n.empty()) return false;
-    std::ofstream f(patchPath(n), std::ios::binary | std::ios::trunc);
-    if (!f) return false;
-    f.write((const char *)&kMagic, sizeof kMagic);
-    f.write((const char *)raw, 134);
-    return (bool)f;
+    // write-then-rename: a host crash mid-write must never leave a
+    // half-written patch under the real name (review 5.8 atomic writes).
+    const std::string dst = patchPath(n);
+    const std::string tmp = dst + ".tmp";
+    {   std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+        if (!f) return false;
+        f.write((const char *)&kMagic, sizeof kMagic);
+        f.write((const char *)raw, 134);
+        if (!f) return false; }
+    std::error_code ec;
+    fs::rename(tmp, dst, ec);
+    if (ec) { std::remove(tmp.c_str()); return false; }
+    return true;
 }
 
 namespace { char foldc(char c){ return (char)std::tolower((unsigned char)c); }
@@ -108,8 +116,10 @@ std::string foldCollision(const std::string &name)
 bool loadPatch(const std::string &name, uint8_t raw[134])   // 134 even when the
 //               file is 133: byte 133 gets its honest default
 {
+    // The magic gate limits damage but loading must address the STORE only:
+    // the old "full path too" fallback let any preset key open any file
+    // (review S13). Separators are rejected by the plugin layer.
     std::ifstream f(patchPath(name), std::ios::binary);
-    if (!f) f = std::ifstream(name, std::ios::binary);       // full path too
     if (!f) return false;
     uint64_t magic = 0;
     f.read((char *)&magic, sizeof magic);
@@ -120,14 +130,24 @@ bool loadPatch(const std::string &name, uint8_t raw[134])   // 134 even when the
     return n == 134;
 }
 
+// error_code overloads + increment(): directory_iterator's range-for ++ and
+// path::string() THROW (Windows: any name the ANSI code page cannot
+// represent kills the host from a WndProc) - review S3. u8 bytes throughout.
+static std::string u8str(const fs::path &p)
+{   auto u = p.u8string(); return std::string(u.begin(), u.end()); }
+
 std::vector<std::string> listPatches()
 {
     std::vector<std::string> out;
     std::error_code ec;
-    for (const auto &e : fs::directory_iterator(baseDir(), ec))
+    fs::directory_iterator it(baseDir(), fs::directory_options::skip_permission_denied, ec), end;
+    if (ec) return out;
+    for (; it != end; it.increment(ec))
     {
-        if (!e.is_regular_file()) continue;
-        const std::string fn = e.path().filename().string();
+        if (ec) break;
+        std::error_code fe;
+        if (!it->is_regular_file(fe)) continue;
+        const std::string fn = u8str(it->path().filename());
         if (fn.size() > 9 && fn.compare(fn.size() - 9, 9, ".muhammad") == 0)
             out.push_back(fn.substr(0, fn.size() - 9));
     }
@@ -167,16 +187,16 @@ bool loadMap()
     std::ifstream f(mapPath());
     if (!f) { g_map.clear(); g_mapLoaded = true; return false; }
     g_map.clear();
-    int sl; char kind[8];
+    int sl; std::string kind;
     std::string rest;
-    while (f >> sl >> kind)
-    {
+    while (f >> sl >> kind)                 // std::string target: pre-C++20 libc++
+    {                                       // >>char* was UNBOUNDED (review S2)
         std::getline(f, rest);
         size_t b = rest.find_first_not_of(" \t");
         rest = b == std::string::npos ? "" : rest.substr(b);
         Source s;
-        if (!std::strcmp(kind, "fac")) { s.kind = SourceKind::Factory; s.factory = std::atoi(rest.c_str()); }
-        else if (!std::strcmp(kind, "fil")) { s.kind = SourceKind::File; s.file = rest; }
+        if (kind == "fac") { s.kind = SourceKind::Factory; s.factory = std::atoi(rest.c_str()); }
+        else if (kind == "fil") { s.kind = SourceKind::File; s.file = rest; }
         else continue;
         if (sl < 0 || sl >= kSlotBanks * kSlotsPerBank) continue;   // corrupt map line
         g_map[sl] = s;
@@ -219,10 +239,13 @@ std::vector<std::string> listTunings()
     // std::filesystem, not dirent: mingw ships dirent.h but MSVC does not,
     // and this TU already carries the fs alias (listPatches above). Same
     // filter, same sort, same unique — the scan is the contract, not the API.
-    for (const auto &e : fs::directory_iterator(tuningsDir(), ec))
+    fs::directory_iterator it(tuningsDir(), fs::directory_options::skip_permission_denied, ec), end;
+    for (; ec ? false : it != end; it.increment(ec))
     {
-        if (!e.is_regular_file()) continue;
-        const std::string n = e.path().filename().string();
+        if (ec) break;
+        std::error_code fe;
+        if (!it->is_regular_file(fe)) continue;
+        const std::string n = u8str(it->path().filename());
         const size_t dot = n.rfind('.');
         if (dot == std::string::npos) continue;
         std::string ext = n.substr(dot);
