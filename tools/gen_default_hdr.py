@@ -9,7 +9,8 @@ the default patch:
     python3 tools/gen_default_hdr.py
 """
 import sys, os
-SRC = os.path.expanduser("~/Documents/Muhammad Synth/Peace Be Upon Him.muhammad")
+SRC = os.environ.get("P5_DEFAULT_PATCH",
+      os.path.expanduser("~/Documents/Muhammad Synth/Peace Be Upon Him.muhammad"))
 OUT = os.path.join(os.path.dirname(__file__), "..", "src", "p5_default.hpp")
 data = open(SRC, "rb").read()
 if len(data) < 8 + 133 or data[:8] != b"UpMUHAD1":

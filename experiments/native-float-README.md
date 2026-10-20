@@ -9,6 +9,12 @@ int32 quantiser deleted, the DC coupling cap as a float one-pole
 dropping the /32768 law. This patch applies on the `native-float` branch
 tip = commit f56f46b (setReleaseCut + quantnoise probe, still INT kernel).
 
+NOTE (2026-10-21): that commit id does NOT exist in the public repo —
+f56f46b predates the history scrub that removed the pre-publication
+identifiers, so `git apply` from a clean clone will NOT land cleanly.
+Treat the patch below as archived engineering record of a measured,
+rejected experiment, not as something to re-apply mechanically.
+
 ## How to reach the base state and apply
     git fetch            # base = commit f56f46b (tag of the experiment branch)
     git checkout f56f46b

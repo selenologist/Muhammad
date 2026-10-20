@@ -56,16 +56,17 @@ also ship in the tree.
 ## Other third parties in this tree
 
 - **CLAP headers** — `vendor/clap/`, © Alexandre Bique / free-audio.org,
-  **MIT** (notice in each header). The old draft ABI we vendored is
-  deliberate: it matches the Bitwig generation we target.
+  **MIT** (notice in each header). Vendored version: **CLAP 1.2.10**
+  (`clap/version.h`), the stable ABI we target.
 - **NanoVG** — `external/nanovg/`, © Mikko Mononen, **zlib**
-  (notice in headers; vendored from https://github.com/memonnick/nanovg).
+  (vendored from https://github.com/memononen/nanovg, pinned `ce3bf745`).
 - **SIMDe** — `external/simde/`, © 2018 David Michael Taschner and
   contributors, **MIT**; SPDX + permission notice preserved in every
   vendored header. We chose it because Surge vectorizes the same way, but
   the code is upstream SIMDe, not Surge.
-- **stb** — `external/stb/` (`stb_truetype`, `stb_image_write`), **MIT /
-  public domain**, notices in files.
+- **stb** — `external/stb/` holds `stb_image_write.h` (+ `PINNED.txt`);
+  `stb_truetype.h` ships **inside** `external/nanovg/src/` (nanovg's own
+  copy). **MIT / public domain**, notices in files.
 - **Melodee firmware** — © keremimo, **GPL-3.0**: the Prophet-5 engine
   ported here, the generated DSP tables (kept verbatim via the dump tools),
   and the scale catalogue from `firmware/src/scales.h` (generated into
@@ -83,12 +84,26 @@ also ship in the tree.
 
 ## Wrapper toolchain (build-time only, output ships)
 
-- **clap-wrapper** — https://github.com/free-audio/clap-wrapper , © Surge
-  Synth Team contributors, **MIT**. Not vendored into this repo; the VST3
-  build (see README "VST3 via clap-wrapper") consumes it from a sibling
-  checkout. The produced `muhammad.vst3` is a wrapper that dynamically loads
-  our `muhammad.clap`; treat the wrapper's MIT notice as an attribution for
-  any distributed VST3 binary, alongside the Steinberg SDK notice below.
+- **clap-wrapper** — https://github.com/free-audio/clap-wrapper , © 2022
+  defiantnerd (MIT LICENSE of the pinned tag), maintained under the
+  free-audio org. **MIT**. Not vendored; consumed at build time by
+  `tools/make_wrappers.sh`, pinned to tag **v0.9.1** (reproducible nightlies,
+  review B8). The produced `muhammad.vst3` is a CLAP-FIRST embedded wrapper —
+  it carries the engine statically and needs NO separate `muhammad.clap`
+  install; treat the wrapper's MIT notice as an attribution for any
+  distributed VST3 binary, alongside the Steinberg SDK notice below.
+- **AudioUnitSDK** — https://github.com/apple/AudioUnitSDK , © Apple,
+  **BSD-3**. Build-time only (AUv2 wrapper on macOS), pinned to tag
+  `AudioUnitSDK-1.3.0` with a self-healing layout guard.
+- **rtaudio / rtmidi** — https://github.com/thestk/rtaudio ,
+  https://github.com/thestk/rtmidi , © Gary P. Scavone, **MIT**. Fetched by
+  clap-wrapper's CPM for the simple standalone wrapper target only; the
+  plugin itself never touches audio APIs. NOTE: CPM floats these — the
+  wrapper build is reproducible for OUR pinned inputs, not for CPM's transitive
+  downloads; revisit when pinning them upstream lands (owner decision).
+- **WIL (Windows Implementation Library)** — https://github.com/microsoft/WIL ,
+  © Microsoft, **MIT**. Consumed by clap-wrapper's Windows host code at
+  build time; not vendored here.
 - **VST3 SDK** — https://github.com/steinbergmedia/vst3sdk , © Steinberg
   Media Technologies, **MIT** (use of the VST trademark per Steinberg's
   guidelines; pinned to tag `v3.8.0_build_66`, the version clap-wrapper

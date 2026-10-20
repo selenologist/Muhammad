@@ -32,7 +32,7 @@ for spec in "init 1560" "pad 936" "bass 1560" "trim 1560" "tune 1560" "debug 156
         ae=$(compare -metric AE -fuzz 2% "$golden" "$out" null: 2>&1 | head -1) || true
         total=$(( w * h ))
         pct=$(python3 -c "print(f'{${ae:-0} / $total * 100:.3f}%')" 2>/dev/null || echo "ERR")
-        ok=$(python3 -c "print(1 if float('${pct%\%}') <= 0.5 else 0)" 2>/dev/null || echo 0)
+        ok=$(python3 -c "print(1 if float('${pct%\%}') <= float('${tol%\%}') else 0)" 2>/dev/null || echo 0)
         if [ "$ok" = 1 ]; then echo "golden $state: OK ($pct diff @fuzz2%)"; else echo "golden $state: DRIFT ($pct > $tol)"; fail=1; fi
     fi
     rm -f "$out"

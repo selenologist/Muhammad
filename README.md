@@ -291,8 +291,11 @@ same `p5ui::draw()`.
   0 keeps bit-exact firmware behaviour), `PROGRAM` (83, writes load factory
   patches and sync all params to the host), `BANK` (84, BANK SELECT cycles).
   The patch-name display reads the live patch bytes.
-- Panel font (Liberation Sans Narrow Bold, OFL) is **embedded** at build-time
-  via `tools/embed_font.py` — no runtime font lookup, deterministic goldens.
+- Panel fonts: **Inter Tight Bold** (labels/values) and **VT323** (programmer
+  display) — both SIL OFL 1.1 — rasterised into the CHECKED-IN
+  `src/p5_fontdata.h` by `tools/embed_font.py` (regenerate manually; the
+  build never rasterises). No runtime font lookup: deterministic goldens.
+  (The old Liberation Sans Narrow files were unused and are gone.)
 
 **Golden test:** `tools/check_goldens.sh` renders `init/pad/bass` through
 EGL (surfaceless → device → display fallback) and pixel-compares against

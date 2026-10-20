@@ -24,7 +24,7 @@ include_directories(vendor/tuning-library/include)   # header-only, MIT: tuning-
 set_source_files_properties(src/p5_store.cpp PROPERTIES
     COMPILE_OPTIONS "$<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-std=gnu++20>")
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
-    set(PP_CXX_FLAGS "-O3 -ffp-contract=off")
+    set(PP_CXX_FLAGS "")   # see note below: flags are on p5_engine now
 else()
     # MSVC: /O2 arrives via CMAKE_BUILD_TYPE=Release; /fp:precise (the default)
     # never forms FMA, which is exactly the no-contraction semantics the engine
@@ -32,8 +32,11 @@ else()
     # D9002 wall that hid real diagnostics (windows clapfirst CI).
     set(PP_CXX_FLAGS "")
 endif()
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${PP_CXX_FLAGS}")
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${PP_CXX_FLAGS}")
+# (review hygiene: -O3 used to be forced into EVERY build type, Debug
+# included. It no longer needs to be: the engine's math contract rides the
+# p5_engine target PUBLIC (see below), and Release brings its own -O3.
+# C++ Debug builds now get real -O0 debuggability; the engine stays -O3
+# because bit-exactness is not a build-type option.)
 
 find_library(MATH_LIBRARY m)
 
