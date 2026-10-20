@@ -1,2 +1,4 @@
 build*/
 dist/
+*.wav
+muhammad_panel.svg

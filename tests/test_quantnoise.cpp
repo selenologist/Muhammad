@@ -120,10 +120,28 @@ int main(int argc, char **argv)
         double mx = 0;
         for (size_t b = 1; b < N / 2; b++) { const double m = hypot(re[b], im[b]) * gain; if (m > mx) mx = m; }
         return mx; }();
+    const double spurDb = 20.0 * log10(offPeak + 1e-300);
     printf("tail-window: peak-bin %.1f dBFS, off-harmonic floor %.1f dB, biggest off-harmonic spur "
            "%.1f dBFS @ %.0f Hz\n",
            20.0 * log10(sigPeak + 1e-300),
            10.0 * log10(offSum / (double)offBins + 1e-300),
-           20.0 * log10(offPeak + 1e-300), atFreq);
+           spurDb, atFreq);
+
+    // B10: this probe used to print and always exit 0 - a silent test is no
+    // test. The thresholds are deliberately loose: they do NOT certify a
+    // tight noise floor (window skirt dominates the numbers), they catch
+    // GROSS regressions the float path cannot produce: a re-introduced
+    // integer quantiser's idle tones, a stuck voice that never reaches the
+    // kill point, or a tail that never silences.
+    int fails = 0;
+    const double floorDb = 10.0 * log10(offSum / (double)offBins + 1e-300);
+    const double killSec = (double)(ks - 44100u) / 44100.0;
+    if (!(floorDb < -55.0)) { printf("FAIL: off-harmonic floor %.1f dB above -55\n", floorDb); ++fails; }
+    if (!(spurDb < -28.0))   { printf("FAIL: idle spur %.1f dBFS above -28\n", spurDb); ++fails; }
+    if (!(killSec > 0.3 && killSec < 2.5))
+        { printf("FAIL: voice kill at %.3f s outside 0.3..2.5 s (fade/kill law broken)\n", killSec); ++fails; }
+    if (!(sigPeak > 0.0))    { printf("FAIL: silent render - probe degenerate\n"); ++fails; }
+    if (fails) { printf("test_quantnoise: %d assertion(s) FAILED\n", fails); return 1; }
+    printf("test_quantnoise: assertions PASS\n");
     return 0;
 }

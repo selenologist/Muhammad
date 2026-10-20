@@ -54,6 +54,9 @@ int main(int argc, char **argv)
     host.host_data = nullptr;
     host.get_extension = [](const clap_host_t *, const char *) -> const void * { return nullptr; };
     const clap_plugin_t *plugin = factory->create_plugin(factory, &host, desc->id);
+    check("create_plugin + init", plugin && plugin->init(plugin));   // CLAP order:
+    //   init comes BEFORE any state/params call; the fresh-default checks below
+    //   ran pre-init (out of contract, harmless only by luck - review hygiene)
     {   // A brand-new instance must show the default patch: INIT content, raw
         // name "Peace Be Upon Him" (the bare patch itself stays "INIT").
         struct O { static int64_t w(const clap_ostream_t *o, const void *d, uint64_t n) {
@@ -88,7 +91,6 @@ int main(int argc, char **argv)
             check("host PROGRAM=0 echo keeps default patch", ok2);
         }
     }
-    check("create_plugin + init", plugin && plugin->init(plugin));
     if (!plugin) { printf("clap smoke: FAILED (no plugin)\n"); return 1; }
     const void *ap = plugin->get_extension(plugin, CLAP_EXT_AUDIO_PORTS);
     const void *np = plugin->get_extension(plugin, CLAP_EXT_NOTE_PORTS);

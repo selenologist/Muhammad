@@ -20,6 +20,7 @@
 // block-start knob snapshots: a knob cannot move more than 0.7 ms of its own
 // 10 ms slew between calls, and nothing per-sample reads stale bytes.
 #include <cmath>
+#include <cstdlib>
 #include <cstring>    // IWYU: memcpy lives here, not in the header chain
 #include "p5_engine.hpp"
 #include "p5_math.hpp"
@@ -108,7 +109,13 @@ void Engine::activate(double sampleRate)
 {
     rowsSettled_ = false;
 #ifdef P5_HAVE_AVX2
-    if (__builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma"))
+    // P5_KERNEL=sse2 forces the portable wide kernel from the test harness
+    // (review B7: the SSE2 kernel the Windows/macOS ships use must be the
+    // one the A/B gate actually certifies). activate() is main-thread code;
+    // getenv here is never on the audio path.
+    const char *kforce = std::getenv("P5_KERNEL");
+    const bool forceSSE2 = kforce && !std::strcmp(kforce, "sse2");
+    if (!forceSSE2 && __builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma"))
         simdK_ = p5KernelSimdAVX2;   // wide kernel at true AVX2, still contract=off
 #endif
     srScale_ = sampleRate > 0.0 ? 44100.0 / sampleRate : 1.0;
