@@ -138,6 +138,9 @@ on the panel knob flips the flag; the dial renders white. Semantics:
     build/test_splitinv                     # host-split invariance (bit-identical)
     build/clap_smoke build/muhammad.clap
     build/bench_engine
+    ctest --test-dir build --output-on-failure   # the whole registered suite,
+    # incl. engine_ab_sse2 (P5_KERNEL=sse2): the portable wide kernel that
+    # the Windows/macOS ships actually run is gated like everything else.
 
 `MELODEE_DIR` only gates `ref_dump` (the firmware cross-check); the plugin and
 its A/B build standalone.
@@ -471,7 +474,13 @@ cmake --build build-win -j
 
 The result is `build-win/muhammad.clap`: PE32+ DLL, statically linked against
 libstdc++/libgcc/winpthread (kernel32+msvcrt only at runtime), `clap_entry`
-exported. POSIX-only dev tools (hostsim ref_dump, LD_PRELOAD allocwatch,
+exported, and now carrying the true-AVX2 kernel twin (`P5_AVX2`, auto-on for
+GNU/Clang x86_64 - it used to be a Linux-only build accident).
+Linux `.clap` builds are produced on the glibc-2.35 (Ubuntu 22.04) base with
+static libstdc++/libgcc: they load on Ubuntu 22.04 / Debian 12 / RHEL 9
+without demanding glibc 2.38 symbols; the CI prints the binary's GLIBC
+ceiling every night. CI dependencies are pinned: clap-wrapper v0.9.1,
+AudioUnitSDK 1.3.0, vst3sdk tagged - nightly builds are reproducible. POSIX-only dev tools (hostsim ref_dump, LD_PRELOAD allocwatch,
 dlopen smoke, bench clock_gettime) are gated to Linux; test_mpe / test_engine_ab
 / test_store / clap_smoke also compile and run on macOS.
 
