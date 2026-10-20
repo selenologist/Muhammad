@@ -1857,6 +1857,20 @@ static bool state_load_impl(const clap_plugin_t *p, const clap_istream_t *in)
     s->programA_.store(program, std::memory_order_relaxed);   // 5.8: echo guard starts synced
     s->bank.store(bankv);
     s->postPan(pan);
+    if (trn >= 16)
+    {   // MIGRATION (2026-10-21): the pre-fix builds stamped EVERY V/oct trim
+        // at 0 and saved that truth, so projects from that window carry an
+        // all-zero array that reads as a deliberate max-negative edit - flat
+        // pitch, knobs full left ("all tunings go to the left"). All 32 pots
+        // at zero is physically the bug's fingerprint; nobody plays a patch
+        // at -4 st with -6/8 slope on all eight lanes. Rewrite to neutral.
+        bool allZero = true;
+        for (int i = 0; i < trn && allZero; i++) if (tr[i] != 0) allZero = false;
+        if (allZero)
+        {   std::fprintf(stderr, "[p5] state: all-zero legacy trim array -> neutral 64\n");
+            for (int i = 0; i < 32; i++) tr[i] = 64;
+            trn = 32; }
+    }
     for (int i = 0; i < 8; i++)
         if (trn >= 32) s->postTrimPair(i, 0, tr[4*i], tr[4*i+1]),
                        s->postTrimPair(i, 1, tr[4*i+2], tr[4*i+3]);

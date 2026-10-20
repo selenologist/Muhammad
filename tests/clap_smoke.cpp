@@ -96,8 +96,13 @@ int main(int argc, char **argv)
                         if ((seg[i-1] < 0) != (seg[i] < 0)) zc++; }
             return (double)zc * 44100.0 / (48.0 * 512.0) / 2.0; };
         double semis = 999.0;
+        clap_event_note on{};
+        on.header.type = CLAP_EVENT_NOTE_ON; on.header.size = sizeof on;
+        on.header.space_id = CLAP_CORE_EVENT_SPACE_ID;
+        on.port_index = -1; on.channel = 0; on.key = 60; on.note_id = 60;
+        on.velocity = 0.8;
         if (coarseId >= 0)
-            // deterministic single-saw patch so the crossing count is exact
+        {   // deterministic single-saw patch so the crossing count is exact
             static const char *kPrep[][2] = {
                 { "UNISON", "0" }, { "UNISON DET", "0" }, { "OSC B LEVEL", "0" },
                 { "NOISE", "0" }, { "LFO SAW", "0" }, { "LFO TRI", "0" },
@@ -123,11 +128,6 @@ int main(int argc, char **argv)
                 e.channel = -1; e.key = -1; e.note_id = -1; e.port_index = -1;
                 ph.push_back(&e.header); }
             run2(ph);
-            clap_event_note on{};
-            on.header.type = CLAP_EVENT_NOTE_ON; on.header.size = sizeof on;
-            on.header.space_id = CLAP_CORE_EVENT_SPACE_ID;
-            on.port_index = -1; on.channel = 0; on.key = 60; on.note_id = 60;
-            on.velocity = 0.8;
             double f0 = run2({ &on.header });
             clap_event_param_value pv{};
             pv.header.type = CLAP_EVENT_PARAM_VALUE; pv.header.size = sizeof pv;
@@ -145,6 +145,49 @@ int main(int argc, char **argv)
         }
         check("OSC A COARSE bottom == one octave down",
               coarseId >= 0 && std::fabs(semis + 12.0) < 0.7);
+
+        // the OWNER'S-PROJECT path: a legacy blob whose trim array is all
+        // zero (written by the pre-fix build) must LOAD as neutral, not as
+        // sixteen pots full-left. Poison a healthy save and re-measure.
+        if (coarseId >= 0)
+        {   auto *stt = (const clap_plugin_state_t *)oct->get_extension(oct, CLAP_EXT_STATE);
+            std::vector<char> blob;
+            struct OW { static int64_t w(const clap_ostream_t *o, const void *d, uint64_t n)
+                {   auto *v = (std::vector<char> *)o->ctx; const char *q = (const char *)d;
+                    v->insert(v->end(), q, q + n); return (int64_t)n; } };
+            clap_ostream_t os{ &blob, OW::w };
+            bool saved = stt->save(oct, &os);
+            // head(8)+raw(134)+ov(16)+outtrim(4)+os(4)+gui(6)+pan(2) = 174; tr = 64 bytes
+            if (saved && blob.size() > 174 + 64)
+                for (int i = 174; i < 174 + 64; i++) blob[(size_t)i] = 0;
+            struct IR { const std::vector<char> *v; size_t off = 0; };
+            auto rd = [](const clap_istream_t *is, void *d, uint64_t n) -> int64_t
+                {   auto *c = (IR *)is->ctx;
+                    size_t left = c->v->size() - c->off, k = n < left ? n : left;
+                    std::memcpy(d, c->v->data() + c->off, k); c->off += k; return (int64_t)k; };
+            IR cur{ &blob, 0 };
+            clap_istream_t ist{ &cur, rd };
+            bool loaded = stt->load(oct, &ist);
+            clap_event_note ck{};
+            ck.header.type = CLAP_EVENT_NOTE_CHOKE; ck.header.size = sizeof ck;
+            ck.header.space_id = CLAP_CORE_EVENT_SPACE_ID;
+            ck.port_index = -1; ck.channel = -1; ck.key = -1; ck.note_id = -1;
+            run2({ &ck.header });
+            clap_event_param_value p0{}, back{};
+            p0.header.type = CLAP_EVENT_PARAM_VALUE; p0.header.size = sizeof p0;
+            p0.header.space_id = CLAP_CORE_EVENT_SPACE_ID;
+            p0.param_id = coarseId; p0.value = 0.0;
+            p0.channel = -1; p0.key = -1; p0.note_id = -1; p0.port_index = -1;
+            double fb = run2({ &p0.header, &on.header });
+            back = p0; back.value = 24.0;
+            clap_event_note ck2 = ck;
+            double fk = run2({ &back.header, &ck2.header, &on.header });
+            const double semis2 = 12.0 * std::log2(fb / fk);
+            std::printf("clap: poisoned-load bottom %.1f Hz vs keyboard %.1f Hz => %+0.2f st (load=%d)\n",
+                        fb, fk, semis2, (int)loaded);
+            check("legacy all-zero trim blob loads neutral (octave kept)",
+                  loaded && std::fabs(semis2 + 12.0) < 0.7);
+        }
         oct->stop_processing(oct);
         oct->deactivate(oct);
         oct->destroy(oct); }
