@@ -34,6 +34,15 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 if(MSVC)
+    # clap-wrapper statically links the MSVC CRT into every wrapper (its own
+    # CMakeLists sets this, but only in ITS directory scope — and the entries
+    # clapfirst compiles for us live in OURS). Mixed MT libs + MD objects is
+    # LNK2038 RuntimeLibrary mismatch + a multiply-defined-std flood (first
+    # muhammadw_vst3 link did exactly that). Match it at this scope so ALL
+    # targets here — ours and every subproject's — get /MT. This also gives
+    # the Windows wrappers the same self-contained-CRT property the MinGW
+    # -static .clap has: no VC++ redist dependency on tester machines.
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     # C4996 'unsafe strcpy/sscanf/strncpy' is an MSVC-only deprecation the
     # CRT honors via this switch; our code and Steinberg's both use plain,
     # portable CRT calls deliberately (strncpy_s & co. exist only on MSVC).
@@ -87,10 +96,8 @@ set(MUH_IMPL_SRCS
 add_library(muhammad-impl STATIC ${MUH_IMPL_SRCS})
 # tuning-library needs concepts: the repo pins gnu++20 on p5_store.cpp alone
 # and the rest stays 17 — mirror that exactly (and C++17 as the project floor).
-if(NOT MSVC)   # MSVC: /std:c++20 arrives via CMAKE_CXX_STANDARD=20 above
-    set_source_files_properties(${MUH_REPO}/src/p5_store.cpp
-        PROPERTIES COMPILE_OPTIONS "-std=gnu++20")
-endif()
+set_source_files_properties(${MUH_REPO}/src/p5_store.cpp PROPERTIES
+    COMPILE_OPTIONS "$<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-std=gnu++20>")
 target_compile_features(muhammad-impl PRIVATE cxx_std_17)
 # clapfirst links this static impl into SHARED modules (the .clap asset and
 # the VST3 bundle): whole-archive PIC, and the PIC'd objects win over the
