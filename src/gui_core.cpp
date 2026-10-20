@@ -133,7 +133,10 @@ double normToValue(int pid, double norm)
 
 void fillState(GuiCore &c, p5ui::State &st)
 {
+    c.paints++;
     c.plugin->adoptPendingIdentity();
+    c.plugin->refreshView();          // ONE merge per frame (was ~120 via the
+                                      // old per-read refreshView, review 4.5)
     st.trimOpen = (c.modal == 5);
     for (int i = 0; i < 8; i++)
         for (int k = 0; k < 2; k++)
@@ -231,6 +234,8 @@ void fillState(GuiCore &c, p5ui::State &st)
         st.pickerTab = c.pickerTab; st.pickerPage = c.pickerPage;
         const int total = c.pickerTab == 0 ? (int)PW_FACTORY_N + 2 : (int)c.userRows.size();
         st.pickerPages = total ? (total + p5ui::pick::rows - 1) / p5ui::pick::rows : 1;
+        if (c.pickerPage >= st.pickerPages) c.pickerPage = st.pickerPages - 1;   // ">" clamps (5.12)
+        if (c.pickerPage < 0) c.pickerPage = 0;
         st.pickerCount = 0;
         for (int i = 0; i < p5ui::pick::rows; i++)
         {
@@ -440,7 +445,10 @@ void buildDebugText(GuiCore &c);
 // button at runtime and call this FIRST; returning false falls through to the
 // generic press. (A gate folded into onPointerPress was eliminated by -O3.)
 bool onRightPress(GuiCore &c, float px, float py)
-{   const int kn = p5ui::knobAt(p5ui::State{}, px, py, (float)c.w, (float)c.h);
+{   if (c.modal) return false;      // overlays cover knobs: a right-click on
+                                    // the trim/tuning page must not silently
+                                    // flip the FIL-ENV knob underneath (5.12)
+    const int kn = p5ui::knobAt(p5ui::State{}, px, py, (float)c.w, (float)c.h);
     if (kn < 0) return false;
     const int pid = p5ui::kKnobs[kn].pid;
     // Polarity knobs (raw byte bit 7): flip the sign, dial goes white.
@@ -691,6 +699,16 @@ bool onPointerPress(GuiCore &c, float px, float py, unsigned mods, unsigned time
     c.dragKnob = p5ui::knobAt(p5ui::State{}, px, py, (float)c.w, (float)c.h);
     if (c.dragKnob >= 0)
     {
+        if (c.dragKnob == c.lastKnobIdx && timeMs - c.lastKnobMs < 450u)
+        {   // double-click: knob to its default (the value the host also
+            // publishes as clap_param_info_t.default_value) (5.12)
+            const int pid = p5ui::kKnobs[c.dragKnob].pid;
+            c.plugin->guiSet((clap_id)pid, pw::Plugin::defaultOf((clap_id)pid));
+            c.lastKnobMs = timeMs; c.lastKnobIdx = -1; c.dragKnob = -1;
+            return true;
+        }
+        c.lastKnobMs = timeMs; c.lastKnobIdx = c.dragKnob;
+        c.dragFine = (mods & P5_MOD_SHIFT) != 0;
         c.dragStartY = (int)py;
         c.dragStartNorm = p5::knobNorm(p5ui::kKnobs[c.dragKnob].pid,
                                        c.plugin->guiValue(p5ui::kKnobs[c.dragKnob].pid));
@@ -742,10 +760,17 @@ bool onPointerMotion(GuiCore &c, float px, float py, unsigned mods)
     }
     if (c.dragKnob >= 0)
     {
+        const bool fine = (mods & P5_MOD_SHIFT) != 0;
+        if (fine != c.dragFine)     // modifier toggled mid-drag: REBASE at the
+        {                           // pointer, do not jump to the old delta x new scale
+            c.dragFine = fine;
+            c.dragStartY = (int)py;
+            c.dragStartNorm = p5::knobNorm(p5ui::kKnobs[c.dragKnob].pid,
+                                           c.plugin->guiValue(p5ui::kKnobs[c.dragKnob].pid));
+        }
         const double dy = (double)(c.dragStartY - (int)py);
-        double norm = c.dragStartNorm + dy * p5ui::kDragRangePer100px / 100.0;
-        if (mods & P5_MOD_SHIFT)   // fine: rebase from start
-            norm = c.dragStartNorm + dy * p5ui::kDragRangePer100px / 100.0 * 0.2;
+        double norm = c.dragStartNorm + dy * p5ui::kDragRangePer100px / 100.0
+                    * (fine ? 0.2 : 1.0);
         if (norm < 0) norm = 0;
         if (norm > 1) norm = 1;
         const int pid = p5ui::kKnobs[c.dragKnob].pid;
@@ -860,7 +885,12 @@ bool onKey(GuiCore &c, GuiKey key, unsigned mods)
 
 bool onChar(GuiCore &c, unsigned int ch)
 {
-    if (!c.modal) return false;
+    // TEXT modals only (save/assign/overwrite confirm). Pages (picker, trim,
+    // tuning, debug) must let Space/letters fall through to the host -
+    // Space is the play key (review 5.12).
+    const bool textModal = c.modal == 1 || c.modal == 2 || c.modal == 3 ||
+                           c.modal == 8 || c.modal == 9;
+    if (!textModal) return false;
     const char qc = (char)ch;
     if ((qc >= 'A' && qc <= 'Z') || (qc >= 'a' && qc <= 'z') ||
         (qc >= '0' && qc <= '9') || qc == ' ' || qc == '.' || qc == '_' || qc == '-')
@@ -934,8 +964,14 @@ void buildDebugText(GuiCore &c)
     {
         if (n >= (int)sizeof c.dbg - 8) return;
         va_list ap; va_start(ap, fmt);
-        n += std::vsnprintf(c.dbg + n, sizeof c.dbg - (size_t)n, fmt, ap);
+        const int w = std::vsnprintf(c.dbg + n, sizeof c.dbg - (size_t)n, fmt, ap);
         va_end(ap);
+        if (w < 0) return;
+        n += w;
+        if (n >= (int)sizeof c.dbg - 1) n = (int)sizeof c.dbg - 1;  // vsnprintf
+                                                                    // counts what it
+                                                                    // WOULD have written
+                                                                    // (S4 over-read)
         if (n > 0 && c.dbg[n - 1] == '\n') {} else if (n < (int)sizeof c.dbg - 8) { c.dbg[n++] = '\n'; }
     };
     char dbgName[24]; dbgName[0] = 0;

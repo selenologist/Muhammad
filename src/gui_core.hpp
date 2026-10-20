@@ -54,6 +54,9 @@ struct GuiCore
 
     // drag state
     int dragKnob = -1, pressBtn = -1;
+    bool dragFine = false;                  // shift-fine active for this drag
+    int lastKnobIdx = -1; unsigned lastKnobMs = 0;   // knob double-click detect
+    unsigned paints = 0;                  // frame counter for rescan throttle (4.5)
 
     // text-entry modal: 0 none, 1 save patch (RECORD), 2 assign slot (PRESET)
     int modal = 0;                    // 1 save, 2 assign, 3 overwrite-confirm, 4 picker, 5 trim
