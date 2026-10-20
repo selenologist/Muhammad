@@ -23,6 +23,9 @@
 #include <cstdlib>
 #include <unistd.h>
 #include <ctime>
+#include <algorithm>
+#include <mutex>
+#include <vector>
 
 #include "gui_core.hpp"
 #include "p5_store.hpp"
@@ -34,52 +37,24 @@ namespace pw {
 namespace {
 
 // ---- CLIPBOARD selection owner (debug COPY) -------------------------------
-namespace clip {
-Display *dpy = nullptr;                 // set by setupEmbedded (one GUI per process)
-Window win = 0;
-char text[1200] = {};
-int len = 0;
-Atom aCLIPBOARD = None, aUTF8 = None, aTARGETS = None;
-}
+// S5: clipboard state lives in the OWNING Ctx, not in process-wide globals.
+// The old clip::dpy/clip::win pointed at whichever GUI was created last;
+// closing that GUI while another instance was open left the survivor serving
+// SelectionRequests (and COPY) on a freed Display*. The owner's dpy/win are
+// read from the Ctx at use time, so teardown simply takes the clipboard with
+// it. x11CopyText has no Ctx argument (gui_core.hpp signature), so pump()
+// publishes the Ctx it is dispatching for in gPumpCtx — COPY is only ever
+// reachable from a pump()-dispatched click, and this whole shim runs on the
+// host main thread.
+struct Ctx;
+Ctx *gPumpCtx = nullptr;
 
-static bool x11CopyText(const char *t)
+struct Clip
 {
-    if (!clip::dpy || !clip::win) return false;
-    const size_t n = std::strlen(t);
-    if (n >= sizeof clip::text) return false;
-    std::memcpy(clip::text, t, n + 1);
-    clip::len = (int)n;
-    if (!clip::aCLIPBOARD)
-    {   clip::aCLIPBOARD = XInternAtom(clip::dpy, "CLIPBOARD", False);
-        clip::aUTF8      = XInternAtom(clip::dpy, "UTF8_STRING", False);
-        clip::aTARGETS   = XInternAtom(clip::dpy, "TARGETS", False); }
-    XSetSelectionOwner(clip::dpy, clip::aCLIPBOARD, clip::win, CurrentTime);
-    if (XGetSelectionOwner(clip::dpy, clip::aCLIPBOARD) != clip::win)
-    {   std::fprintf(stderr, "[p5gui] CLIPBOARD: could not acquire ownership\n"); return false; }
-    return true;
-}
-
-static void serveSelectionRequest(const XSelectionRequestEvent &rq)
-{
-    if (rq.selection != clip::aCLIPBOARD || rq.property == None) return;
-    XEvent nt{};
-    nt.xselection.type = SelectionNotify;
-    nt.xselection.requestor = rq.requestor;
-    nt.xselection.selection = rq.selection;
-    nt.xselection.target = rq.target;
-    nt.xselection.property = rq.property;
-    nt.xselection.time = rq.time;
-    if (rq.target == clip::aTARGETS)
-    {   const Atom list[2] = { clip::aTARGETS, clip::aUTF8 };
-        XChangeProperty(clip::dpy, rq.requestor, rq.property, XA_ATOM, 32,
-                        PropModeReplace, (const unsigned char *)list, 2); }
-    else if (rq.target == clip::aUTF8 || rq.target == XA_STRING)
-    {   XChangeProperty(clip::dpy, rq.requestor, rq.property, rq.target, 8,
-                        PropModeReplace, (const unsigned char *)clip::text, clip::len); }
-    else
-    {   nt.xselection.property = None; }          // unsupported target
-    XSendEvent(clip::dpy, rq.requestor, False, 0, &nt);
-}
+    char text[1200] = {};
+    int len = 0;
+    Atom aCLIPBOARD = None, aUTF8 = None, aTARGETS = None;
+};
 
 struct Ctx : GuiCore
 {
@@ -97,6 +72,8 @@ struct Ctx : GuiCore
     p5ui::Gui gui{};
     bool hasGui = false;
     bool pointerGrabbed = false;    // XGrabPointer is in flight
+    Clip clip;                      // S5: this instance's CLIPBOARD owner state
+    uint32_t lastTick = 0;          // 4.5: last plugin changeTick_ we painted for
 };
 
 Ctx *ctxFrom(const clap_plugin_t *p)
@@ -104,6 +81,113 @@ Ctx *ctxFrom(const clap_plugin_t *p)
     auto *s = static_cast<Plugin *>(p->plugin_data);
     return s ? static_cast<Ctx *>(s->gui) : nullptr;
 }
+
+// ---- clipboard (per-Ctx state; S5) ------------------------------------------
+
+static bool x11CopyText(const char *t)
+{
+    Ctx *c = gPumpCtx;              // set around pump()'s event dispatch
+    if (!c || !c->dpy || !c->win) return false;
+    const size_t n = std::strlen(t);
+    if (n >= sizeof c->clip.text) return false;
+    std::memcpy(c->clip.text, t, n + 1);
+    c->clip.len = (int)n;
+    if (!c->clip.aCLIPBOARD)
+    {   c->clip.aCLIPBOARD = XInternAtom(c->dpy, "CLIPBOARD", False);
+        c->clip.aUTF8      = XInternAtom(c->dpy, "UTF8_STRING", False);
+        c->clip.aTARGETS   = XInternAtom(c->dpy, "TARGETS", False); }
+    XSetSelectionOwner(c->dpy, c->clip.aCLIPBOARD, c->win, CurrentTime);
+    if (XGetSelectionOwner(c->dpy, c->clip.aCLIPBOARD) != c->win)
+    {   std::fprintf(stderr, "[p5gui] CLIPBOARD: could not acquire ownership\n"); return false; }
+    return true;
+}
+
+static void serveSelectionRequest(Ctx &c, const XSelectionRequestEvent &rq)
+{
+    if (rq.selection != c.clip.aCLIPBOARD || rq.property == None) return;
+    XEvent nt{};
+    nt.xselection.type = SelectionNotify;
+    nt.xselection.requestor = rq.requestor;
+    nt.xselection.selection = rq.selection;
+    nt.xselection.target = rq.target;
+    nt.xselection.property = rq.property;
+    nt.xselection.time = rq.time;
+    if (rq.target == c.clip.aTARGETS)
+    {   const Atom list[2] = { c.clip.aTARGETS, c.clip.aUTF8 };
+        XChangeProperty(c.dpy, rq.requestor, rq.property, XA_ATOM, 32,
+                        PropModeReplace, (const unsigned char *)list, 2); }
+    else if (rq.target == c.clip.aUTF8 || rq.target == XA_STRING)
+    {   XChangeProperty(c.dpy, rq.requestor, rq.property, rq.target, 8,
+                        PropModeReplace, (const unsigned char *)c.clip.text, c.clip.len); }
+    else
+    {   nt.xselection.property = None; }          // unsupported target
+    XSendEvent(c.dpy, rq.requestor, False, 0, &nt);
+}
+
+// ---- X protocol error defense ------------------------------------------------
+// A host that reclaims our windows (device delete, layout teardown) can leave
+// every LATER X call of ours aimed at dead XIDs. Xlib's DEFAULT error handler
+// calls exit() - which is precisely "Bitwig's audio engine crashes when we
+// delete the instance". We install ONE handler that IGNORES errors aimed at
+// LIVE GUIs, chaining everything else to whatever the host had installed.
+// S6: membership is a process-wide registry of live Display*s and live Ctx*s
+// (append at create, erase at destroy) — the old gActiveCtx guarded only the
+// LAST-created Ctx, so destroying B restored the host handler and left A's
+// dead-window errors chained straight into Xlib's exit(). Main-thread only;
+// the mutex is cheap insurance for the handler's read.
+#ifndef GLXBadDrawable
+#define GLXBadDrawable 11
+#endif
+std::mutex gX11Mx;
+std::vector<Display *> gLiveDisplays;
+std::vector<Ctx *> gLiveCtxs;
+int (*gPrevXErr)(Display *, XErrorEvent *) = nullptr;
+bool gHandlerInstalled = false;
+
+void trackDisplay(Display *d)
+{   std::lock_guard<std::mutex> lk(gX11Mx); gLiveDisplays.push_back(d); }
+
+void untrackDisplay(Display *d)
+{   std::lock_guard<std::mutex> lk(gX11Mx);
+    gLiveDisplays.erase(std::remove(gLiveDisplays.begin(), gLiveDisplays.end(), d),
+                        gLiveDisplays.end()); }
+
+static int x11ErrorHandler(Display *d, XErrorEvent *e)
+{
+    bool liveDpy = false, ourWin = false;
+    {   std::lock_guard<std::mutex> lk(gX11Mx);
+        liveDpy = std::find(gLiveDisplays.begin(), gLiveDisplays.end(), d)
+                  != gLiveDisplays.end();
+        if (liveDpy)
+            for (Ctx *c : gLiveCtxs)
+                if (c->dpy == d && (e->resourceid == (unsigned long)c->win ||
+                                    e->resourceid == (unsigned long)c->parent))
+                {   ourWin = true; break; } }
+    if (liveDpy && (e->error_code == BadWindow || e->error_code == GLXBadDrawable || ourWin))
+    {   char b[96]; XGetErrorText(d, e->error_code, b, sizeof b);
+        std::fprintf(stderr, "[p5gui] X11 error on live GUI ignored: %s (res 0x%lx)\n",
+                     b, (unsigned long)e->resourceid);
+        return 0; }
+    return gPrevXErr ? gPrevXErr(d, e) : 0;
+}
+
+void registerCtx(Ctx &c)
+{   std::lock_guard<std::mutex> lk(gX11Mx);
+    gLiveCtxs.push_back(&c);
+    if (!gHandlerInstalled)                       // install ONCE, with the first live Ctx
+    {   gHandlerInstalled = true;
+        gPrevXErr = XSetErrorHandler(x11ErrorHandler); } }
+
+void unregisterCtx(Ctx &c)
+{   bool last = false;
+    {   std::lock_guard<std::mutex> lk(gX11Mx);
+        gLiveCtxs.erase(std::remove(gLiveCtxs.begin(), gLiveCtxs.end(), &c),
+                        gLiveCtxs.end());
+        last = gLiveCtxs.empty(); }
+    if (last && gHandlerInstalled)                // remove with the LAST live Ctx
+    {   XSetErrorHandler(gPrevXErr);
+        gPrevXErr = nullptr; gHandlerInstalled = false; } }
+
 
 // ---- draw / pump -------------------------------------------------------------
 
@@ -205,6 +289,8 @@ void switchToFloat(Ctx &c);
 
 void pump(Ctx &c)
 {
+    if (!c.dpy) return;   // S10: setupFloating can fail while the timer stays
+                          // registered - every X call below would crash.
     bool dirty = false;
     if (!c.floating && c.parent && c.win)
     {
@@ -313,13 +399,15 @@ void pump(Ctx &c)
             }
         }
     }
+    Ctx *savedPump = gPumpCtx;      // S5: the COPY callback fires from inside
+    gPumpCtx = &c;                  // onPointerPress below - dispatching Ctx wins
     XEvent ev;
     while (XPending(c.dpy))
     {
         XNextEvent(c.dpy, &ev);
         if (ev.type == SelectionRequest)
-        {   serveSelectionRequest(ev.xselectionrequest); continue; }
-        if (ev.type == SelectionClear) { clip::len = 0; continue; }
+        {   serveSelectionRequest(c, ev.xselectionrequest); continue; }
+        if (ev.type == SelectionClear) { c.clip.len = 0; continue; }
         if (ev.xany.window != c.win) continue;
         switch (ev.type)
         {
@@ -419,10 +507,18 @@ void pump(Ctx &c)
                 break;
         }
     }
+    gPumpCtx = savedPump;
     // The whole X backlog is applied and drawn exactly once. Rendering per
     // motion event serialized us on glXSwapBuffers: after a fast drag the
     // stale backlog kept replaying positions (and their blocking swaps) long
     // after release — that was the audible "trail", ours, not the host's.
+    // 4.5: native input/expose alone left the panel stale after host
+    // automation, preset loads, MIDI and state load. The plugin bumps
+    // changeTick_ on every main-side mutation and merged publish; paint when
+    // it moved too. Repaint stays gated - never unconditional.
+    if (c.plugin)
+    {   const uint32_t tick = c.plugin->changeTick_.load(std::memory_order_relaxed);
+        if (tick != c.lastTick) { c.lastTick = tick; dirty = true; } }
     if (dirty) render(c);
     if (c.wantFloat && !c.floating)
     {   c.wantFloat = false;
@@ -435,34 +531,19 @@ void pump(Ctx &c)
     // asking the host to shrink it would fight the ancestor-grow request)
 }
 
-// ---- X protocol error defense ------------------------------------------------
-// A host that reclaims our windows (device delete, layout teardown) can leave
-// every LATER X call of ours aimed at dead XIDs. Xlib's DEFAULT error handler
-// calls exit() - which is precisely "Bitwig's audio engine crashes when we
-// delete the instance". We install a handler that IGNORES errors on OUR
-// windows only, chaining everything else to whatever the host had installed,
-// and restore theirs at gui_destroy.
-static Ctx *gActiveCtx = nullptr;
-static int (*gPrevXErr)(Display *, XErrorEvent *) = nullptr;
-static int x11ErrorHandler(Display *d, XErrorEvent *e)
-{
-    Ctx *c = gActiveCtx;
-    if (c && (e->resourceid == (unsigned long)c->win ||
-              e->resourceid == (unsigned long)c->parent))
-    {   char b[96]; XGetErrorText(d, e->error_code, b, sizeof b);
-        std::fprintf(stderr, "[p5gui] X11 error on our window ignored: %s\n", b);
-        return 0; }
-    return gPrevXErr ? gPrevXErr(d, e) : 0;
-}
-
 // ---- lifecycle ---------------------------------------------------------------
 
 void teardown(Ctx &c)
 {
-    if (c.vg) { glXMakeCurrent(c.dpy, None, nullptr); nvgDeleteGL3(c.vg); c.vg = nullptr; c.hasGui = false; }
-    if (c.gl) { glXDestroyContext(c.dpy, c.gl); c.gl = nullptr; }
+    // S11: nvgDeleteGL3 frees GL objects - the context must STILL be current
+    // (Win32/mac teardowns already order it this way; releasing first made
+    // nanovg delete against no context and some drivers crash).
+    if (c.vg)
+    {   if (c.dpy && c.gl && c.win) glXMakeCurrent(c.dpy, c.win, c.gl);
+        nvgDeleteGL3(c.vg); c.vg = nullptr; c.hasGui = false; }
+    if (c.gl) { if (c.dpy) glXMakeCurrent(c.dpy, None, nullptr); glXDestroyContext(c.dpy, c.gl); c.gl = nullptr; }
     if (c.win && c.dpy) { XDestroyWindow(c.dpy, c.win); c.win = 0; }
-    if (c.dpy) { XCloseDisplay(c.dpy); c.dpy = nullptr; }
+    if (c.dpy) { untrackDisplay(c.dpy); XCloseDisplay(c.dpy); c.dpy = nullptr; }   // S5: the clipboard dies with this Ctx
     c.mapped = false;
 }
 
@@ -470,15 +551,15 @@ bool setupFloating(Ctx &c)
 {
     c.dpy = XOpenDisplay(nullptr);
     if (!c.dpy) return false;
-    clip::dpy = c.dpy;
+    trackDisplay(c.dpy);                    // S6: live-display registry
     const int screen = DefaultScreen(c.dpy);
 
     static const int fbAttrs[] = { GLX_RGBA, GLX_DOUBLEBUFFER, GLX_RED_SIZE, 4, GLX_GREEN_SIZE, 4,
                                    GLX_BLUE_SIZE, 4, GLX_ALPHA_SIZE, 4, GLX_STENCIL_SIZE, 8, None };
     XVisualInfo *vi = glXChooseVisual(c.dpy, screen, (int *)fbAttrs);
-    if (!vi) { XCloseDisplay(c.dpy); c.dpy = nullptr; return false; }
+    if (!vi) { untrackDisplay(c.dpy); XCloseDisplay(c.dpy); c.dpy = nullptr; return false; }
     c.gl = glXCreateContext(c.dpy, vi, nullptr, True);
-    if (!c.gl) { XFree(vi); XCloseDisplay(c.dpy); c.dpy = nullptr; return false; }
+    if (!c.gl) { XFree(vi); untrackDisplay(c.dpy); XCloseDisplay(c.dpy); c.dpy = nullptr; return false; }
 
     XSetWindowAttributes swa{};
     swa.colormap = XCreateColormap(c.dpy, DefaultRootWindow(c.dpy), vi->visual, AllocNone);
@@ -495,7 +576,6 @@ bool setupFloating(Ctx &c)
                           vi->depth, InputOutput, vi->visual, CWColormap | CWEventMask, &swa);
     XFree(vi);
     if (!c.win) { teardown(c); return false; }
-    clip::win = c.win;
 
     XStoreName(c.dpy, c.win, "Muhammad");
     XClassHint ch{};
@@ -530,8 +610,9 @@ void switchToFloat(Ctx &c)
 {
     // Mid-session escape from a host that just proved it owns the embedded
     // slot: tear our child window down and rebuild as our OWN top-level.
-    // The host timer stays registered (same Ctx, same pump); clip:: rebinds
-    // inside setupFloating. The host keeps thinking it embedded us - it is
+    // The host timer stays registered (same Ctx, same pump); the clipboard
+    // is Ctx-owned (S5) and rebinds automatically through setupFloating's
+    // fresh dpy/win. The host keeps thinking it embedded us - it is
     // wrong, visibly, and that is the point.
     std::fprintf(stderr, "[p5gui] switching to FLOATING mid-session\n");
     const Window anchor = c.parent;
@@ -569,16 +650,16 @@ bool setupEmbedded(Ctx &c, Window parent)
     c.parent = parent;                       // pump/mirror/grow all key off this
     c.dpy = XOpenDisplay(nullptr);
     if (!c.dpy) return false;
-    clip::dpy = c.dpy;
+    trackDisplay(c.dpy);                    // S6: live-display registry
     const int screen = DefaultScreen(c.dpy);
 
     static const int fbAttrs[] = { GLX_RGBA, GLX_DOUBLEBUFFER, GLX_RED_SIZE, 4, GLX_GREEN_SIZE, 4,
                                    GLX_BLUE_SIZE, 4, GLX_ALPHA_SIZE, 4, GLX_STENCIL_SIZE, 8, None };
     XVisualInfo *vi = glXChooseVisual(c.dpy, screen, (int *)fbAttrs);
-    if (!vi) { XCloseDisplay(c.dpy); c.dpy = nullptr; return false; }
+    if (!vi) { untrackDisplay(c.dpy); XCloseDisplay(c.dpy); c.dpy = nullptr; return false; }
 
     c.gl = glXCreateContext(c.dpy, vi, nullptr, True);
-    if (!c.gl) { XFree(vi); XCloseDisplay(c.dpy); c.dpy = nullptr; return false; }
+    if (!c.gl) { XFree(vi); untrackDisplay(c.dpy); XCloseDisplay(c.dpy); c.dpy = nullptr; return false; }
 
     XSetWindowAttributes swa{};
     swa.colormap = XCreateColormap(c.dpy, parent, vi->visual, AllocNone);
@@ -601,7 +682,6 @@ bool setupEmbedded(Ctx &c, Window parent)
     std::fprintf(stderr, "[p5gui] child window created: 0x%lx parent 0x%lx size %ux%u\n",
                  (unsigned long)c.win, (unsigned long)c.parent, c.w, c.h);
     c.wmDelete = XInternAtom(c.dpy, "WM_DELETE_WINDOW", False);
-    clip::win = c.win;
     {   Window top = c.parent, r2, up, *k = nullptr; unsigned n2 = 0;
         for (int guard = 0; guard < 8; guard++)
         {   if (!XQueryTree(c.dpy, top, &r2, &up, &k, &n2)) break;
@@ -693,14 +773,14 @@ bool gui_create(const clap_plugin_t *p, const char *api, bool is_floating)
         if (s->host && s->host->get_extension)
             c.hostGui = (const clap_host_gui_t *)s->host->get_extension(s->host, CLAP_EXT_GUI);
         std::fprintf(stderr, "[p5gui] host clap.gui service %s\n", c.hostGui ? "present" : "absent");
+        registerCtx(c);   // S6: joins the live registry; the X error handler is
+                          // installed once, with the first live Ctx.
     }
     if (auto *cc = ctxFrom(p))
     {   if (api) std::strncpy(cc->guiApi, api, sizeof cc->guiApi - 1);
         cc->floating = is_floating || modeFloat();  // env can FORCE float
         cc->modeSource = cc->floating ? gModeSource : "embedded";
             cc->modeSource = cc->floating ? gModeSource : "embedded";
-        gActiveCtx = static_cast<Ctx *>(cc);
-        if (!gPrevXErr) gPrevXErr = XSetErrorHandler(x11ErrorHandler);
         std::fprintf(stderr, "[p5gui] create mode: %s (source: %s)\n",
                      cc->floating ? (is_floating ? "FLOATING" : "FLOATING (forced)")
                                   : "embedded", gModeSource); }
@@ -713,11 +793,10 @@ void gui_destroy(const clap_plugin_t *p)
     Ctx &c = *static_cast<Ctx *>(s->gui);
     unregisterTimer(c);
     teardown(c);
+    unregisterCtx(c);   // S6: leaves the live registry; restores the host's
+                        // error handler when this was the last live Ctx.
     delete &c;
     s->gui = nullptr;
-    if (gActiveCtx == &c)
-    {   gActiveCtx = nullptr;
-        XSetErrorHandler(gPrevXErr); gPrevXErr = nullptr; }
 }
 bool gui_set_scale(const clap_plugin_t *p, double scale)
 {

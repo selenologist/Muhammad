@@ -143,6 +143,8 @@ struct Ctx : GuiCore
     p5ui::Gui gui{};
     bool hasGui = false;
     bool captured = false;              // SetCapture is in flight
+    uint32_t lastTick = 0;              // 4.5: changeTick_ value at last paint
+    unsigned pendingSurrogate = 0;      // WM_CHAR: high UTF-16 surrogate held
 };
 
 Ctx *ctxFrom(const clap_plugin_t *p)
@@ -154,6 +156,10 @@ Ctx *ctxFrom(const clap_plugin_t *p)
 void paintNow(Ctx &c)
 {
     if (!c.win || !c.vg || !c.mapped) return;
+    // Consume the change counter at paint START: anything bumped during the
+    // frame (host automation on this same thread is impossible mid-paint, but
+    // merged publishes can race the load) then re-triggers the next check.
+    if (c.plugin) c.lastTick = c.plugin->changeTick_.load(std::memory_order_relaxed);
     wglMakeCurrent(c.hdc, c.gl);
     glViewport(0, 0, (int)c.w, (int)c.h);
     glClearColor(0.f, 0.f, 0.f, 1.f);
@@ -202,7 +208,7 @@ LRESULT CALLBACK panelWndProc(HWND h, UINT msg, WPARAM wParam, LPARAM lParam)
         case WM_LBUTTONDOWN:
         case WM_LBUTTONDBLCLK:            // core re-detects dbl itself (450 ms)
             dirty = onPointerPress(c, (float)GET_X_LPARAM(lParam), (float)GET_Y_LPARAM(lParam),
-                                   mkMods(wParam), (unsigned)GetTickCount());
+                                   mkMods(wParam), (unsigned)GetTickCount64());
             afterPress(c);
             break;
         case WM_LBUTTONUP:
@@ -216,7 +222,7 @@ LRESULT CALLBACK panelWndProc(HWND h, UINT msg, WPARAM wParam, LPARAM lParam)
                 dirty = true;                  // the flip itself repaints the dial
             else
                 dirty = onPointerPress(c, (float)GET_X_LPARAM(lParam), (float)GET_Y_LPARAM(lParam),
-                                       P5_MOD_RIGHT, (unsigned)GetTickCount());
+                                       P5_MOD_RIGHT, (unsigned)GetTickCount64());
             break;
         case WM_MOUSEMOVE:
             dirty = onPointerMotion(c, (float)GET_X_LPARAM(lParam), (float)GET_Y_LPARAM(lParam),
@@ -241,13 +247,45 @@ LRESULT CALLBACK panelWndProc(HWND h, UINT msg, WPARAM wParam, LPARAM lParam)
                 case VK_LEFT:      k = K_LEFT; break;
                 case VK_RIGHT:     k = K_RIGHT; break;
                 default: break; }
-            if (onKey(c, k, keyMods())) dirty = true;
+            // 5.12: do NOT eat every key. onKey reports whether the panel
+            // consumed it (true inside the text/debug modals, false with no
+            // modal open). Unconsumed keys go to DefWindowProc so the host's
+            // accelerators and default handling still see them.
+            if (!onKey(c, k, keyMods())) return DefWindowProcW(h, msg, wParam, lParam);
+            dirty = true;
             break;
         }
         case WM_CHAR:
-            // onChar re-applies the same allowlist as X11's XLookupString path;
-            // Return/Escape/Backspace/arrows already fell out as non-allowed.
-            dirty = onChar(c, (unsigned int)(wchar_t)wParam);
+        {   // wParam is a UTF-16 CODE UNIT, not a char. The old (char)ch-style
+            // narrowing mangled anything non-ASCII (5.12). Accumulate surrogate
+            // pairs and hand onChar the real code point — equivalent to
+            // WideCharToMultiByte(CP_UTF8) + decoding the first code point,
+            // minus the scratch buffer. The core re-applies the same allowlist
+            // as X11's XLookupString path; Return/Escape/Backspace/arrows never
+            // arrive here as chars, and non-consumed chars pass to DefWindowProc
+            // so Space keeps reaching the host outside text modals.
+            const unsigned u = (unsigned)(WPARAM)wParam;
+            unsigned cp;
+            if (u >= 0xD800u && u <= 0xDBFFu)          // high surrogate: await the low
+            {   c.pendingSurrogate = u; return 0; }
+            if (u >= 0xDC00u && u <= 0xDFFFu)          // low surrogate
+            {   if (!c.pendingSurrogate) return 0;     // unpaired half: drop
+                cp = 0x10000u + ((c.pendingSurrogate - 0xD800u) << 10) + (u - 0xDC00u);
+                c.pendingSurrogate = 0; }
+            else { c.pendingSurrogate = 0; cp = u; }   // BMP: the unit IS the code point
+            if (!onChar(c, cp)) return DefWindowProcW(h, msg, wParam, lParam);
+            dirty = true;
+            break;
+        }
+        case WM_CAPTURECHANGED:
+            // 5.12: capture lost mid-drag (Alt-Tab, another window forced it).
+            // Without this the knob kept following plain mouse motion and the
+            // gesture never visually ended. Kill the core's drag state.
+            c.captured = false;
+            c.dragKnob = -1; c.pressBtn = -1;
+            c.trimDrag = 0; c.tuneDrag = 0; c.wheelDragIdx = 0;
+            c.pendingSurrogate = 0;
+            dirty = true;               // repaint with the drag gone
             break;
         case WM_SIZE:
         {   const uint32_t nw = (uint32_t)(unsigned)LOWORD(lParam);
@@ -306,15 +344,21 @@ bool ensureClass()
 }
 
 // ---- pump (timer-support) --------------------------------------------------------
+// Runs in the host's timer callback on the host UI thread. We do NOT drain the
+// message queue here (4.6): a null-HWND PeekMessage would swallow the host
+// thread's ENTIRE queue (WM_QUIT => hang on exit, re-entrant WM_TIMER, broken
+// modal loops/accelerators). The child HWND receives its messages through the
+// host's own loop; the pump only does slot/aspect bookkeeping + repaint.
 
 void pump(Ctx &c)
 {
     if (!c.win) return;
-    MSG m;
-    while (PeekMessageW(&m, nullptr, 0, 0, PM_REMOVE))
-    {   TranslateMessage(&m);
-        DispatchMessageW(&m); }
     bool dirty = false;
+    // GetTickCount64 (not GetTickCount): never wraps at 24.8 days uptime. The
+    // narrowing to the core's `long`/`unsigned` ms fields is the remaining
+    // wrap surface and lives in GuiCore, not here.
+    const unsigned long long t64 = (unsigned long long)GetTickCount64();
+    const long t = (long)t64;
     // Never copy a too-tall slot: coreMirrorSlot owns the aspect math; we
     // just read the host's client size and apply the answer.
     if (c.parent)
@@ -322,7 +366,7 @@ void pump(Ctx &c)
         if (GetClientRect(c.parent, &pr))
         {   uint32_t ow = 0, oh = 0;
             if (coreMirrorSlot(c, (int)(pr.right - pr.left), (int)(pr.bottom - pr.top),
-                               ow, oh, (long)GetTickCount()))
+                               ow, oh, t))
             {   MoveWindow(c.win, 0, 0, (int)ow, (int)oh, TRUE);
                 dirty = true; }
             // host won't shrink its own window and its drag locks the launch
@@ -331,9 +375,8 @@ void pump(Ctx &c)
             const int slotH = (int)(pr.bottom - pr.top);
             const long wantH = (long)((long)(pr.right - pr.left) * p5ui::kPanelH / p5ui::kPanelW);
             if (slotH > wantH + 40 && c.topTries < 10 &&
-                c.trimIneffective < 2 && coreShouldTrimNow(c, (long)GetTickCount()))
-            {   const long t = (long)GetTickCount();
-                if (t >= c.topNextMs)
+                c.trimIneffective < 2 && coreShouldTrimNow(c, t))
+            {   if (t >= c.topNextMs)
                 {   c.topNextMs = t + 1500;
                     c.topTries++;
                     HWND root = GetAncestor(c.parent, GA_ROOT);
@@ -364,8 +407,7 @@ void pump(Ctx &c)
     }
     // Measure wrapper + ancestor every ~1s (diag) and politely ask the host
     // for the ancestor's height, exactly like the X11 shim.
-    {   const long t = (long)GetTickCount();
-        if (t - c.lastAskMs >= 1000 && c.parent)
+    {   if (t - c.lastAskMs >= 1000 && c.parent)
         {   RECT pr{}, gr{};
             if (GetClientRect(c.parent, &pr))
             {   uint32_t ancW = 0, ancH = 0;
@@ -377,6 +419,12 @@ void pump(Ctx &c)
             }
         }
     }
+    // 4.5: repaint when the plugin's change counter moved (host automation,
+    // params.flush, MIDI CC, program/preset/state loads) even though no native
+    // input or expose happened. Never repaint unconditionally.
+    if (c.plugin &&
+        c.plugin->changeTick_.load(std::memory_order_relaxed) != c.lastTick)
+        dirty = true;
     if (dirty) paintNow(c);
     if (c.plugin) c.plugin->maybePingLatency();
 }
@@ -420,23 +468,50 @@ bool setupWin32(Ctx &c, HWND parent)
     c.hdc = GetDC(c.win);
     if (!c.hdc) { teardown(c); return false; }
 
-    // Seed a basic double-buffered format so wglCreateContext gives us a
-    // temporary context to query the ARB entry points through.
-    PIXELFORMATDESCRIPTOR pfd{};
-    pfd.nSize = sizeof pfd;
-    pfd.nVersion = 1;
-    pfd.dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER;
-    pfd.iPixelType = PFD_TYPE_RGBA;
-    pfd.cColorBits = 24; pfd.cAlphaBits = 8; pfd.cStencilBits = 8;
-    pfd.iLayerType = PFD_MAIN_PLANE;
-    const int basePf = ChoosePixelFormat(c.hdc, &pfd);
-    if (!basePf || !SetPixelFormat(c.hdc, basePf, &pfd)) { teardown(c); return false; }
-    HGLRC tmp = wglCreateContext(c.hdc);
-    if (!tmp || !wglMakeCurrent(c.hdc, tmp)) { teardown(c); return false; }
+    // S9: a window's pixel format can be SetPixelFormat'ed EXACTLY ONCE. The
+    // old code seeded the real window with a base format and then, if
+    // wglChoosePixelFormatARB picked a different index, called SetPixelFormat
+    // a second time — which always fails, so the GUI never opened. All
+    // bootstrapping (seed format + temp context + ARB entry-point loading)
+    // now happens on a hidden dummy window; the ARB choice is queried FOR
+    // THIS window's HDC (indices are per-HDC) and applied to the real window
+    // once. The wglGetProcAddress trampolines dispatch through the thread's
+    // current context, so the dummy's temp context stays current while we
+    // use the ARB entry points against the real DC.
+    const PIXELFORMATDESCRIPTOR basePfd = []
+    {   PIXELFORMATDESCRIPTOR p{};
+        p.nSize = sizeof p;
+        p.nVersion = 1;
+        p.dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER;
+        p.iPixelType = PFD_TYPE_RGBA;
+        p.cColorBits = 24; p.cAlphaBits = 8; p.cStencilBits = 8;
+        p.iLayerType = PFD_MAIN_PLANE;
+        return p; }();
 
-    auto chooseARB = (PFNWGLCHOOSEPIXELFORMATARBPROC)(INT_PTR)wglGetProcAddress("wglChoosePixelFormatARB");
-    auto createCtxARB = (PFNWGLCREATECONTEXTATTRIBSARBPROC)(INT_PTR)wglGetProcAddress("wglCreateContextAttribsARB");
+    PFNWGLCHOOSEPIXELFORMATARBPROC chooseARB = nullptr;
+    PFNWGLCREATECONTEXTATTRIBSARBPROC createCtxARB = nullptr;
+    HWND probe = CreateWindowExW(WS_EX_TOOLWINDOW, kClassName, L"muhammad-pf-probe",
+                                 WS_POPUP | WS_DISABLED, 0, 0, 8, 8,
+                                 nullptr, nullptr, g_inst, nullptr);   // never shown
+    HDC phdc = probe ? GetDC(probe) : nullptr;
+    HGLRC tmp = nullptr;
+    if (phdc)
+    {   const int pb = ChoosePixelFormat(phdc, &basePfd);
+        if (pb && SetPixelFormat(phdc, pb, &basePfd))     // first set: the DUMMY's only
+        {   tmp = wglCreateContext(phdc);
+            if (tmp && wglMakeCurrent(phdc, tmp))
+            {   chooseARB = (PFNWGLCHOOSEPIXELFORMATARBPROC)(INT_PTR)
+                            wglGetProcAddress("wglChoosePixelFormatARB");
+                createCtxARB = (PFNWGLCREATECONTEXTATTRIBSARBPROC)(INT_PTR)
+                               wglGetProcAddress("wglCreateContextAttribsARB");
+            }
+        }
+    }
 
+    // One and only one SetPixelFormat on the real window. ARB path: index was
+    // chosen for THIS hdc (pass nullptr pfd — the driver already describes it).
+    // Fallback (no/denied ARB): the base format we already probed with.
+    int pf = 0; const PIXELFORMATDESCRIPTOR *pfDesc = &basePfd;
     if (chooseARB)
     {   const int fbAttrs[] = {
             WGL_DRAW_TO_WINDOW_ARB, 1, WGL_SUPPORT_OPENGL_ARB, 1, WGL_DOUBLE_BUFFER_ARB, 1,
@@ -445,13 +520,12 @@ bool setupWin32(Ctx &c, HWND parent)
             WGL_STENCIL_BITS_ARB, 8, 0 };
         int fmt = 0; UINT n = 0;
         if (chooseARB(c.hdc, fbAttrs, nullptr, 1, &fmt, &n) && n >= 1 && fmt != 0)
-        {   wglMakeCurrent(c.hdc, nullptr);
-            wglDeleteContext(tmp); tmp = nullptr;
-            if (!SetPixelFormat(c.hdc, fmt, nullptr)) { teardown(c); return false; }
-        }
+        {   pf = fmt; pfDesc = nullptr; }
     }
+    if (!pf) pf = ChoosePixelFormat(c.hdc, &basePfd);
+    const bool formatSet = pf != 0 && SetPixelFormat(c.hdc, pf, pfDesc);
 
-    if (createCtxARB)
+    if (createCtxARB && formatSet)          // dummy context still current: trampolines work
     {   const int core33[] = { WGL_CONTEXT_MAJOR_VERSION_ARB, 3, WGL_CONTEXT_MINOR_VERSION_ARB, 3,
                                WGL_CONTEXT_PROFILE_MASK_ARB, WGL_CONTEXT_CORE_PROFILE_BIT_ARB, 0 };
         const int compat31[] = { WGL_CONTEXT_MAJOR_VERSION_ARB, 3, WGL_CONTEXT_MINOR_VERSION_ARB, 1,
@@ -459,8 +533,17 @@ bool setupWin32(Ctx &c, HWND parent)
         c.gl = createCtxARB(c.hdc, nullptr, core33);
         if (!c.gl) c.gl = createCtxARB(c.hdc, nullptr, compat31);
     }
-    if (!c.gl) c.gl = tmp ? tmp : wglCreateContext(c.hdc);     // legacy 1.1 fallback
-    else if (tmp && tmp != c.gl) wglDeleteContext(tmp);
+
+    // Detach + destroy the probe before touching the real window's stack:
+    // wglDeleteContext refuses a current context; ReleaseDC/DestroyWindow are
+    // invalid while one still holds the DC current.
+    wglMakeCurrent(nullptr, nullptr);
+    if (tmp) wglDeleteContext(tmp);
+    if (phdc) ReleaseDC(probe, phdc);
+    if (probe) DestroyWindow(probe);
+
+    if (!formatSet) { teardown(c); return false; }
+    if (!c.gl) c.gl = wglCreateContext(c.hdc);             // legacy 1.1 fallback
     if (!c.gl) { teardown(c); return false; }
     if (!wglMakeCurrent(c.hdc, c.gl)) { teardown(c); return false; }
     std::fprintf(stderr, "[p5gui] GL: %s\n", (const char *)glGetString(GL_VERSION));
@@ -599,9 +682,10 @@ const clap_plugin_gui_t kGui = {
     gui_suggest_title, gui_show, gui_hide,
 };
 
-// timer-support: pump the Win32 message queue + repaint (hosts that fire
-// timer-support get the same behaviour as the X11 pump; hosts that only pump
-// via WM_PAINT still get frames through WndProc).
+// timer-support: aspect/trim bookkeeping + changeTick_ repaint gating. The
+// panel's messages arrive through the host's own message loop; we never drain
+// the host thread's queue here (4.6). Hosts that only repaint via WM_PAINT
+// still get frames through WndProc.
 static void gui_on_timer(const clap_plugin_t *p, clap_id)
 {
     if (auto *c = ctxFrom(p)) { pump(*c); }
