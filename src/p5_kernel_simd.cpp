@@ -21,7 +21,9 @@ namespace {
 using V = simde__m256;
 using VI = simde__m256i;
 
-const V ALL1 = simde_mm256_castsi256_ps(simde_mm256_set1_epi32(-1));
+// ALL1 is built FUNCTION-LOCAL (review B7): a namespace-scope vector constant
+// can emit VEX code at load time in an -O0 build, before the CPU check runs.
+inline V all1() { return simde_mm256_castsi256_ps(simde_mm256_set1_epi32(-1)); }
 
 inline V ld(const float *p) { return simde_mm256_loadu_ps(p); }
 inline void st(V v, float *p) { simde_mm256_storeu_ps(p, v); }
@@ -118,18 +120,22 @@ inline V oscSaw(VI ph, VI inc)
     return sub(sub(mul(u2f(ph), spl(1.0f / 2147483648.0f)), spl(1.0f)), blep(ph, inc));
 }
 
-// p5_fast_softclip: interpolate the 1025-entry tanh table, saturate beyond it
+// p5_fast_softclip: interpolate the 1025-entry tanh table, saturate beyond it.
+// The clamps are UNSIGNED mins (review S1): the indices are uint32 and a NaN
+// lane's cvtf2u lands on 0x80000000 - signed min keeps it there and the
+// gather reads PW_P5_TANH[2^31] (segfault). Unsigned min clamps NaN to the
+// saturated table end: finite, correct "big input" behaviour.
 inline V softclipV(V x)
 {
     V a = mul(fabsfV(x), spl(128.0f));
     VI i = cvtf2u(a);
-    VI i0 = simde_mm256_min_epi32(i, spli(1023));               // clamp so the +1 lane stays in the table
-    VI i1 = simde_mm256_min_epi32(iadd(i, spli(1)), spli(1024));
+    VI i0 = simde_mm256_min_epu32(i, spli(1023));               // clamp so the +1 lane stays in the table
+    VI i1 = simde_mm256_min_epu32(iadd(i, spli(1)), spli(1024));
     V t0 = gather(PW_P5_TANH, i0), t1 = gather(PW_P5_TANH, i1);
     V y = add(t0, mul(sub(t1, t0), sub(a, cvti2f(i0))));
     V neg = cmplt(x, spl(0.0f));
     V signedY = sel(neg, y, negf(y));
-    V big = andnotf(cmplt(a, spl(1024.0f)), ALL1);              // a >= 1024
+    V big = andnotf(cmplt(a, spl(1024.0f)), all1());            // a >= 1024 (NaN: not less -> saturated)
     return sel(big, signedY, sel(neg, spl(1.0f), spl(-1.0f)));
 }
 
@@ -141,8 +147,10 @@ inline V pitchRatioV(V x)                                      // p5_pitch_ratio
     o = seli(m, o, iadd(o, spli(-1)));
     of = cvti2f(o);
     V pos = mul(sub(x, of), spl(512.0f));
-    VI i = cvtf2u(pos);
-    V t0 = gather(PW_P5_EXP2, i), t1 = gather(PW_P5_EXP2, iadd(i, spli(1)));
+    // S1 hardening: an out-of-contract NaN x would land cvtf2u on 0x80000000
+    // and read PW_P5_EXP2 far out of bounds; unsigned-clamp the gather index.
+    VI i = simde_mm256_min_epu32(cvtf2u(pos), spli(512));
+    V t0 = gather(PW_P5_EXP2, i), t1 = gather(PW_P5_EXP2, simde_mm256_min_epu32(iadd(i, spli(1)), spli(513)));
     V ratio = add(t0, mul(sub(t1, t0), sub(pos, cvti2f(i))));
     V scale = castsi(isll<23>(iadd(o, spli(127))));            // 2^octave through the exponent
     return mul(ratio, scale);
@@ -209,11 +217,15 @@ void P5_SIMD_SYMBOL(Engine &e, uint32_t mask, int32_t *out, uint32_t n)
         for (int j = 0; j < 8; j++) t[j] = e.lanes_[j].p.ampVel;
         avelV = ld(t);
     }
-    V laneLive = spl(0.0f);
+    // Dead lanes are SELECTED to exact zero (review S1), not multiplied:
+    // NaN x 0 = NaN, and one poisoned lane would spread through the mix.
+    // The mask is built as an all-ones int compare (sign-bit blend pattern),
+    // never a bitcast of 1/0 ints.
+    V laneLiveM;
     {
-        alignas(32) float t[8];
-        for (int j = 0; j < 8; j++) t[j] = (float)((mask >> j) & 1u);
-        laneLive = ld(t);
+        alignas(32) int32_t t[8];
+        for (int j = 0; j < 8; j++) t[j] = (int32_t)((mask >> j) & 1u);
+        laneLiveM = castsi(iieq(ldu((const uint32_t *)t), spli(1)));
     }
 
     HotV h;
@@ -262,7 +274,7 @@ void P5_SIMD_SYMBOL(Engine &e, uint32_t mask, int32_t *out, uint32_t n)
         const V ppPwMA = ppPwA, ppFb = spl(e.ppS_[PP_FB][i]);
         // the VCA and the int32 quantisation, identical to p5_samples
         const V gain = mul(ae, avelV);
-        const V amp = mul(va, laneLive);
+        const V amp = sel(laneLiveM, spl(0.0f), va);   // exact va when live, exact 0 when dead
         for (uint32_t o = 0; o < os; o++) {          // the firmware's P5_OVERSAMPLE loop
         const V lfo = spl(e.wheel_[i * os + o]), wheelPitch = spl(e.wheelPitch_[i * os + o]);
 
@@ -310,7 +322,7 @@ void P5_SIMD_SYMBOL(Engine &e, uint32_t mask, int32_t *out, uint32_t n)
 
         const VI nb = iadd(h.phB, db), na = iadd(h.phA, da);
         if (p[P5_SYNC]) {
-            V m = andf(iltu(nb, h.phB), andnotf(castsi(iieq(db, spli(0))), ALL1));   // wrapped and running
+            V m = andf(iltu(nb, h.phB), andnotf(castsi(iieq(db, spli(0))), all1()));   // wrapped and running
             V frac = minv(div(u2f(isub(spli(0), h.phB)), u2f(db)), spl(1.0f));
             V remain = sub(spl(1.0f), frac);
             VI at = iadd(h.phA, cvtf2u(mul(frac, u2f(da))));

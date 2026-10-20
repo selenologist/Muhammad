@@ -89,6 +89,7 @@ public:
             rowsSettled_ = false;
             trackAccept();
             if (idx == P5_LFO_INITIAL) wheelSeed();   // still the wheel's position, if untouched
+            if (idx == P5_BEND) bendRngDirty_ = true; // E10: wire range moved
         }
     }
     int rawValue(int idx) const { return idx >= 0 && idx < (int)RAW_MAX ? patch_.raw[idx] : 0; }
@@ -181,7 +182,8 @@ public:
     void setKernelMode(KernelMode m) { mode_ = m; }
 
     // ---- audio ----------------------------------------------------------------
-    void process(int32_t *out, uint32_t n);   // n <= 32; mono int32 mix, part post applied
+    void process(int32_t *out, uint32_t n);   // any n; chunked internally to CTL_
+                                              // (the control arrays hold one block)
     // PAN WIDTH (port extension, not a wire byte): spreads the 8 voice slots
     // across the stereo field like an Oberheim voice assigner. 0 = mono sum,
     // bit-identical to the firmware path; read R after process() via mixR().
@@ -192,19 +194,20 @@ public:
 
 private:
     struct Lane {
-        VoiceState v;
-        uint32_t vph[2];                      // voice_t ph[]: only the unison seeds ever advance it
-        Env fenv, aenv;                       // the engine's own envelopes (ticked per sample)
-        int32_t envDrift;                     // (kept: the note-on roulette slot, always 0)
-        float glideF, curF;                   // engine glide + track glide, 1/16-st, continuous
-        float vca, fadeT;                     // VCA onset ramp / death fade, per sample
-        float wP, wF, wA;                     // per-lane drift walks (was wP_[i] etc)
-        int ch = 0;                           // MIDI channel of the sounding note (MPE)
-        int16_t trimS[2] = {64, 64};          // per-OSC V/oct slope trim, 64 = neutral
-        int16_t trimO[2] = {64, 64};          // per-OSC V/oct offset trim
-        int32_t lastPcm;                      // for the one-block release fade
-        int32_t panG[2] = { 32768, 32768 };   // Q15 (max 32768): Oberheim-style slot pan
-        LaneParams p;
+        VoiceState v = {};
+        uint32_t vph[2] = {};                   // voice_t ph[]: only the unison seeds ever advance it
+        Env fenv = {}, aenv = {};               // the engine's own envelopes (ticked per sample)
+        int32_t envDrift = 0;                   // (kept: the note-on roulette slot, always 0)
+        float glideF = 0.f, curF = 0.f;         // engine glide + track glide, 1/16-st, continuous
+        float vca = 0.f, fadeT = 0.f;           // VCA onset ramp / death fade, per sample
+        float wP = 0.f, wF = 0.f, wA = 0.f;     // per-lane drift walks (was wP_[i] etc)
+        int ch = 0;                             // MIDI channel of the sounding note (MPE)
+        int16_t trimS[2] = {64, 64};            // per-OSC V/oct slope trim, 64 = neutral
+        int16_t trimO[2] = {64, 64};            // per-OSC V/oct offset trim
+        int32_t lastPcm = 0;                    // for the one-block release fade
+        int32_t panG[2] = { 32768, 32768 };     // Q15 (max 32768): Oberheim-style slot pan
+        float ampComp = 1.0f;                   // unison level compensation (E4): 1/sqrt(nv)
+        LaneParams p = {};
     };
 
     int valueOf(int k) const
@@ -217,11 +220,13 @@ private:
     // (the old p5_block/adsrTick/tickEnvelopes control ticks are gone: the
     // whole control path advances per host sample inside process())
     void synthNoteOn(int lane, int voiceWas); // p5_note_on
-    void voiceStart(int lane, int note, int vel, uint8_t mvel, int *voiceWas, int *sounding);
+    void voiceStart(int lane, int note, int vel, uint8_t mvel, int *voiceWas, int *sounding,
+                    float comp = 1.0f);
     void polyNoteOn(int note, int vel);
     void monoNoteOn(int note, int vel);
     int monoPick() const;
     bool renderLane(Lane &l, int32_t *out, uint32_t n);   // velocity scale + death fade
+    void processBlock(int32_t *out, uint32_t n);          // one <=CTL_ chunk (see process)
     void partSample(uint32_t i);                 // ppS_ column i: knob state -> DSP params
 
     Patch patch_;
@@ -230,7 +235,7 @@ private:
     int brightness_ = 0;
     static float applyTrim(const Lane &l, float p16, int osc);   // float now: pitch is continuous
 
-    uint32_t wSt_[MAXV];                      // walk LCGs (separate from the osc noise stream)
+    uint32_t wSt_[MAXV] = {};                   // walk LCGs (separate from the osc noise stream)
 
     double lfoPhaseD_ = 0;                  // fractional LFO phase (per-sub-sample float rate)
     int32_t lastPitch_ = 0, modNoise_ = 0;
@@ -267,7 +272,7 @@ private:
 
     int32_t bendRaw_[16] = {};
     float bendF_[16] = {};                  // continuous bend, Q8 cents, per-sample slew
-    int16_t rUp_[16], rDn_[16];        // per-channel host range, Q8 cents, -1 = unset
+    int16_t rUp_[16] = {}, rDn_[16] = {}; // per-channel host range, Q8 cents, -1 = unset
     int16_t rUpDef_ = -1, rDnDef_ = -1;  // editor default, Q8, -1 = fall back to wire
     int16_t tuneDev_[128] = {};          // microtuning table, 1/16 semitone
     bool tuningActive_ = false;
@@ -279,6 +284,20 @@ private:
     double srScale_ = 1.0;                    // 44100 / host sr
     double smoothBend_ = 0.008990;            // per-sample bend slew factor (set in activate)
     double hostSr_ = 44100.0;
+    // Sample-rate-invariant time constants (review E9): computed ONCE per
+    // activation, so the per-sample path only multiplies. Nominal values are
+    // the 44100 constants, which keep the certified paths bit-exact.
+    float fadeDec_  = 1.0f / 32.0f;           // death-fade step (32 host samples @44.1k)
+    float vcaStep_  = 1.0f / 32.0f;           // VCA onset ramp step
+    float glideFloor_ = 1.0f / 32.0f;         // CV glide minimum step
+    float driftLeak_ = 0.9999843753f;         // OU leak 0.9995^(1/32) @44.1k
+    float driftSig_  = 0.019445f;             // OU sigma 0.11/sqrt(32) @44.1k
+    // Smoothed live controllers (review E11, only while smooth_): zipper-free
+    // aftertouch / brightness / wheel depth. At smooth_==false they are kept
+    // equal to the raw targets, so the bit-exact path sees identical maths.
+    float atS_ = 0.f, brightS_ = 0.f, mwS_ = 0.f;
+    int32_t bendRngSeen_[16] = {};        // range actually used for bendTgt_ (E10 staleness guard)
+    bool bendRngDirty_ = false;           // a bend-range source changed: re-derive targets
     int os_ = 1;                              // runtime P5_OVERSAMPLE
     // cutoff->g table: PW_P5_TPT_G verbatim at (44100, 1x) so the bit-exact
     // A/B never sees a recomputed value; rebuilt for the internal rate
@@ -291,21 +310,24 @@ private:
     uint32_t vage_ = 0;                       // voice ages: one clock for every part
     uint32_t unisonSeed_ = 0x1234567u;        // mono_play's phase-seeding LCG
 
-    int32_t mixTap_[CTL_];
+    int32_t mixTap_[CTL_] = {};
     Lane lanes_[MAXV];
     // per-sample control, materialized in process() and read by BOTH kernels
     // (SoA columns of 8 lanes): the engine has no control-rate grid anymore.
-    float fenvS_[CTL_][MAXV], aenvS_[CTL_][MAXV];   // the two envelopes, this call's samples
-    float vcaS_[CTL_][MAXV];                        // VCA gain: onset ramp / 1 / (1+ampDrift)
-    float fcAddS_[CTL_][MAXV];                      // cutoff adds: filter drift + key-track, /256
-    uint32_t iaS_[CTL_][MAXV], ibS_[CTL_][MAXV];    // per-sample oscillator increments
-    float b16H_[16][CTL_], bfiH_[16][CTL_];         // per-channel bend history this block
-    float ppS_[PP_N][CTL_];                         // part parameters, per host sample
-    EnvRates efr_[CTL_], ear_[CTL_];                // the two env laws, per host sample
+    // Value-initialised: the wide kernel loads all 8 lanes and dead lanes'
+    // rows are only ever written for ACTIVE lanes - heap garbage that is NaN
+    // would poison the signed-min table clamp in softclipV (review S1).
+    float fenvS_[CTL_][MAXV] = {}, aenvS_[CTL_][MAXV] = {};   // the two envelopes, this call's samples
+    float vcaS_[CTL_][MAXV] = {};                             // VCA gain: onset ramp / 1 / (1+ampDrift)
+    float fcAddS_[CTL_][MAXV] = {};                           // cutoff adds: filter drift + key-track, /256
+    uint32_t iaS_[CTL_][MAXV] = {}, ibS_[CTL_][MAXV] = {};    // per-sample oscillator increments
+    float b16H_[16][CTL_] = {}, bfiH_[16][CTL_] = {};         // per-channel bend history this block
+    float ppS_[PP_N][CTL_] = {};                              // part parameters, per host sample
+    EnvRates efr_[CTL_] = {}, ear_[CTL_] = {};                // the two env laws, per host sample
     // hot state, struct-of-arrays: the SIMD kernel loads these eight lanes at a time
-    uint32_t phaseA_[MAXV], phaseB_[MAXV], noise_[MAXV];
+    uint32_t phaseA_[MAXV] = {}, phaseB_[MAXV] = {}, noise_[MAXV] = {};
     float fbState_[MAXV] = {};       // FEEDBACK: last sample's VCA out, per voice
-    float z_[4][MAXV], triangle_[MAXV], syncTail_[MAXV];
+    float z_[4][MAXV] = {}, triangle_[MAXV] = {}, syncTail_[MAXV] = {};
 
     KernelMode mode_ = KernelMode::Auto;
 };

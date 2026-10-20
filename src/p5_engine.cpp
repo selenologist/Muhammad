@@ -85,6 +85,8 @@ static inline void envTick1(Env &e, const EnvRates &L, int gate, float cut)
 
 Engine::Engine(KernelMode mode) : mode_(mode)
 {
+    buildTpt();          // S12: tpt_ must never point at the 128-entry dump
+                         // table before activate() (filterCore indexes past it)
     Patch p;
     patchInit(p);
     setPatch(p);
@@ -124,10 +126,25 @@ void Engine::activate(double sampleRate)
         dcK_ = (uint32_t)(k > 0.0 ? k : 0.0);
     }
     dcX1_ = dcY1_ = 0;
-    for (int i = 0; i < 16; i++) { bendRaw_[i] = 0; bendF_[i] = 0; rUp_[i] = rDn_[i] = -1; }
-    rUpDef_ = rDnDef_ = -1;
-    std::memset(tuneDev_, 0, sizeof tuneDev_);
-    tuningActive_ = false;
+    // E9: sample-rate-invariant time constants, computed ONCE per activation
+    // (the per-sample path only multiplies by these). At 44100 every value
+    // equals the old literal, so the certified renders are bit-identical.
+    const double k = srScale_;
+    fadeDec_     = (float)(k * (1.0 / 32.0));
+    vcaStep_     = fadeDec_;
+    glideFloor_  = fadeDec_;
+    // At the reference rate keep the certified literals BIT FOR BIT (the pow
+    // of 0.9995^(1/32) rounds a hair off the transcribed decimal); away from
+    // it, follow the same laws scaled.
+    driftLeak_   = k == 1.0 ? 0.9999843753f : (float)std::pow(0.9995, k / 32.0);
+    driftSig_    = k == 1.0 ? 0.019445f     : (float)(0.11 * std::sqrt(k / 32.0));
+    atS_ = 0.f; brightS_ = (float)brightness_; mwS_ = (float)mw_;
+    // Live controller/bend PERFORMANCE state resets with activation; the
+    // PERSISTENT state (microtuning, bend-range defaults, per-voice trims,
+    // the patch) does NOT - review C3. The plugin re-pushes its authoritative
+    // copy after activate anyway; the engine must not be the one to forget.
+    for (int i = 0; i < 16; i++) { bendRaw_[i] = 0; bendF_[i] = 0; bendRawSeen_[i] = 0; bendRngSeen_[i] = 0;
+                                   rUp_[i] = rDn_[i] = -1; }
     hbReset(hbMixL_); hbReset(hbMixR_);
 }
 
@@ -144,10 +161,21 @@ void Engine::buildTpt()
     else
     {
         const double scale = 44100.0 / ((double)os_ * hostSr_);
+        // E1: atan(t)*scale can pass pi/2 when the host rate is below the
+        // table's reference (22.05k/24k at 1x): tan flips NEGATIVE there and
+        // the old one-sided guard let it through, giving g in ~[1.7, 7] -
+        // an unstable ladder that made INIT oscillate at Nyquist. Clamp the
+        // ANGLE to the same 98%-of-Nyquist (max 21 kHz) cap the headroom
+        // section below uses. At scale <= 1 the clamp never fires, so 44.1k/
+        // 48k renders are untouched bit for bit.
+        const double amax = 3.14159265358979318 * (((double)os_ * hostSr_) * 0.49 < 21000.0
+                                                   ? 0.49 : 21000.0 / ((double)os_ * hostSr_));
         for (int i = 0; i < 128; i++) {
             const double g0 = PW_P5_TPT_G[i];
             const double t = g0 / (1.0 - g0);                 // tan(pi fc_i / 44100)
-            double tn = std::tan(std::atan(t) * scale);
+            double ang = std::atan(t) * scale;
+            if (ang > amax) ang = amax;
+            double tn = std::tan(ang);
             if (!(tn < 1.0e6)) tn = 1.0e6;                    // never at/past Nyquist in practice
             tptGen_[i] = (float)(tn / (1.0 + tn));
         }
@@ -209,15 +237,28 @@ void Engine::setPatch(const Patch &p)
 {
     patch_ = p;
     rowsSettled_ = false;
+    // E2: a patch load is a NEW SOUND, not a morph. With smoothing on, the
+    // old knob state slewed to the new targets over ~100 ms - a note arriving
+    // with a sequenced program change played the OLD cutoff/levels and got a
+    // coarse-pitch glissando on top. Snap the slewed state to the new patch
+    // (bit-exact path rewrites fval_ every call anyway - no behaviour change).
+    if (smooth_)
+        for (uint32_t k = 0; k < 55u; k++) fval_[k] = (float)valueOf((int)k);
     trackAccept();
     wheelTaken_ = false;
     wheelSeed();
+    bendRngDirty_ = true;   // E10: the wire range byte comes in with the patch
     monoNote_ = 0; nmono_ = 0;
     // the part's shared state starts afresh with a new patch (the p5_ready path)
     lfoPhaseD_ = 0; modNoise_ = 0; lastPitch_ = 0;
     for (int i = 0; i < MAXV; i++)
-    {   lanes_[i].v.active = 0; lanes_[i].v.gate = 0;
-        lanes_[i].fadeT = 0.0f; lanes_[i].lastPcm = 0; }
+    {   // E6: a voice that was SOUNDING gets the 32-sample death fade instead
+        // of a one-sample hard cut (audible click on every program change).
+        // lastPcm holds the lane's last rendered block, which is what fades.
+        if (lanes_[i].v.active) { lanes_[i].v.active = 0; lanes_[i].v.gate = 0;
+                                  lanes_[i].fadeT = 1.0f; }
+        else { lanes_[i].fadeT = 0.0f; lanes_[i].lastPcm = 0; }
+    }
     live_ = 0;
 }
 
@@ -247,27 +288,41 @@ int Engine::slotCount() const
 void Engine::silenceReset()
 {
     rowsSettled_ = false;
+    // C4/H3: a host reset must silence and restart PERFORMANCE state only.
+    // It used to memset whole Lanes, which zeroed panG (PAN WIDTH > 0 made
+    // the plugin SILENT until the width knob was touched again - panDirty_
+    // was never set so process() never recomputed the gains) and flattened
+    // the per-voice V/oct trims, which are project state saved in the blob.
+    // Field-by-field now: voices, envelopes, glide, drift, VCA/fade, channel.
     for (int i = 0; i < MAXV; i++) {
         Lane &l = lanes_[i];
-        std::memset(&l, 0, sizeof l);
-    }
-    for (int i = 0; i < MAXV; i++) {
+        l.v = {};
+        l.fenv = {}; l.aenv = {}; l.envDrift = 0;
+        l.glideF = 0.f; l.curF = 0.f;
+        l.vca = 0.f; l.fadeT = 0.f;
+        l.wP = l.wF = l.wA = 0.f;
+        l.ch = 0;
+        l.lastPcm = 0;
+        l.ampComp = 1.0f;
+        l.p = {};
         phaseA_[i] = phaseB_[i] = noise_[i] = 0;
         fbState_[i] = 0.f;
         for (int j = 0; j < 4; j++) z_[j][i] = 0.0f;
         triangle_[i] = 0.0f; syncTail_[i] = 0.0f;
+        l.vph[0] = l.vph[1] = 0;
+        wSt_[i] = (uint32_t)(0x9E3779B9u + i * 0x85EBCA6Bu);
     }
+    panDirty_ = true;                       // recompute panG for the next block
     lfoPhaseD_ = 0; lastPitch_ = 0; modNoise_ = 0; dcX1_ = dcY1_ = 0;
     for (int i = 0; i < 16; i++) bendF_[i] = 0.0f;
-    for (int k = 0; k < 55; k++) fval_[k] = 0.0f;
+    // H3: snap the knob slews to their CURRENT targets - they were zeroed,
+    // so every knob swept up from 0 (~100 ms filter/level sweep and a
+    // semitone glissando on the first notes after every transport jump).
+    for (uint32_t k = 0; k < 55u; k++) fval_[k] = (float)valueOf((int)k);
+    atS_ = 0.f; brightS_ = 0.f;             // smoothed controllers start silent/clean
     hbReset(hbMixL_); hbReset(hbMixR_);
     live_ = 0; monoNote_ = 0; nmono_ = 0;
     vage_ = 0;   // (the firmware's vage clock is process-global; the A/B harness resets it per scenario)
-    for (int i = 0; i < MAXV; i++)
-    {
-        lanes_[i].trimS[0] = lanes_[i].trimS[1] = lanes_[i].trimO[0] = lanes_[i].trimO[1] = 64;
-        wSt_[i] = (uint32_t)(0x9E3779B9u + i * 0x85EBCA6Bu);
-    }
 }
 
 // --------------------------------------------------------------- note-on ----
@@ -313,7 +368,8 @@ void Engine::synthNoteOn(int lane, int voiceWas)
     if (!voiceWas && p[P5_LOW_B]) phaseB_[lane] = fastNoise32(st);
 }
 
-void Engine::voiceStart(int lane, int note, int vel, uint8_t mvel, int *voiceWas, int *sounding)
+void Engine::voiceStart(int lane, int note, int vel, uint8_t mvel, int *voiceWas, int *sounding,
+                        float comp)
 {
     Lane &l = lanes_[lane];
     *voiceWas = !l.v.active ? 0 : (l.v.gate ? 2 : 1);
@@ -328,6 +384,7 @@ void Engine::voiceStart(int lane, int note, int vel, uint8_t mvel, int *voiceWas
     l.v.pitchCur = l.v.pitch16;                   // glide_set: the track's glide is off
     l.curF = (float)l.v.pitch16;
     l.v.mvel = mvel;                              // t->m_vel (mod.c: the note's VEL)
+    l.ampComp = comp;                             // E4: 1/sqrt(unison count) level compensation
     if (!*sounding) { l.vca = 0.0f; l.fadeT = 0.0f; }   // the VCA onset ramp restarts
 }
 
@@ -397,9 +454,21 @@ void Engine::monoNoteOn(int note, int vel)
     }
     const int sounding = monoNote_ != 0 && lanes_[0].v.active && lanes_[0].v.gate;
     const int want = monoPick();
-    if (sounding && want == monoNote_) return;          // LOW/HIGH priority: this key does not win
-    const int retrigger = mode == V_MONO ? 1 : !sounding;
+    // E5: with the RET (bit 0 of the retrigger byte) law, re-striking the
+    // key that ALREADY has the voice must retrigger, not fall through the
+    // "winner unchanged" early return. A different key losing the priority
+    // contest still returns (the sounding note is not what was pressed).
+    const int retrBit = patch_.raw[P5_RETRIGGER] & 1u;
+    if (sounding && want == monoNote_ && !(retrBit && note == want)) return;
+    const int retrigger = mode == V_MONO ? 1
+                        : (!sounding || (want == monoNote_ && retrBit));
     const int nv = mode == V_UNISON ? np : 1;
+    // E4: unison voices SUM, so each must play quieter or N voices arrive
+    // +14..18 dB hot. The firmware's 36/100 for a full 8-voice stack IS the
+    // 1/sqrt(nv) power law (8 -> 0.354); the old code applied its scale to
+    // v.vel, which never reaches the audio - dead compensation. Apply
+    // 1/sqrt(nv) to the amp path per voice (filter velocity untouched).
+    const float comp = nv > 1 ? (float)(1.0 / std::sqrt((double)nv)) : 1.0f;
     for (int i = 0; i < nv; i++) {
         Lane &l = lanes_[i];
         int32_t k = 2 * i - (nv - 1);                   // -7..7
@@ -407,13 +476,19 @@ void Engine::monoNoteOn(int note, int vel)
         l.v.fine = nv > 1 ? k * detune_ * 56 / 889 : 0; // up to ~+-40 cents
         if (retrigger || !l.v.active || !l.v.gate) {
             int voiceWas, snd;
-            const int v = nv >= NPOLY_ ? vel * 36 / 100 : nv > 1 ? vel / 2 : vel;
-            voiceStart(i, want, v, (uint8_t)vel, &voiceWas, &snd);
-            synthNoteOn(i, voiceWas);
+            // E4: seed the spread phases BEFORE the fresh voice copies vph
+            // into the running phase (synthNoteOn) - the old order seeded
+            // after, so the FIRST unison note played phase-coherent voices.
             if (nv > 1 && i > 0) {                      // random start phases: evenly spread, they cancel
                 unisonSeed_ = unisonSeed_ * 1664525u + 1013904223u;
                 l.vph[0] += unisonSeed_;
             }
+            // E3: the RAW velocity goes to the voice; the fallback path in
+            // noteOff re-reads lanes_[0].v.vel as the next note's velocity,
+            // and the old pre-scaled storage halved it (36/100 at 8 voices)
+            // every time a held key released onto this one.
+            voiceStart(i, want, vel, (uint8_t)vel, &voiceWas, &snd, comp);
+            synthNoteOn(i, voiceWas);
         } else {
             l.v.note = (uint8_t)want;                   // legato: new pitch, same envelope
             l.v.pitch16 = want * 16 + tuneUnits_ + (tuningActive_ ? tuneDev_[i_clamp(want, 0, 127)] : 0);
@@ -482,11 +557,13 @@ void Engine::setBendRangeSemitones(int ch, double up, double down)
     for (int i = 0; i < 16; i++)
         if (ch < 0 || i == ch) { rUp_[i] = (int16_t)(q < 0 ? 0 : q > 24 * 256 ? 24 * 256 : q);
                                  rDn_[i] = (int16_t)(r < 0 ? 0 : r > 24 * 256 ? 24 * 256 : r); }
+    bendRngDirty_ = true;                                  // E10
 }
 void Engine::setBendRangeDefault(double up, double down)
 {
     rUpDef_ = (int16_t)(up * 256.0 + 0.5);
     rDnDef_ = (int16_t)(down * 256.0 + 0.5);
+    bendRngDirty_ = true;                                  // E10
 }
 
 void Engine::setTuningDeviation(const int16_t *dev16)
@@ -526,7 +603,13 @@ static uint32_t incAt(float p16f, float ctF, float fineF, double srScale, int os
     const uint32_t base = pitchInc((uint32_t)i_clamp((int32_t)p16f + d16, 0, 2047));
     const int32_t add = (int32_t)((float)(int32_t)(base >> 12) * (rem * (2367.0f / 16000.0f) + fineF));
     uint32_t ia = base + (uint32_t)add;
-    if (srScale != 1.0) ia = (uint32_t)((double)ia * srScale);
+    if (srScale != 1.0)
+    {   // S12: below ~13 kHz host rate the scaled increment exceeds uint32 -
+        // an out-of-range double->uint conversion is UB. Saturate; near-
+        // ultrasonic oscillators are silent through the BLEP anyway.
+        const double s = (double)ia * srScale;
+        ia = s < 4294967296.0 ? (uint32_t)s : 4294967295u;
+    }
     if (os != 1) ia /= (uint32_t)os;
     return ia;
 }
@@ -551,11 +634,13 @@ void Engine::partSample(uint32_t i)
     const uint8_t *p = patch_.raw;
     const float *q = fval_;
     const int curtis = !!p[P5_FILTER_REV];
-    const float c0 = q[P5_CUTOFF] + (float)brightness_;   // Rev4 CC74 Brightness adds to cutoff
+    // E11: smoothed controller reads (equal to the raw values when smooth_
+    // is off, so the bit-exact path is untouched).
+    const float c0 = q[P5_CUTOFF] + brightS_;   // Rev4 CC74 Brightness adds to cutoff
     float cut = 1618.0f + c0 * 236.0f
               + (curtis ? 0.0f : (127.0f - c0 > 66.0f ? 66.0f : 127.0f - c0) * 38.0f)
               + (float)e_[0] * 256.0f;
-    if (p[P5_PRESS_FILTER]) cut += (float)at_ * 96.0f;
+    if (p[P5_PRESS_FILTER]) cut += atS_ * 96.0f;
     const float resonance = f_clamp(q[P5_RESONANCE] + (float)e_[1], 0.0f, 127.0f);
     ppS_[PP_CUT][i]    = cut / 256.0f;
     ppS_[PP_K][i]      = resonance * (float)(curtis ? 19200 : 18800) / 127.0f / 4096.0f;
@@ -590,7 +675,7 @@ void Engine::partSample(uint32_t i)
     ppS_[PP_FINEBS][i]  = q[P5_FINE_B] * (100.0f / 128.0f);
     ppS_[PP_STEPE][i]   = p[P5_GLIDE]
         ? f_max(lutU(PW_ENV_LIN, q[P5_GLIDE]) * (1.0f / 16384.0f)
-                * (float)srScale_ * (1.0f / 32.0f), 1.0f / 32.0f)
+                * (float)srScale_ * (1.0f / 32.0f), glideFloor_)   // E9 floor
         : 0.0f;
     const int relOn = p[P5_RELEASE_ON];
     efr_[i] = envRatesF(q, P5_ATTACK_FILTER, P5_DECAY_FILTER, P5_SUSTAIN_FILTER,
@@ -615,7 +700,7 @@ bool Engine::renderLane(Lane &l, int32_t *out, uint32_t n)
             {   out[i] += (int32_t)(((int64_t)s * l.panG[0]) >> 15);
                 mixR_[i] += (int32_t)(((int64_t)s * l.panG[1]) >> 15); }
             else out[i] += s;
-            l.fadeT -= 1.0f / 32.0f;
+            l.fadeT -= fadeDec_;                // E9: the 32-sample fade keeps its TIME at any rate
         }
         if (l.fadeT <= 0.0f) { l.fadeT = 0.0f; l.lastPcm = 0; }
         return false;
@@ -624,7 +709,7 @@ bool Engine::renderLane(Lane &l, int32_t *out, uint32_t n)
     const int32_t ampVelocity = p[P5_VEL_AMP] ? (int32_t)v.mvel * 258 : 32767;
     LaneParams &c = l.p;
     c.filterVel = (float)filterVelocity / 32768.0f;
-    c.ampVel = (float)ampVelocity / 32768.0f;
+    c.ampVel = (float)ampVelocity / 32768.0f * l.ampComp;   // E4 unison level comp (1.0 = exact no-op)
     return true;
 }
 
@@ -633,6 +718,19 @@ bool Engine::renderLane(Lane &l, int32_t *out, uint32_t n)
 // capacitor. Control NEVER advances per call: host-block and event-split
 // geometry cannot move any value by even one sample's worth of slew.
 void Engine::process(int32_t *out, uint32_t n)
+{
+    // S12: the public API used to TRUNCATE n > 32 and leave the tail
+    // unwritten - a caller that skipped the plugin's chunker got silent
+    // samples and a control path frozen at block 32. Loop internally instead:
+    // state advances continuously across the chunks by design (per-sample).
+    while (n) {
+        const uint32_t k = n > (uint32_t)CTL_ ? (uint32_t)CTL_ : n;
+        processBlock(out, k);
+        out += k; n -= k;
+    }
+}
+
+void Engine::processBlock(int32_t *out, uint32_t n)
 {
     if (n > (uint32_t)CTL_) n = (uint32_t)CTL_;   // control arrays hold one block
     const uint8_t *p = patch_.raw;
@@ -656,6 +754,11 @@ void Engine::process(int32_t *out, uint32_t n)
     }
 
     const float aS = smooth_ ? (float)(1.0 - std::exp(-srScale_ * (1.0 / 441.0))) : 1.0f;
+    // E11: with smoothing OFF the slewed controller mirrors must EQUAL the
+    // raw values - the bit-exact path then computes identical maths.
+    if (!smooth_) { atS_ = (float)at_; brightS_ = (float)brightness_; mwS_ = (float)mw_; }
+    const bool rngMoved = bendRngDirty_;          // E10: re-derive stale bend targets
+    bendRngDirty_ = false;
     uint32_t liveChMask = 0;
     for (int k = 0; k < MAXV; k++)
         if (lanes_[k].v.active) liveChMask |= 1u << (lanes_[k].ch & 15);
@@ -664,7 +767,6 @@ void Engine::process(int32_t *out, uint32_t n)
         for (uint32_t k = 0; k < 55u; k++) fval_[k] = (float)valueOf((int)k);   // raw: exact, once
     uint32_t noiseSt = modNoise_;
     if (!noiseSt) noiseSt = 0x517953;
-    const float wheelAmtBase = (pcMode_ ? 0.0f : fval_[P5_LFO_INITIAL]) + (float)mw_;
     // Bit-7 polarity flags (right-click on the knob). Host events drain
     // between render calls, so the patch CANNOT change inside process():
     // these are block-invariant by construction. Extract once, multiply
@@ -676,6 +778,13 @@ void Engine::process(int32_t *out, uint32_t n)
     polLfo_  = 1.0f - 2.0f * (float)((p[P5_LFO_RATE] >> 7) & 1u);
     for (uint32_t i = 0; i < n; i++)
     {
+        // E11: live controllers slew on the same one-pole as the knobs, so a
+        // burst of AT/wheel/CC74 messages cannot zipper (raw when unslewed).
+        if (smooth_)
+        {   atS_      += ((float)at_ - atS_) * aS;
+            brightS_  += ((float)brightness_ - brightS_) * aS;
+            mwS_      += ((float)mw_ - mwS_) * aS;
+        }
         // knobs: continuous float slew; `moved` (or a flag change) gates the row
         bool moved = false;
         if (smooth_)
@@ -702,7 +811,11 @@ void Engine::process(int32_t *out, uint32_t n)
         // silent channel costs one float compare.
         for (int ch = 0; ch < 16; ch++)
         {
-            if (bendRaw_[ch] != bendRawSeen_[ch])
+            // E10: a range change (RPN, MPE RCS, editor default, wire byte)
+            // must re-derive the target even while the raw value sits still -
+            // a bent string held across the change used to keep the OLD
+            // cents-per-wheel landing.
+            if (bendRaw_[ch] != bendRawSeen_[ch] || (rngMoved && bendRaw_[ch]))
             {
                 bendRawSeen_[ch] = bendRaw_[ch];
                 const int32_t range = bendRaw_[ch] < 0 ? rangeDnQ8(ch) : rangeUpQ8(ch);
@@ -721,7 +834,9 @@ void Engine::process(int32_t *out, uint32_t n)
             bfiH_[ch][i] = (bendF_[ch] - b16 * 16.0f) * (2367.0f / 2560.0f);
         }
         // the shared wheel: float rate/depth, fractional phase, per sub-sample
-        const float amtF = f_clamp(wheelAmtBase + (p[P5_PRESS_LFO] ? (float)at_ : 0.0f), 0.0f, 127.0f);
+        // (per-sample now that mwS_/atS_ slew per sample - E11)
+        const float amtF = f_clamp((pcMode_ ? 0.0f : fval_[P5_LFO_INITIAL]) + mwS_
+                                   + (p[P5_PRESS_LFO] ? atS_ : 0.0f), 0.0f, 127.0f);
         const double incD = (double)lutU(PW_P5_LFO_INC, fval_[P5_LFO_RATE])
                           / (double)os_ * srScale_;
         const float amount = lutF(PW_P5_AMOUNT, amtF);
@@ -749,10 +864,11 @@ void Engine::process(int32_t *out, uint32_t n)
 
     uint32_t mask = 0;
     uint32_t nr = 0;
+    bool fading = false;
     if (live) {
         const float vdep = (float)driftDepth() * (1.0f / 127.0f);
-        const float leakS = 0.9999843753f;       // 0.9995^(1/32): the old per-block leak, continuous
-        const float sigS = 0.019445f;            // 0.11/sqrt(32): same stationary spread per sample
+        const float leakS = driftLeak_;         // E9: activation-rate constant
+        const float sigS = driftSig_;           // (was literals = 44.1k laws)
         const float kt = (float)fastClamp(p[P5_KEY_FILTER], 0, 2) * (float)PW_KEYTRACK_HALF_Q7 / 128.0f;
         const int lowB = p[P5_LOW_B], keyB = p[P5_KEY_B];
         for (int lane = 0; lane < MAXV; lane++) {
@@ -761,7 +877,7 @@ void Engine::process(int32_t *out, uint32_t n)
             if (!v.active) continue;
             const int ch = l.ch & 15;
             const float stepC = f_max((float)(PW_ENV_LIN[40] >> 14) * (float)srScale_ * (1.0f / 32.0f),
-                                      1.0f / 32.0f);
+                                      glideFloor_);
             const float tgtP = (float)v.pitch16;
             const float e2 = (float)e_[2] * 16.0f, e3 = (float)e_[3] * 16.0f;
             for (uint32_t i = 0; i < n; i++)
@@ -790,8 +906,9 @@ void Engine::process(int32_t *out, uint32_t n)
                 envTick1(l.aenv, ear_[i], v.gate, envCut_);
                 fenvS_[i][lane] = l.fenv.value;
                 aenvS_[i][lane] = l.aenv.value;
-                // VCA: 32-sample onset ramp, then unity (x amp drift)
-                if (l.vca < 1.0f) l.vca = f_min(1.0f, l.vca + 1.0f / 32.0f);
+                // VCA: ~32-sample onset ramp (E9: sample-count scales with
+                // the rate so the ramp keeps its TIME), then unity (x amp drift)
+                if (l.vca < 1.0f) l.vca = f_min(1.0f, l.vca + vcaStep_);
                 vcaS_[i][lane] = l.vca * (1.0f + ampD * (1.0f / 32768.0f));
                 // pitch stack, continuous: glide sits on the shared CV bus,
                 // bend follows the lane's own channel (MPE)
@@ -816,9 +933,17 @@ void Engine::process(int32_t *out, uint32_t n)
                 v.gate = 0;
                 l.fadeT = 1.0f;               // the death fade runs via renderLane
             }
-            if (v.active && renderLane(l, out, n)) { mask |= 1u << lane; nr++; }
-            else if (!v.active) renderLane(l, out, n);
         }
+    }
+    // E8: the render/fade pass runs over ALL lanes on EVERY call. It used to
+    // sit inside the control loop behind `if (!v.active) continue`, so a
+    // dying voice only faded while another voice kept the loop running, and
+    // the last voice's tail stopped dead mid-fade at its block boundary.
+    for (int lane = 0; lane < MAXV; lane++)
+    {
+        Lane &l = lanes_[lane];
+        if (l.v.active) { if (renderLane(l, out, n)) { mask |= 1u << lane; nr++; } }
+        else if (l.fadeT > 0.0f) { fading = true; renderLane(l, out, n); }
     }
     if (mask) {
         // Auto: below two live voices the vector kernel's fixed cost dominates,
@@ -837,7 +962,13 @@ void Engine::process(int32_t *out, uint32_t n)
     }
 
     for (uint32_t i = 0; i < n; i++) mixTap_[i] = out[i];
-    if (!nr) { dcX1_ = dcY1_ = 0; dcX1r_ = dcY1r_ = 0; live_ = 0; return; }
+    if (!nr && !fading)     // E7: the DC blocker state survived only while a
+    {   dcX1_ = dcY1_ = 0; dcX1r_ = dcY1r_ = 0; live_ = 0; return;
+                            // kernel voice was up. On the block where the
+    }                       // last voice died the cap was reset AND the fading
+                            // tail skipped p5_post entirely (a DC thump with
+                            // low-frequency content). Run the post on fade-
+                            // only blocks too; clear the cap on a truly quiet one.
     // p5_post: the part's output coupling capacitor, about 5 Hz. Without a voice it starts afresh.
     int32_t x1 = dcX1_, y = dcY1_;
     for (uint32_t i = 0; i < n; i++) {
