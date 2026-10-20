@@ -49,6 +49,106 @@ int main(int argc, char **argv)
     check("descriptor", desc && !strcmp(desc->id, "muhammad.unresolvable"));
     check("preset discovery factory", getf(CLAP_PRESET_DISCOVERY_FACTORY_ID) != nullptr);
 
+    {   // REGRESSION GATE (owner-reported in Bitwig, 2026-10-21): OSC A COARSE's
+        // bottom must sound EXACTLY one octave below its keyboard detent. The
+        // patch/patchMain model must default the V/oct trim arrays at the
+        // engine's NEUTRAL (64) - zero-init stamped every lane full-CCW at
+        // activate() and flattened the octave. Fresh instance: INIT patch.
+        clap_host_t ohost{}; ohost.clap_version = CLAP_VERSION_INIT;
+        ohost.get_extension = [](const clap_host_t *, const char *) -> const void * { return nullptr; };
+        clap_plugin_t *oct = (clap_plugin_t *)factory->create_plugin(factory, &ohost, desc->id);
+        if (!oct) { check("OSC A COARSE gate instance", false); } else {
+        oct->init(oct);
+        oct->activate(oct, 44100.0, 32, 1024);
+        oct->start_processing(oct);
+        auto *prm2 = (const clap_plugin_params_t *)oct->get_extension(oct, CLAP_EXT_PARAMS);
+        auto idByName = [&](const char *n)->clap_id
+        {   for (uint32_t i = 0; i < prm2->count(oct); i++)
+            {   clap_param_info_t info{};
+                if (prm2->get_info(oct, i, &info) && !std::strcmp(info.name, n))
+                    return info.id; }
+            return (clap_id)-1; };
+        clap_id coarseId = idByName("OSC A COARSE");
+        static float oL[40 << 10];
+        static float oR[1024];
+        float *opp[2] = { oL, oR };
+        clap_audio_buffer_t oab{}; oab.channel_count = 2; oab.data32 = opp;
+        // NOTE: oab.data32 must ROTATE per block (the plugin writes exactly the
+        // first frames_count samples of each channel pointer) — a fixed opp made
+        // every block overwrite oL[0..512) and the measurement window read zeros.
+
+        auto otry = [](const clap_output_events_t *, const clap_event_header_t *) -> bool { return true; };
+        clap_output_events_t odummy{ nullptr, otry };
+        auto run2 = [&](const std::vector<const clap_event_header_t *> &first)->double
+        {   long zc = 0; const int blocks = 64;
+            for (int b = 0; b < blocks; b++)
+            {   EventList due0;
+                if (b == 0) for (auto *e : first) due0.evs.push_back(e);
+                clap_input_events_t in0{ &due0, EL_size, EL_get };
+                opp[0] = oL + b * 512;
+                clap_process_t pr{}; pr.frames_count = 512;
+                pr.audio_outputs = &oab; pr.audio_outputs_count = 1;
+                pr.in_events = &in0; pr.out_events = &odummy;
+                oct->process(oct, &pr);
+                float *seg = oL + b * 512;
+                if (b >= 16)
+                    for (int i = 1; i < 512; i++)
+                        if ((seg[i-1] < 0) != (seg[i] < 0)) zc++; }
+            return (double)zc * 44100.0 / (48.0 * 512.0) / 2.0; };
+        double semis = 999.0;
+        if (coarseId >= 0)
+            // deterministic single-saw patch so the crossing count is exact
+            static const char *kPrep[][2] = {
+                { "UNISON", "0" }, { "UNISON DET", "0" }, { "OSC B LEVEL", "0" },
+                { "NOISE", "0" }, { "LFO SAW", "0" }, { "LFO TRI", "0" },
+                { "LFO PULSE", "0" }, { "LFO RATE", "0" }, { "WHEEL>OSCA", "0" },
+                { "PW WHEEL A", "0" }, { "POLYMOD>OSCA", "0" }, { "POLYMOD AMT", "0" },
+                { "OSC A COARSE", "24" }, { "OSC A FINE", "0" }, { "OSC B FINE", "0" },
+                { "OSC A SAW", "1" }, { "OSC A PULSE", "0" }, { "OSC A LEVEL", "127" },
+                { "CUTOFF", "127" }, { "RESONANCE", "0" }, { "KEYBD>FLT", "0" },
+                { "FLT ATTACK", "0" }, { "AMP ATTACK", "0" }, { "FLT DECAY", "127" },
+                { "AMP DECAY", "127" }, { "FLT SUSTAIN", "127" }, { "AMP SUSTAIN", "127" },
+                { "GLIDE", "0" }, { "RELEASE ON", "1" }, { "MASTER TUNE", "0" },
+                { "EDIT TUNE A", "0" }, { "DRIFT", "0" }, { "VINTAGE", "0" },
+                { "PAN WIDTH", "0" }, { "FEEDBACK", "0" } };
+            std::vector<clap_event_param_value> prep;
+            std::vector<const clap_event_header_t *> ph;
+            for (auto &kv : kPrep)
+            {   const clap_id cid = idByName(kv[0]); if (cid == (clap_id)-1) continue;
+                prep.push_back({});
+                auto &e = prep.back();
+                e.header.type = CLAP_EVENT_PARAM_VALUE; e.header.size = sizeof e;
+                e.header.space_id = CLAP_CORE_EVENT_SPACE_ID;
+                e.param_id = cid; e.value = std::atof(kv[1]);
+                e.channel = -1; e.key = -1; e.note_id = -1; e.port_index = -1;
+                ph.push_back(&e.header); }
+            run2(ph);
+            clap_event_note on{};
+            on.header.type = CLAP_EVENT_NOTE_ON; on.header.size = sizeof on;
+            on.header.space_id = CLAP_CORE_EVENT_SPACE_ID;
+            on.port_index = -1; on.channel = 0; on.key = 60; on.note_id = 60;
+            on.velocity = 0.8;
+            double f0 = run2({ &on.header });
+            clap_event_param_value pv{};
+            pv.header.type = CLAP_EVENT_PARAM_VALUE; pv.header.size = sizeof pv;
+            pv.header.space_id = CLAP_CORE_EVENT_SPACE_ID;
+            pv.param_id = coarseId; pv.value = 0.0;
+            pv.channel = -1; pv.key = -1; pv.note_id = -1; pv.port_index = -1;
+            clap_event_note ck{};    // choke KILLS the old voice instantly (5.10):
+            ck.header.type = CLAP_EVENT_NOTE_CHOKE; ck.header.size = sizeof ck;
+            ck.header.space_id = CLAP_CORE_EVENT_SPACE_ID;
+            ck.port_index = -1; ck.channel = 0; ck.key = 60; ck.note_id = 60;
+            double f1 = run2({ &pv.header, &ck.header, &on.header });
+            semis = 12.0 * std::log2(f1 / f0);
+            std::printf("clap: coarse bottom %.1f Hz vs keyboard %.1f Hz => %+0.2f st\n",
+                        f1, f0, semis);
+        }
+        check("OSC A COARSE bottom == one octave down",
+              coarseId >= 0 && std::fabs(semis + 12.0) < 0.7);
+        oct->stop_processing(oct);
+        oct->deactivate(oct);
+        oct->destroy(oct); }
+    }
     clap_host_t host{};
     host.clap_version = CLAP_VERSION_INIT;
     host.host_data = nullptr;
@@ -170,6 +270,7 @@ int main(int argc, char **argv)
     }
     plugin->stop_processing(plugin);
     check("process status", procOk);
+
     if (aw_count && aw_blocks)
     {   // audio-thread contract: process() must not touch the allocator
         const long allocs = aw_count();
@@ -680,6 +781,8 @@ auto rd7 = [](const clap_istream_t *s, void *b, uint64_t n) -> int64_t {
     plugin->destroy(plugin);
     entry->deinit();
     dlclose(lib);
+
+
     printf("clap smoke: %s\n", failures ? "FAILED" : "all checks ok");
     return failures ? 1 : 0;
 }

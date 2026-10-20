@@ -34,7 +34,14 @@ constexpr uint32_t PARAM_COUNT = 58 + NUM_OVERLAYS + 7;   // FEEDBACK rides inde
 static constexpr uint32_t NIDS = 96;
 
 struct Plugin {
-    explicit Plugin(const clap_host_t *host) : host(host) {}
+    explicit Plugin(const clap_host_t *host) : host(host)
+    {   // V/oct trim pots: the ENGINE's neutral is 64 (applyTrim works as sc-64).
+        // Model is authoritative (patch/patchMain); leaving these zero-init made
+        // activate() stamp every lane's slope/offset full-CCW - the coarse knob's
+        // octave bottom vanished (regression found in Bitwig, 2026-10-21).
+        for (int l = 0; l < 8; l++)
+            for (int o = 0; o < 2; o++)
+                model_.trimV[l][o][0] = model_.trimV[l][o][1] = 64; }
 
     const clap_host_t *host = nullptr;
     clap_plugin_t *self = nullptr;
@@ -70,7 +77,9 @@ struct Plugin {
     {
         uint8_t raw[p5::RAW_MAX] = {};
         int16_t ov[8] = {};
-        int16_t trimV[8][2][2] = {};                 // per-lane/osc scale+offset
+        int16_t trimV[8][2][2] = {};                 // per-lane/osc scale+offset;
+                                                   // NEUTRAL IS 64, seeded in the
+                                                   // Plugin ctor (engine lanes default 64)
         int16_t dev[128] = {};                       // tuning deviations
         int tune = 0, os = 1, pan = 0, wheel = 0, live = 0;
         float brUp = -1.f, brDn = -1.f;               // applied defaults (gui rails); -1 = unset -> wire

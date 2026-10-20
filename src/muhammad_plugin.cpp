@@ -1791,7 +1791,8 @@ static bool state_load_impl(const clap_plugin_t *p, const clap_istream_t *in)
     uint8_t raw[134] = {}; size_t rsz = 133;
     int16_t ov[8] = {}; float trim = 0.5f; int32_t os = 1;
     int tune = 0, program = -1, bankv = 0, pan = 0;
-    int16_t tr[32] = {}; int trn = 0;
+    // absent/short trim side-channel = neutral 64 (not 0 - see ctor comment)
+    int16_t tr[32]; for (int i = 0; i < 32; i++) tr[i] = 64; int trn = 0;
     int16_t dev[128] = {}; bool hasDev = false; int16_t br[2] = { 256, 256 }; bool hasBr = false;
     char name[40] = "12-TET"; int32_t migDr = -1;
     int32_t tn = 0; double tt[64] = {}; bool hasTones = false;
