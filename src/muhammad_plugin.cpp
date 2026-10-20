@@ -1889,11 +1889,13 @@ static bool preset_from_location(const clap_plugin_t *p, uint32_t location_kind,
                                  const char *location, const char *load_key)
 {
     auto *s = fromPlugin(p);
-    if (location_kind != CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN || !load_key) return false;
-    (void)location;
+    if (!load_key) return false;
+    const bool pluginLoc = location_kind == CLAP_PRESET_DISCOVERY_LOCATION_PLUGIN;
     bool ok = false;
     if (!std::strncmp(load_key, "user:", 5))
-        ok = s->loadUserPatchExact(load_key + 5);
+    {   if (!pluginLoc && location_kind != CLAP_PRESET_DISCOVERY_LOCATION_FILE) return false;
+        ok = s->loadUserPatchExact(load_key + 5); }
+    else if (!pluginLoc) return false;
     else if (!std::strcmp(load_key, "init"))
     {   s->recallBasicInit(); ok = true; }
     else
