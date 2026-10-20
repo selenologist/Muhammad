@@ -142,7 +142,15 @@ say "collected:${FOUND:- nothing}"
 case " $FOUND " in *" [muhammad.vst3] "*) :;;
     *) echo "[wrappers] ERROR: no muhammad.vst3 collected"; ls -R "$ASSETS" | head -40; exit 1;;
 esac
-case "$OSTYPE" in darwin*) pat=" [muhammad.app] ";; windows*) pat=" [muhammad.exe] ";; *) pat=" [muhammad] ";; esac
+# same uname -s axis as the platform branch at the top: git-bash sets OSTYPE
+# to msys/mingw..., NEVER "windows*" - an OSTYPE test here demanded a flat
+# Linux muhammad and FAIL LOUDLY'd a good Windows build whose exe had, in
+# fact, been collected two lines earlier.
+case "$(uname -s)" in
+    Darwin)                       pat=" [muhammad.app] ";;
+    MINGW*|MSYS*|CYGWIN*)         pat=" [muhammad.exe] ";;
+    *)                            pat=" [muhammad] ";;
+esac
 case " $FOUND " in *"$pat"*) :;;
     *) echo "[wrappers] ERROR: no standalone host collected (wanted$pat)"; ls -R "$ASSETS" | head -40; exit 1;;
 esac
