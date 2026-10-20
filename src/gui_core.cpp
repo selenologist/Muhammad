@@ -258,15 +258,27 @@ void fillState(GuiCore &c, p5ui::State &st)
         // Bitwig's plugin-host child, so the panel shows the directory it
         // actually scanned. (Click-safe: the load path bounds-checks against
         // userRows, and a tap on this row resolves to nothing.)
+        if (c.pickerTab == 1 && c.userRows.empty())
+        {   // Self-heal: rescan LIVE (paint time). The open-click's cached
+            // scan evidently ran against something other than what renders
+            // now (late mounts/env in a host child) — if this fills rows,
+            // the browser works and the cache-at-open was the flaw.
+            c.userRows = p5store::listPatches();
+        }
         if (c.pickerTab == 1 && c.userRows.empty() && c.pickerPage == 0)
         {   const std::string d = p5store::baseDir();
             std::error_code ec;
-            int n = 0;
+            int n = 0; std::string first; size_t flen = 0;
             for (const auto &e : std::filesystem::directory_iterator(d, ec))
-                { (void)e; n++; }
+            {   n++;
+                if (e.is_regular_file() && first.empty())
+                {   first = e.path().filename().string(); flen = first.size(); }
+            }
             std::snprintf(st.pickerRows[0], 44, "empty: %s", d.c_str());
             if (ec) std::snprintf(st.pickerRows[1], 44, "scan: %s", ec.message().c_str());
-            else    std::snprintf(st.pickerRows[1], 44, "scan: %d entries, 0 matched", n);
+            else if (n && first.empty())
+                    std::snprintf(st.pickerRows[1], 44, "scan: %d entries, NO FILES", n);
+            else    std::snprintf(st.pickerRows[1], 44, "1st[%zu]=%s", flen, first.c_str());
             st.pickerCount = 2;
         }
     }
