@@ -1561,6 +1561,9 @@ static const void *plugin_get_extension(const clap_plugin_t *, const char *id)
     if (!std::strcmp(id, CLAP_EXT_TIMER_SUPPORT)) return &kTimerDispatch;
 #ifdef P5_GUI
     if (!std::strcmp(id, CLAP_EXT_GUI)) return &kGui;
+#if !defined(_WIN32) && !defined(__APPLE__)
+    if (!std::strcmp(id, CLAP_EXT_POSIX_FD_SUPPORT)) return &kPosixFd;   // 4.7
+#endif
 #endif
     return nullptr;
 }

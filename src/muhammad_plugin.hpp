@@ -4,6 +4,7 @@
 #include <clap/clap.h>
 #include <clap/ext/latency.h>
 #include <clap/ext/timer-support.h>
+#include <clap/ext/posix-fd-support.h>
 #include <cstdint>
 #include <cstring>
 #include <mutex>
@@ -294,6 +295,7 @@ extern const clap_plugin_descriptor_t kDescriptor;
 // GUI tables, defined in src/gui_x11.cpp (compiled when P5_GUI is set).
 extern const clap_plugin_gui_t kGui;      // defined by the platform shim (gui_x11/gui_win32)
 extern const clap_plugin_timer_support_t kTimerSupport;
+extern const clap_plugin_posix_fd_support_t kPosixFd;   // X11 shim (4.7)
 
 const clap_plugin_t *muhammad_create(const clap_host_t *host);
 

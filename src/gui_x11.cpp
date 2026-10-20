@@ -66,6 +66,7 @@ struct Ctx : GuiCore
     GLXContext gl = nullptr;
     Atom wmDelete = None;
     bool floating = false;
+    int posixFd = -1;                      // 4.7: X connection fd registered with the host
     bool keepVisible = false;                 // float: host show/hide must not unmap us
     bool wantFloat = false;                   // deferred DETACH (see pump tail)                    // clap gui floating mode: we own the window
     NVGcontext *vg = nullptr;
@@ -174,12 +175,27 @@ static int x11ErrorHandler(Display *d, XErrorEvent *e)
 void registerCtx(Ctx &c)
 {   std::lock_guard<std::mutex> lk(gX11Mx);
     gLiveCtxs.push_back(&c);
+    // 4.7: pump on X traffic through the host's own fd loop, so a host that
+    // never fires timer-support still gets live input the moment events
+    // arrive. Timer pump stays as the fallback (level-triggered, idempotent).
+    if (c.posixFd < 0 && c.plugin && c.plugin->host && c.plugin->host->get_extension && c.dpy)
+    {   auto *hf = (const clap_host_posix_fd_support_t *)
+            c.plugin->host->get_extension(c.plugin->host, CLAP_EXT_POSIX_FD_SUPPORT);
+        const int fd = ConnectionNumber(c.dpy);
+        if (hf && hf->register_fd && hf->register_fd(c.plugin->host, fd,
+                CLAP_POSIX_FD_READ | CLAP_POSIX_FD_ERROR)) c.posixFd = fd;
+    }
     if (!gHandlerInstalled)                       // install ONCE, with the first live Ctx
     {   gHandlerInstalled = true;
         gPrevXErr = XSetErrorHandler(x11ErrorHandler); } }
 
 void unregisterCtx(Ctx &c)
-{   bool last = false;
+{   if (c.posixFd >= 0 && c.plugin && c.plugin->host && c.plugin->host->get_extension)
+    {   auto *hf = (const clap_host_posix_fd_support_t *)
+            c.plugin->host->get_extension(c.plugin->host, CLAP_EXT_POSIX_FD_SUPPORT);
+        if (hf && hf->unregister_fd) hf->unregister_fd(c.plugin->host, c.posixFd); }
+    c.posixFd = -1;
+    bool last = false;
     {   std::lock_guard<std::mutex> lk(gX11Mx);
         gLiveCtxs.erase(std::remove(gLiveCtxs.begin(), gLiveCtxs.end(), &c),
                         gLiveCtxs.end());
@@ -238,7 +254,10 @@ static void writeGuiConfFloat(uint32_t w, uint32_t h)
         std::fclose(f);
     }
 }
-static bool modeFloat()
+static const char *curHostName(const Plugin *s)
+{   return s && s->host && s->host->name ? s->host->name : ""; }
+
+static bool modeFloat(const Plugin *pl = nullptr)
 {
     // Persistent user control: <store>/gui.conf containing a line
     //   mode=float   (or mode=embed).   The store dir is the plugin's own
@@ -249,15 +268,36 @@ static bool modeFloat()
     std::string conf;
     {   const std::string dir = p5store::baseDir();
         if (!dir.empty()) conf = dir + "/gui.conf";   }
+    const std::string hn = curHostName(pl);
     FILE *f = conf.empty() ? nullptr : std::fopen(conf.c_str(), "rb");
     if (f)
-    {   char ln[128]; bool fl = false;
+    {   char ln[256]; bool fl = false, embed = false, legacy = false;
+        std::vector<std::string> keys;          // keyed "mode=float host=..." lines
         while (std::fgets(ln, sizeof ln, f))
-        {   if (!std::strncmp(ln, "mode=float", 10)) fl = true;
-            else if (!std::strncmp(ln, "w=", 2)) gFloatW = (uint32_t)std::strtoul(ln + 2, nullptr, 10);
-            else if (!std::strncmp(ln, "h=", 2)) gFloatH = (uint32_t)std::strtoul(ln + 2, nullptr, 10);
+        {   std::string line(ln);
+            while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) line.pop_back();
+            if (line.rfind("mode=float", 0) == 0)
+            {   const size_t hp = line.find("host=");
+                if (hp == std::string::npos) { legacy = true; fl = true; }     // pre-4.8b file
+                else { keys.push_back(line);
+                       if (line.compare(hp + 5, std::string::npos, hn) == 0) fl = true; } }
+            else if (line == "mode=embed") embed = true;
+            else if (line.rfind("w=", 0) == 0) gFloatW = (uint32_t)std::strtoul(line.c_str() + 2, nullptr, 10);
+            else if (line.rfind("h=", 0) == 0) gFloatH = (uint32_t)std::strtoul(line.c_str() + 2, nullptr, 10);
         }
         std::fclose(f);
+        if (embed) fl = false;
+        if (legacy && !conf.empty() && !hn.empty())
+        {   // one-time migration: the un-keyed line learns the CURRENT host;
+            // other hosts fall back to embedded instead of inheriting a
+            // Bitwig verdict (review 4.8: float mode learned globally)
+            if (FILE *w = std::fopen(conf.c_str(), "wb"))
+            {   std::fprintf(w, "# Muhammad GUI window mode\n");
+                for (const std::string &k : keys) std::fprintf(w, "%s\n", k.c_str());
+                std::fprintf(w, "mode=float host=%s\n", hn.c_str());
+                if (gFloatW) std::fprintf(w, "w=%u\n", gFloatW);
+                if (gFloatH) std::fprintf(w, "h=%u\n", gFloatH);
+                std::fclose(w); } }
         if (gFloatW < 400 || gFloatW > 4096) gFloatW = 0;   // sanity: a real panel
         if (gFloatH < 110 || gFloatH > 1536) gFloatH = 0;   // width, any era
         if (!fl) gExplicitEmbed = true;
@@ -270,16 +310,31 @@ static bool modeFloat()
     gModeSource = "default";
     return false;
 }
-static void autoLearnFloat()
+static void autoLearnFloat(const Plugin *pl = nullptr)
 {
     // The host just PROVED it owns the embedded slot (never asked our size,
     // answered every ask, shrunk nothing). Record that verdict persistently
     // so the NEXT session floats with zero user action; log it loudly.
+    // KEYED BY HOST (review 4.8): other hosts keep the embedded default.
     const std::string dir = p5store::baseDir();
     if (dir.empty()) return;
     const std::string conf = dir + "/gui.conf";
+    const std::string hn = curHostName(pl);
+    std::vector<std::string> keys;
+    if (FILE *r = std::fopen(conf.c_str(), "rb"))
+    {   char ln[256];
+        while (std::fgets(ln, sizeof ln, r))
+        {   std::string line(ln);
+            if (line.rfind("mode=float host=", 0) == 0 &&
+                line.find("host=" + hn) == std::string::npos) keys.push_back(line);
+        }
+        std::fclose(r); }
     if (FILE *f = std::fopen(conf.c_str(), "wb"))
-    {   std::fprintf(f, "# Muhammad GUI window mode\nmode=float\n");
+    {   std::fprintf(f, "# Muhammad GUI window mode\n");
+        for (const std::string &k : keys) std::fprintf(f, "%s\n", k.c_str());
+        std::fprintf(f, "mode=float host=%s\n", hn.c_str());
+        if (gFloatW) std::fprintf(f, "w=%u\n", gFloatW);
+        if (gFloatH) std::fprintf(f, "h=%u\n", gFloatH);
         std::fclose(f);
         std::fprintf(stderr, "[p5gui] host proved it owns the embedded slot; wrote %s -> next session floats\n", conf.c_str());
     }
@@ -321,7 +376,7 @@ void pump(Ctx &c)
             const bool trimmedOut = c.topTries >= 10 || c.trimIneffective >= 2;
             if (trimmedOut && pa.height > wantH + 40 && !c.getSizeCalls &&
                 !gLearnedFloat)
-            {   gLearnedFloat = true; autoLearnFloat(); switchToFloat(c); }
+            {   gLearnedFloat = true; autoLearnFloat(c.plugin); switchToFloat(c); }
             if (pa.height > wantH + 40 && c.topTries < 10 &&
                 c.trimIneffective < 2 && coreShouldTrimNow(c, t))
             {
@@ -523,7 +578,7 @@ void pump(Ctx &c)
     if (c.wantFloat && !c.floating)
     {   c.wantFloat = false;
         gLearnedFloat = true;      // user chose; suppress redundant auto-learn
-        autoLearnFloat();          // persist: next session floats from tick one
+        autoLearnFloat(c.plugin);  // persist: next session floats from tick one
         switchToFloat(c);          // AND escape this session right now
     }
     if (c.plugin) c.plugin->maybePingLatency();
@@ -747,7 +802,7 @@ bool gui_is_api_supported(const clap_plugin_t *, const char *api, bool is_floati
     return api && !std::strcmp(api, CLAP_WINDOW_API_X11);
 }
 
-bool gui_get_preferred_api(const clap_plugin_t *, const char **api, bool *is_floating)
+bool gui_get_preferred_api(const clap_plugin_t *p, const char **api, bool *is_floating)
 {
     // Default embedded (polite citizen). P5_GUI_MODE=float declares a
     // PLUGIN-FLOATING preference: hosts like Bitwig 5.0.4 (measured: get_size
@@ -757,7 +812,9 @@ bool gui_get_preferred_api(const clap_plugin_t *, const char **api, bool *is_flo
     // (chassis), never sized right. A floating window is OURS: exact panel
     // aspect locked via WM_NORMAL_HINTS, WM decorations, correct drag,
     // user-close -> hostGui->closed so the host stays in sync.
-    *api = CLAP_WINDOW_API_X11; *is_floating = modeFloat(); return true;
+    *api = CLAP_WINDOW_API_X11;
+    *is_floating = modeFloat(p ? static_cast<Plugin *>(p->plugin_data) : nullptr);
+    return true;
 }
 bool gui_create(const clap_plugin_t *p, const char *api, bool is_floating)
 {
@@ -778,7 +835,7 @@ bool gui_create(const clap_plugin_t *p, const char *api, bool is_floating)
     }
     if (auto *cc = ctxFrom(p))
     {   if (api) std::strncpy(cc->guiApi, api, sizeof cc->guiApi - 1);
-        cc->floating = is_floating || modeFloat();  // env can FORCE float
+        cc->floating = is_floating || modeFloat(s);  // env can FORCE float
         cc->modeSource = cc->floating ? gModeSource : "embedded";
             cc->modeSource = cc->floating ? gModeSource : "embedded";
         std::fprintf(stderr, "[p5gui] create mode: %s (source: %s)\n",
@@ -917,5 +974,11 @@ static void gui_on_timer(const clap_plugin_t *p, clap_id)
     if (auto *c = ctxFrom(p)) { pump(*c); }
 }
 const clap_plugin_timer_support_t kTimerSupport = { gui_on_timer };
+
+// 4.7: level-triggered on_fd for the X connection - pump() drains XPending.
+// Hosts without posix-fd-support fall back to the timer pump unchanged.
+static void gui_on_posix_fd(const clap_plugin_t *p, int, clap_posix_fd_flags_t)
+{   if (auto *c = ctxFrom(p)) pump(*c); }
+const clap_plugin_posix_fd_support_t kPosixFd = { gui_on_posix_fd };
 
 } // namespace pw

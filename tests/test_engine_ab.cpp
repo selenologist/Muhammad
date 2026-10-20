@@ -249,5 +249,41 @@ int main(int argc, char **argv)
     }
 
     printf("%s\n", failures ? "A/B: DIFFERENCES FOUND" : "A/B: bit-exact");
+    // ---- FULL factory sweep: all 200 programs, scalar vs wide, bit-exact --
+    // The old gate certified only INIT + program 0 while 61 programs route
+    // the (at-rest) wheel/poly-mod path - exactly where the scalar kernel's
+    // shortcut (`if (!x) return base`) diverges the wide kernel's float
+    // round-trip. Sweeping every program makes the claim-check true.
+    {
+        p5::Engine A(p5::KernelMode::Scalar), B(p5::KernelMode::Wide);
+        A.setPolyphony(5); B.setPolyphony(5);
+        A.activate(44100); B.activate(44100);
+        long badPrograms = 0, badSamples = 0;
+        int32_t ba[2048], bb[2048];
+        for (uint32_t prog = 0; prog < 200; prog++)
+        {
+            A.silenceReset(); B.silenceReset();
+            A.loadFactory(prog); B.loadFactory(prog);
+            A.editRaw(p5::P5_VINTAGE, 0); B.editRaw(p5::P5_VINTAGE, 0);
+            A.noteOn(52, 100, 0); B.noteOn(52, 100, 0);
+            A.noteOn(59, 96, 0);  B.noteOn(59, 96, 0);
+            A.noteOn(64, 92, 0);  B.noteOn(64, 92, 0);
+            A.process(ba, 1024); A.process(ba, 1024);
+            B.process(bb, 1024); B.process(bb, 1024);
+            A.noteOff(52, 0); B.noteOff(52, 0);
+            A.noteOff(59, 0); B.noteOff(59, 0);
+            A.noteOff(64, 0); B.noteOff(64, 0);
+            A.process(ba, 1024); A.process(ba, 1024);
+            B.process(bb, 1024); B.process(bb, 1024);
+            long d = 0;
+            for (int i = 0; i < 2048; i++) if (ba[i] != bb[i]) d++;
+            if (d) { badPrograms++; badSamples += d;
+                     if (getenv("FIRSTDIFF")) printf("program %u: %ld mismatched samples\n", prog, d); }
+        }
+        printf("factory sweep: 200 programs, %ld mismatching, %ld mismatched samples\n",
+               badPrograms, badSamples);
+        if (badPrograms) failures++;
+    }
+
     return failures ? 1 : 0;
 }

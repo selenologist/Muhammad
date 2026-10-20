@@ -158,13 +158,21 @@ inline V pitchRatioV(V x)                                      // p5_pitch_ratio
 
 inline VI wheelIncV(VI base, V ratio)                          // p5_wheel_inc
 {
-    return cvtf2u(minv(mul(u2f(base), ratio), spl(1932735232.0f)));
+    // scalar p5_math.hpp:121 has `if (ratio == 1.0f) return base;`: with a
+    // 27-bit phase the float round-trip loses low bits, so wheel-at-0
+    // routings (61 of the 200 factory programs) diverged scalar-vs-wide.
+    // Same shortcut, per lane: one compare + one blend, no branch.
+    const V m = castsi(iieq(castis(ratio), spli(0x3F800000)));   // ratio == 1.0f
+    return seli(m, cvtf2u(minv(mul(u2f(base), ratio), spl(1932735232.0f))), base);
 }
 
 inline VI incOfV(VI base, V x)                                 // p5_inc
 {
+    // scalar p5_math.hpp:114 `if (!x) return base;` (+0.0 AND -0.0): at rest
+    // the poly-mod path must stay the untouched base increment.
+    const V m = castsi(iieq(castis(fabsfV(x)), spli(0)));        // x == 0
     V r = pitchRatioV(minv(maxv(x, spl(-8.0f)), spl(6.0f)));
-    return cvtf2u(minv(maxv(mul(u2f(base), r), spl(1.0f)), spl(1932735232.0f)));
+    return seli(m, cvtf2u(minv(maxv(mul(u2f(base), r), spl(1.0f)), spl(1932735232.0f))), base);
 }
 
 inline VI pwOfV(V value)                                       // p5_pw
