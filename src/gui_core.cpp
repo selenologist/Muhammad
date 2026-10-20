@@ -266,20 +266,9 @@ void fillState(GuiCore &c, p5ui::State &st)
             c.userRows = p5store::listPatches();
         }
         if (c.pickerTab == 1 && c.userRows.empty() && c.pickerPage == 0)
-        {   const std::string d = p5store::baseDir();
-            std::error_code ec;
-            int n = 0; std::string first; size_t flen = 0;
-            for (const auto &e : std::filesystem::directory_iterator(d, ec))
-            {   n++;
-                if (e.is_regular_file() && first.empty())
-                {   first = e.path().filename().string(); flen = first.size(); }
-            }
-            std::snprintf(st.pickerRows[0], 44, "empty: %s", d.c_str());
-            if (ec) std::snprintf(st.pickerRows[1], 44, "scan: %s", ec.message().c_str());
-            else if (n && first.empty())
-                    std::snprintf(st.pickerRows[1], 44, "scan: %d entries, NO FILES", n);
-            else    std::snprintf(st.pickerRows[1], 44, "1st[%zu]=%s", flen, first.c_str());
-            st.pickerCount = 2;
+        {   std::snprintf(st.pickerRows[0], 44, "empty: %s",
+                          p5store::baseDir().c_str());
+            st.pickerCount = 1;
         }
     }
     else if (c.modal == 1 || c.modal == 2 || c.modal == 3 ||
