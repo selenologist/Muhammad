@@ -179,38 +179,39 @@ void Plugin::refreshView()
 // audio->main coalesced reports: the LATEST value per id, no ordering needed
 // (each is the full base the engine now holds; generation rule as in pub).
 void Plugin::reportParam(clap_id id, double baseVal)
-{   // audio thread: write slot, then raise its mask bit (release). The
-    // consumer takes the bit first and may read a value being replaced by a
-    // NEWER base - which is also true, only fresher. Never torn.
+{   // audio thread: SPSC producer. Write the slot, then publish the index.
     if (id >= (clap_id)NIDS) return;
-    repSlot_[id].v = baseVal;
-    repSlot_[id].gen = appliedGenCursor_;
-    repMask_[id >> 6].fetch_or(uint64_t(1u) << (id & 63u), std::memory_order_release);
+    const uint32_t w = repW_.load(std::memory_order_relaxed);
+    if (w - repRpub_.load(std::memory_order_acquire) >= 256u)
+    {   repLost_.store(true, std::memory_order_release); return; }
+    repRing_[w & 255u] = Rep{ baseVal, appliedGenCursor_, (uint16_t)id };
+    repW_.store(w + 1u, std::memory_order_release);
 }
 
 void Plugin::drainReports(uint32_t curGen)
 {
-    for (uint32_t w = 0; w < REPNW; w++)
-    {   uint64_t bits = repMask_[w].exchange(0, std::memory_order_acq_rel);
-        while (bits)
-        {   const int b = __builtin_ctzll(bits); bits &= bits - 1u;
-            const clap_id id = (clap_id)(w * 64 + b);
-            if (id >= (clap_id)NIDS) continue;
-            const Rep r = repSlot_[id];
-            hostBase_[id] = r.v;
-            if (isRawParam(id))
-            {   const int idx = kRawIndex[id];
-                if (rawGen_[idx] <= r.gen)
-                {   uint8_t v = (uint8_t)(r.v < 0 ? 0 : r.v > 255 ? 255 : r.v + 0.5);
-                    if (p5::polarityByte(idx)) v = (uint8_t)((model_.raw[idx] & 128) | (v & 127));
-                    if (model_.raw[idx] != v) { model_.raw[idx] = v; changeTick_.fetch_add(1, std::memory_order_relaxed); } } }
-            else if (id == PID_TUNE && tuneGen_ <= r.gen) model_.tune = (int)r.v;
-            else if (id == PID_OS && osGen_ <= r.gen)    model_.os = ((int)r.v > 0 ? 2 : 1);
-            else if (id == PID_PAN_WIDTH && panGen_ <= r.gen) model_.pan = (int)r.v;
-            else if (id == PID_DRIFT)
-            {   const int idx = p5::P5_VINTAGE;
-                if (rawGen_[idx] <= r.gen) model_.raw[idx] = (uint8_t)(r.v < 0 ? 0 : r.v > 127 ? 127 : r.v + 0.5); }
-        }
+    (void)curGen;
+    if (repLost_.exchange(false, std::memory_order_acq_rel))
+        lastMergeGen_ = 0;                       // reports were dropped: full re-merge
+    const uint32_t w = repW_.load(std::memory_order_acquire);
+    for (; repR_ != w; repR_++)
+    {   const Rep r = repRing_[repR_ & 255u];
+        const clap_id id = (clap_id)r.id;
+        if (id < (clap_id)NIDS) hostBase_[id] = r.v;
+        if (isRawParam(id))
+        {   const int idx = kRawIndex[id];
+            if (rawGen_[idx] <= r.gen)
+            {   int v = (int)(r.v < 0 ? 0 : r.v > 255 ? 255 : r.v + 0.5);
+                if (p5::polarityByte(idx)) v = (model_.raw[idx] & 128) | (v & 127);
+                if (model_.raw[idx] != (uint8_t)v)
+                {   model_.raw[idx] = (uint8_t)v; changeTick_.fetch_add(1, std::memory_order_relaxed); } } }
+        else if (id == PID_TUNE && tuneGen_ <= r.gen) model_.tune = (int)r.v;
+        else if (id == PID_OS && osGen_ <= r.gen)    model_.os = ((int)r.v > 0 ? 2 : 1);
+        else if (id == PID_PAN_WIDTH && panGen_ <= r.gen) model_.pan = (int)r.v;
+        else if (id == PID_DRIFT)
+        {   const int idx = p5::P5_VINTAGE;
+            if (rawGen_[idx] <= r.gen) model_.raw[idx] = (uint8_t)(r.v < 0 ? 0 : r.v > 127 ? 127 : r.v + 0.5); }
+        repRpub_.store(repR_ + 1u, std::memory_order_release);
     }
 }
 
@@ -1373,7 +1374,7 @@ static bool plugin_activate(const clap_plugin_t *p, double sample_rate, uint32_t
     s->appliedGenCursor_ = s->gen_;
     s->lastMergeGen_ = 0;
     s->ow_.store(0); s->or_.store(0);
-    for (auto &m : s->repMask_) m.store(0, std::memory_order_relaxed);
+    s->repW_.store(0); s->repR_ = 0; s->repLost_.store(false);   // report ring: clean slate
     s->pendingPc_.store(-1); s->pcReq_.store(-1);
     s->idSync_.store(false); s->restartPending_ = false;
     s->latencyDirty.store(false);

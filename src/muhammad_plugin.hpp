@@ -94,7 +94,7 @@ struct Plugin {
     static constexpr uint32_t OQ_RING = 1024u;       // main->audio events for clap out_events
     enum OutKind : uint8_t { OK_BEGIN, OK_END, OK_VALUE };
     struct OutEv { uint8_t kind = 0; uint16_t id = 0; double v = 0.0; };
-    struct Rep { double v = 0.0; uint32_t gen = 0; };      // latest base per id + its generation
+    struct Rep { double v = 0.0; uint32_t gen = 0; uint16_t id = 0; };  // reported base + generation
 
     Model model_ = {};                       // MAIN-ONLY authoritative state
     Pub pub_ = {};                           // AUDIO-published snapshot (mutex-guarded)
@@ -123,11 +123,15 @@ struct Plugin {
     std::atomic<uint32_t> ow_{0}, or_{0};    // SPSC: main produces, audio consumes
     uint32_t outDropped_ = 0;                // (audio-private; surfaced via pub on demand)
 
-    // audio->main latest-value report (host writes via process/flush):
-    // plain slot + atomic ready bitmask words, coalesced per id.
-    Rep repSlot_[NIDS] = {};
-    static constexpr uint32_t REPNW = (NIDS + 63) / 64;
-    std::atomic<uint64_t> repMask_[REPNW] = {};
+    // audio->main report ring (host writes via process/flush): strict SPSC -
+    // audio writes entry[rw] then publishes rw; main reads to rw and advances
+    // rr. On overflow (main not draining), audio DROPS the report and raises
+    // repLost_: main then force-re-merges the whole publish instead.
+    Rep repRing_[256] = {};
+    std::atomic<uint32_t> repW_{0};               // audio writes
+    uint32_t repR_ = 0;                           // main consumes
+    std::atomic<uint32_t> repRpub_{0};            // ...published for the audio overflow check
+    std::atomic<bool> repLost_{false};
 
     double hostBase_[NIDS] = {};      // main mirror of pub_.base (get_value)
 

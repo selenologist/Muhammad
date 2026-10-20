@@ -1,8 +1,13 @@
-/* ThreadSanitizer stress: one audio thread in process(), one main thread
- * doing everything a host+panel can do CONCURRENTLY: flushed param events,
- * polarity toggles, program loads, tuning/trim edits, state save+load. The
- * ring/view discipline claims the engine has exactly one writer at a time -
- * this test is that claim, run under -fsanitize=thread (CI job `tsan`). */
+/* ThreadSanitizer stress modeling a SPEC-FOLLOWING host (review 4.1 / B12):
+ *   - the audio thread runs process() with NOTES in in_events, and between
+ *     blocks runs params.flush() and reset() THERE (the CLAP annotations:
+ *     flush = [active ? audio : main], reset = [audio & active]);
+ *   - the main thread does everything a host UI + the panel do concurrently:
+ *     program loads, tuning/trim/polarity edits, guiSet/guiSetLocal/guiSync
+ *     gestures, get_value reads, state save/load, timer-tick adoption.
+ * The patch/patchMain contract claims main never writes the engine while
+ * active and the audio thread never needs main's locks. This test is that
+ * claim under -fsanitize=thread (CI job `tsan`). */
 #include "muhammad_plugin.hpp"
 
 #include <atomic>
@@ -17,9 +22,9 @@
 #include <clap/ext/params.h>
 
 static std::atomic<bool> stopFlag{false};
-static std::atomic<unsigned> outPushes{0}, hostFlushes{0};
+static std::atomic<unsigned> outPushes{0}, hostFlushes{0}, rescans{0};
 
-static void host_rescan(const clap_host_t *, clap_param_rescan_flags) {}
+static void host_rescan(const clap_host_t *, clap_param_rescan_flags) { rescans.fetch_add(1); }
 static void host_clear(const clap_host_t *, clap_id, clap_param_clear_flags) {}
 static void host_request_flush(const clap_host_t *) { hostFlushes.fetch_add(1); }
 static const clap_host_params_t kHostParams = { host_rescan, host_clear, host_request_flush };
@@ -43,12 +48,11 @@ int main()
     setenv("P5_STORE_DIR", "/tmp/muh-tsan-store", 1);
     clap_host_t host{};
     host.clap_version = CLAP_VERSION_INIT;
-    host.host_data = nullptr;
     host.get_extension = host_get_ext;
 
     const clap_plugin_t *pl = pw::muhammad_create(&host);
     if (!pl->init(pl)) { std::fprintf(stderr, "init failed\n"); return 1; }
-    if (!pl->activate(pl, 44100.0, 16, 0)) { std::fprintf(stderr, "activate failed\n"); return 1; }
+    if (!pl->activate(pl, 44100.0, 64, 1024)) { std::fprintf(stderr, "activate failed\n"); return 1; }
     if (!pl->start_processing(pl)) { std::fprintf(stderr, "start failed\n"); return 1; }
     const auto *prm = (const clap_plugin_params_t *)pl->get_extension(pl, CLAP_EXT_PARAMS);
     const auto *stt = (const clap_plugin_state_t *)pl->get_extension(pl, CLAP_EXT_STATE);
@@ -58,42 +62,68 @@ int main()
     clap_audio_buffer_t ab{};
     ab.data32 = chans; ab.channel_count = 2;
 
-    std::atomic<unsigned> blocks{0};
+    std::atomic<unsigned> blocks{0}, flushesOnAudio{0}, resetsOnAudio{0};
+
+    // ---- audio thread: process + flush + reset, all in this thread ----
     std::thread audio([&]
     {
+        std::mt19937 rng(11);
+        unsigned n = 0;
         while (!stopFlag.load(std::memory_order_relaxed))
-        {   clap_process_t pr{};
+        {   // in-band events: notes on/off every block, param automation stream
+            std::vector<clap_event_note> notes(2);
+            std::vector<clap_event_param_value> vals(3);
+            std::vector<clap_event_param_mod> mods(2);
+            InList il;
+            const int key = 48 + (int)(rng() % 36);
+            for (auto &e : notes)
+            {   std::memset(&e, 0, sizeof e);
+                e.header.type = CLAP_EVENT_NOTE_ON; e.header.size = sizeof e;
+                e.port_index = -1; e.channel = (short)(rng() % 16); e.key = key;
+                e.note_id = key; e.velocity = 0.7; }
+            notes[1].header.type = CLAP_EVENT_NOTE_OFF;
+            notes[1].velocity = 0.0;
+            for (size_t i = 0; i < vals.size(); i++)
+            {   std::memset(&vals[i], 0, sizeof vals[i]);
+                vals[i].header.type = CLAP_EVENT_PARAM_VALUE; vals[i].header.size = sizeof vals[i];
+                vals[i].param_id = (clap_id)(rng() % 58); vals[i].value = (double)(rng() % 128);
+                vals[i].note_id = -1; vals[i].port_index = -1; vals[i].channel = -1; vals[i].key = -1; }
+            for (size_t i = 0; i < mods.size(); i++)
+            {   std::memset(&mods[i], 0, sizeof mods[i]);
+                mods[i].header.type = CLAP_EVENT_PARAM_MOD; mods[i].header.size = sizeof mods[i];
+                mods[i].param_id = (clap_id)(rng() % 58);
+                mods[i].amount = (double)((int)(rng() % 200) - 100) / 10.0;
+                mods[i].note_id = -1; mods[i].port_index = -1; mods[i].channel = -1; mods[i].key = -1; }
+            for (auto &e : notes) il.evs.push_back(&e.header);
+            for (auto &e : vals)  il.evs.push_back(&e.header);
+            for (auto &e : mods)  il.evs.push_back(&e.header);
+            const clap_input_events_t in = { &il, in_size, in_get };
+
+            clap_process_t pr{};
             pr.frames_count = 64;
             pr.audio_outputs = &ab;
             pr.audio_outputs_count = 1;
-            InList none;
-            const clap_input_events_t in = { &none, in_size, in_get };
             pr.in_events = &in;
             pr.out_events = &kOut;
             pl->process(pl, &pr);
             blocks.fetch_add(1, std::memory_order_relaxed);
+
+            if ((n++ % 8u) == 0u)
+            {   // the host's pending param traffic, on the AUDIO thread
+                prm->flush(pl, &in, &kOut);
+                flushesOnAudio.fetch_add(1, std::memory_order_relaxed); }
+            if ((n % 13u) == 0u)
+            {   pl->reset(pl);                     // [audio-thread & active]
+                resetsOnAudio.fetch_add(1, std::memory_order_relaxed); }
         }
     });
 
+    // ---- main thread: host UI + panel, spec-legal main-only calls ----
+    auto *s = static_cast<pw::Plugin *>(pl->plugin_data);
     std::mt19937 rng(7);
     unsigned iters = 0;
-    for (int round = 0; round < 800; round++)
+    for (int round = 0; round < 1500 && !stopFlag.load(); round++)
     {
-        // flushed param events (the host's own writes)
-        clap_event_param_value pv[4];
-        InList inl;
-        for (int i = 0; i < 4; i++)
-        {   std::memset(&pv[i], 0, sizeof pv[i]);
-            pv[i].header.type = (i & 1) ? CLAP_EVENT_PARAM_VALUE : CLAP_EVENT_PARAM_MOD;
-            pv[i].header.size = sizeof pv[i];
-            pv[i].param_id = rng() % 58;
-            pv[i].value = (double)(rng() % 128);
-            inl.evs.push_back(&pv[i].header); }
-        const clap_input_events_t pin = { &inl, in_size, in_get };
-        prm->flush(pl, &pin, &kOut);
-
-        // panel-thread mutations + reads
-        auto *s = static_cast<pw::Plugin *>(pl->plugin_data);
         s->togglePolarity(p5::P5_ENV_FILTER);
         s->togglePolarity(p5::P5_LFO_RATE);
         s->togglePolarity(p5::P5_FEEDBACK);
@@ -103,11 +133,19 @@ int main()
             s->setTuning(dev); }
         if (round % 3 == 0)
             s->setTrimPair((int)(rng() % 8), (int)(rng() % 2), (int)(rng() % 90), (int)(rng() % 30));
-        s->guiSet(80, (double)(rng() % 200) / 100.0);            // TRIM
-        s->guiSet(81, (double)(round % 2));                        // OS toggle
-        s->guiSet(85, (double)(rng() % 128));                     // PAN WIDTH
+        s->guiSet(pw::PID_TRIM, (double)(rng() % 200) / 100.0);
+        s->guiSet(pw::PID_OS, (double)(round % 2));
+        s->guiSet(pw::PID_PAN_WIDTH, (double)(rng() % 128));
+        // a full drag gesture on CUTOFF: BEGIN, motion, END
+        s->guiSetLocal(17, (double)(rng() % 128));
+        s->guiSetLocal(17, (double)(rng() % 128));
+        s->guiSync(17);
         double v = 0;
         prm->get_value(pl, rng() % 58, &v);
+        prm->get_value(pl, rng() % 58, &v);
+        s->adoptPendingIdentity();
+        s->maybePingLatency();
+        if (round % 200 == 199) std::this_thread::sleep_for(std::chrono::milliseconds(2));
         if (round % 20 == 0 && stt)
         {   std::vector<char> blob;
             auto wr = [](const clap_ostream_t *o, const void *b, uint64_t n) -> int64_t
@@ -122,18 +160,21 @@ int main()
             if (stt->save(pl, &os))
             {   std::vector<char> copy = blob;
                 const clap_istream_t is = { &copy, rd };
-                stt->load(pl, &is);
-            }
+                stt->load(pl, &is); }
         }
-        iters++;
+        iters++ ;
     }
     stopFlag.store(true);
     audio.join();
     pl->stop_processing(pl);
     pl->deactivate(pl);
-    pl->destroy(pl);
     const unsigned blk = blocks.load();
-    std::printf("threadsan stress: %u flush rounds, %u audio blocks, %u out events, %u host flush requests\n",
-                iters, blk, outPushes.load(), hostFlushes.load());
+    std::printf("threadsan: %u main rounds, %u audio blocks, %u audio-thread flushes, "
+                "%u resets, %u out events, %u host flush requests, %u rescan pings\n",
+                iters, blk, flushesOnAudio.load(), resetsOnAudio.load(),
+                outPushes.load(), hostFlushes.load(), rescans.load());
+    if (flushesOnAudio == 0 || resetsOnAudio == 0)
+    {   std::fprintf(stderr, "threadsan: host pattern never exercised\n"); return 1; }
+    pl->destroy(pl);
     return blk > 0 ? 0 : 1;
 }
