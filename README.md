@@ -1,6 +1,6 @@
 # Muhammad
 
-**Version: 0.2.2**
+**Version: 0.2.3**
 
 ![Muhammad booting its recorded default patch, "Peace Be Upon Him"](docs/muhammad-panel.png)
 
@@ -13,7 +13,7 @@ through [SIMDe](https://github.com/simd-everywhere/simde) — the same portable
 vectorization layer Surge uses — so one source emits AVX2 on x86, NEON on ARM,
 and SSE2 as the fallback.
 
-## New in 0.2.2 (tester notes)
+## What's new (tester notes)
 
 - **Note-on clicks**: the occasional tick when hitting the same note again
   should be gone — this is still an *attempt*; please hammer repeated notes
@@ -31,6 +31,10 @@ and SSE2 as the fallback.
 - The VST3/AUv2 wrappers and the standalone now have the whole instrument
   **built in** — install them like any plugin; no separate `muhammad.clap`
   download, no `~/.clap` folder, nothing to version-match by hand.
+- Patches you save show up in the panel's USER browser tab and in host
+  preset browsers. Two separate addressing bugs hid them (an XDG-variable
+  edge case in the store path; a wrong discovery flag for hosts). No saved
+  file was ever harmed or moved — they were invisible, not lost.
 - Under the hood: the engine now has a strict single-writer threading model,
   verified under ThreadSanitizer — no knob drag, program change or session
   load can ever corrupt a sound mid-block (and no RISC portability hazard).
@@ -158,7 +162,7 @@ its A/B build standalone.
   a knob stops or a param lands, because a host may next call with a LONGER
   chunk than the dirty call wrote — the second click class, now pinned by
   `test_splitinv`.
-* **Single-writer engine** (0.2.2). While active, the audio thread is
+* **Single-writer engine**. While active, the audio thread is
   the engine's only writer. Main-thread mutations (panel drags, flushed host
   params, preset/state loads, program changes) compute final values against a
   main-side `View` and post them to an SPSC command ring drained at the top of
