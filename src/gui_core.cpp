@@ -23,6 +23,7 @@
 #endif
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 
 #include "muhammad_plugin.hpp"
 #include "p5_common.hpp"
@@ -258,9 +259,15 @@ void fillState(GuiCore &c, p5ui::State &st)
         // actually scanned. (Click-safe: the load path bounds-checks against
         // userRows, and a tap on this row resolves to nothing.)
         if (c.pickerTab == 1 && c.userRows.empty() && c.pickerPage == 0)
-        {   std::snprintf(st.pickerRows[0], 44, "empty: %s",
-                          p5store::baseDir().c_str());
-            st.pickerCount = 1;
+        {   const std::string d = p5store::baseDir();
+            std::error_code ec;
+            int n = 0;
+            for (const auto &e : std::filesystem::directory_iterator(d, ec))
+                { (void)e; n++; }
+            std::snprintf(st.pickerRows[0], 44, "empty: %s", d.c_str());
+            if (ec) std::snprintf(st.pickerRows[1], 44, "scan: %s", ec.message().c_str());
+            else    std::snprintf(st.pickerRows[1], 44, "scan: %d entries, 0 matched", n);
+            st.pickerCount = 2;
         }
     }
     else if (c.modal == 1 || c.modal == 2 || c.modal == 3 ||
