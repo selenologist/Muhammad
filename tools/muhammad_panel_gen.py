@@ -325,7 +325,7 @@ svg = f'''<?xml version="1.0" encoding="UTF-8"?>
      in Inkscape, then: python3 tools/svg_diff.py muhammad_panel.svg my_edits.svg -->
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
      viewBox="0 0 {PW} {PH}" width="{PW}" height="{PH}">
-  <title>Muhammed panel layout — generated; edit a COPY, never in place</title>
+  <title>Muhammad panel layout — generated; edit a COPY, never in place</title>
   <style>
     text {{ font-family: Helvetica, Arial, sans-serif; fill: #f0f0f0; text-anchor: middle; }}
     .hdr   {{ font-size: {TXT["hdr"]}px; font-weight: 600; letter-spacing: {TRK["hdr"]}px; }}
