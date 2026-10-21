@@ -435,14 +435,14 @@ static void p5_scrollWheel(id self, SEL _cmd, NSEvent *e)
     const double dy = e.deltaY;
     const double ady = dy < 0.0 ? -dy : dy;
     if (ady < 0.5) return;                            // rounds to zero: ignore
-    // momentumPhase is a FLAG SET (Began/Changed/Ended/Cancelled): a direct
-    // wheel or trackpad notch carries NONE of them (== 0); any nonzero value
-    // is the inertia stream - drop it outright. (Two prior revisions invented
-    // 'Inactive' and 'Stationary' enumerators that do not exist in the
-    // NSEventMomentumPhase enum; the mac CI leg caught both, 2026-10-21. The
-    // SDK's 'did you mean NSEventPhaseStationary' suggestion is a trap too:
-    // that is the *scrollingPhase* enum, value 2 = momentumChanged.)
-    if (e.hasPreciseScrollingDeltas && e.momentumPhase != (NSEventMomentumPhase)0)
+    // momentumPhase is a FLAG SET: a direct wheel/trackpad notch carries NO
+    // flags (== 0); any nonzero value is the inertia stream - drop it.
+    // Name-free comparison is deliberate: this SDK declares neither the
+    // 'NSEventMomentumPhase' TYPE nor any '...Stationary/Inactive' enumerator
+    // (the typed enum appeared in newer SDKs only); three invented spellings
+    // died on the mac leg today, the integer 0 compiles against every one of
+    // them, and its meaning is identical: none of the flags set.
+    if (e.hasPreciseScrollingDeltas && e.momentumPhase != 0)
         return;                                       // flick tail
     float px, py; eventPx((NSView *)self, e, px, py);
     bool dirty = false;

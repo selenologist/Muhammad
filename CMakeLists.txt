@@ -185,6 +185,15 @@ endif()
 # scope, so set it for the repo build here). Harmless elsewhere.
 if(APPLE)
     add_compile_definitions(GL_SILENCE_DEPRECATION)
+    # GL_SILENCE_DEPRECATION covers <OpenGL/*.h>, NOT AppKit's NSOpenGL*/
+    # NSView legacy surface declarations (proven by the 2026-10-21 mac leg:
+    # the warning wall survived it). The cocoa shim deliberately uses the
+    # legacy NSOpenGLContext path until a Metal rewrite - silence THAT file's
+    # deprecation noise specifically, nowhere else, so real diagnostics stay.
+    if(GUI_PLUGIN_SOURCES)
+        set_source_files_properties(src/gui_mac.mm PROPERTIES
+            COMPILE_OPTIONS "$<$<CXX_COMPILER_ID:AppleClang,Clang>:-Wno-deprecated-declarations>")
+    endif()
 endif()
 
 # ---- the CLAP plugin ----------------------------------------------------------
