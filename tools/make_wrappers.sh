@@ -24,13 +24,22 @@ rm -rf "$DIST"; mkdir -p "$DIST"   # never trust leftovers: a stale (or
 say() { echo "[wrappers] $*"; }
 
 # ---- fetch the wrapper + Steinberg SDK (pinned tag, shallow) --------------
-# clap-wrapper PINNED (review B8: HEAD + CPM floating rtaudio/rtmidi made
-# release builds irreproducible). v0.9.1 = newest tag as of 2026-10-20.
-# Layout guard: a stale HEAD/other-tag cache self-heals like AudioUnitSDK's.
-if [ ! -d "$WORK/clap-wrapper" ] || [ ! -f "$WORK/clap-wrapper/.pinned-v0.9.1" ]; then
+# clap-wrapper PINNED by SHA (review B8: HEAD floats). The TAG pin attempt
+# (v0.9.1, newest tag) broke every wrapper leg on CI: CLAP-first mode -
+# cmake/make_clapfirst.cmake, the whole design of tools/wrapper - postdates
+# every published clap-wrapper tag; upstream only tags releases that its own
+# versioned workflow cuts, and this integration lives ahead of that. So:
+# pin the master commit we build against, fetched by SHA (GitHub allows it),
+# and bump deliberately. Layout guard: a stale other-pin cache self-heals.
+WRAP_SHA=806bba0a5f792e3966b99c1561ab9952d3316d7c
+if [ ! -d "$WORK/clap-wrapper" ] || [ ! -f "$WORK/clap-wrapper/.pinned-$WRAP_SHA" ]; then
     rm -rf "$WORK/clap-wrapper"
-    git clone -q --depth 1 --branch v0.9.1 https://github.com/free-audio/clap-wrapper "$WORK/clap-wrapper"
-    touch "$WORK/clap-wrapper/.pinned-v0.9.1"
+    git clone -q https://github.com/free-audio/clap-wrapper "$WORK/clap-wrapper"
+    ( cd "$WORK/clap-wrapper" && git checkout -q "$WRAP_SHA" ) || {
+        echo '[wrappers] pinned commit absent from clone; fetching by SHA'
+        ( cd "$WORK/clap-wrapper" && git fetch -q origin "$WRAP_SHA" \
+          && git checkout -q FETCH_HEAD ) ; }
+    touch "$WORK/clap-wrapper/.pinned-$WRAP_SHA"
 fi
 if [ ! -d "$WORK/vst3sdk" ]; then
     git clone -q --depth 1 https://github.com/steinbergmedia/vst3sdk "$WORK/vst3sdk"

@@ -435,7 +435,13 @@ static void p5_scrollWheel(id self, SEL _cmd, NSEvent *e)
     const double dy = e.deltaY;
     const double ady = dy < 0.0 ? -dy : dy;
     if (ady < 0.5) return;                            // rounds to zero: ignore
-    if (e.hasPreciseScrollingDeltas && e.momentumPhase != NSEventMomentumPhaseInactive)
+    // NSEventMomentumPhaseStationary is the only momentum value a DIRECT
+    // wheel/trackpad notch carries; anything else (Began/Changed/Ended/
+    // Cancelled) is the inertia stream - drop it outright. (An earlier
+    // revision tested a non-existent "Inactive" constant and the mac CI leg
+    // caught it: 2026-10-21.)
+    if (e.hasPreciseScrollingDeltas &&
+        e.momentumPhase != NSEventMomentumPhaseStationary)
         return;                                       // flick tail
     float px, py; eventPx((NSView *)self, e, px, py);
     bool dirty = false;

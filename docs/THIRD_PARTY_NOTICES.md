@@ -87,8 +87,7 @@ also ship in the tree.
 - **clap-wrapper** — https://github.com/free-audio/clap-wrapper , © 2022
   defiantnerd (MIT LICENSE of the pinned tag), maintained under the
   free-audio org. **MIT**. Not vendored; consumed at build time by
-  `tools/make_wrappers.sh`, pinned to tag **v0.9.1** (reproducible nightlies,
-  review B8). The produced `muhammad.vst3` is a CLAP-FIRST embedded wrapper —
+  `tools/make_wrappers.sh`, pinned to master commit `806bba0` **by SHA** (reproducible nightlies, review B8; NOT by tag - CLAP-first mode postdates every published tag, and the tag pin broke CI on 2026-10-21). The produced `muhammad.vst3` is a CLAP-FIRST embedded wrapper —
   it carries the engine statically and needs NO separate `muhammad.clap`
   install; treat the wrapper's MIT notice as an attribution for any
   distributed VST3 binary, alongside the Steinberg SDK notice below.
