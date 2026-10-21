@@ -43,12 +43,8 @@ jobs:
 
   linux:
     needs: version
-    # ubuntu-22.04: glibc 2.35. The 24.04 runner links __isoc23_* (glibc 2.38+)
-    # and GCC-13 libstdc++ symbols, and the .clap then REFUSES to load on
-    # Ubuntu 22.04 / Debian 12 / RHEL 9 boxes (review B2). The job below also
-    # prints the highest GLIBC_* version the binary demands, so this ceiling
-    # can never regress silently.
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04   # owner's baseline; NO older-glibc support matrix.
+    # The glibc-ceiling step below just REPORTS what the binary demands.
     steps:
       - uses: actions/checkout@v4
       - run: |
@@ -56,15 +52,11 @@ jobs:
           # libasound2-dev + libjack-jackd2-dev: ONLY needed by the
           # standalone wrapper (rtaudio hard-requests ALSA/JACK dev on Linux);
           # the plugin itself never touches audio APIs.
-          # mesa-libgallium exists only from Ubuntu 23.10+ (pre-22.04 the
-          # Gallium runtime ships inside libgl1-mesa-dri) - and this job is
-          # pinned to 22.04 for the glibc ceiling. Install the superset, retry
-          # without the newer-distro-only name, so the list survives on both.
-          pkgs='libx11-dev libgl1-mesa-dev libegl1-mesa-dev libglx-dev
-                libegl1 libgl1 libglx-mesa0 libgl1-mesa-dri
-                libasound2-dev libjack-jackd2-dev imagemagick x11-utils'
-          sudo apt-get install -y --no-install-recommends $pkgs mesa-libgallium \
-            || sudo apt-get install -y --no-install-recommends $pkgs
+          sudo apt-get install -y --no-install-recommends \
+            libx11-dev libgl1-mesa-dev libegl1-mesa-dev libglx-dev \
+            libegl1 libgl1 libglx-mesa0 mesa-libgallium libgl1-mesa-dri \
+            libasound2-dev libjack-jackd2-dev \
+            imagemagick x11-utils
       - run: cmake -B build -DCMAKE_BUILD_TYPE=Release
       - run: cmake --build build -j"$(nproc)"
       - name: "tests (ctest registry - a new test runs without YAML edits, B10)"
@@ -76,9 +68,8 @@ jobs:
           LD_PRELOAD="$PWD/allocwatch.so" P5_STORE_DIR=/tmp/muh-ci \
             ./clap_smoke ./muhammad.clap | tee /tmp/alloc.log
           grep -q 'audio-thread allocs.*: 0' /tmp/alloc.log
-      - name: glibc ceiling of the shipped .clap
-        run: |
-          objdump -T build/muhammad.clap | grep -o 'GLIBC_[0-9.]*' | sort -V | tail -1
+      - name: glibc ceiling of the shipped .clap (informational - not a support contract)
+        run: objdump -T build/muhammad.clap | grep -o 'GLIBC_[0-9.]*' | sort -V | tail -1
       - name: golden images
         # surfaceless EGL needs the Mesa RUNTIME driver (llvmpipe), not just
         # -dev headers: --no-install-recommends silently drops it otherwise.
@@ -99,7 +90,7 @@ jobs:
 
   tsan:
     needs: version
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - run: cmake -B build -DMUHAMMAD_TSAN=ON -DMUHAMMAD_GUI=OFF -DCMAKE_BUILD_TYPE=Debug
@@ -113,7 +104,7 @@ jobs:
 
   asan-ubsan:
     needs: version
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libx11-dev libgl1-mesa-dev libegl1-mesa-dev libglx-dev
