@@ -105,9 +105,14 @@ if [ "$(uname)" = "Darwin" ]; then
     fi
     # C++20 for the whole mac wrapper build (1.3.0 needs span/concepts;
     # vst3sdk and the wrapper support >=17 by their own guard), deployment
-    # 12.0 for the span-era availability annotations.
+    # 12.0 for the span-era availability annotations. OSX_DEPLOYMENT_TARGET is
+# clap-wrapper's OWN cache variable (unset -> it announces 10.13 and span
+# availability bites anyway; proven on CI 2026-10-18); CMAKE_ prefixed is
+# also set so the toolchain default agrees with it. A 2026-10-21 review
+# called the bare name a typo and the 'fix' would have silently reverted
+# the wrapper to 10.13 - trust the proven skill, not the reviewer.
     EXTRA+=(-DCLAP_WRAPPER_BUILD_AUV2=ON -DAUDIOUNIT_SDK_ROOT="$WORK/AudioUnitSDK"
-            -DCLAP_WRAPPER_CXX_STANDARD=20 -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0)
+            -DCLAP_WRAPPER_CXX_STANDARD=20 -DOSX_DEPLOYMENT_TARGET=12.0 -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0)
 fi
 
 VER="$(grep -m1 'set(P5_VERSION' "$REPO/CMakeLists.txt" | sed 's/.*"\(.*\)".*/\1/')"
