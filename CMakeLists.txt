@@ -180,6 +180,13 @@ add_executable(render_golden tests/render_golden.cpp)
 endif()
     endif()
 
+# macOS: NSOpenGL/AppKit deprecation notes scroll ~5 per build and drown real
+# diagnostics in the runner log (and the wrapper tree gets them via its own
+# scope, so set it for the repo build here). Harmless elsewhere.
+if(APPLE)
+    add_compile_definitions(GL_SILENCE_DEPRECATION)
+endif()
+
 # ---- the CLAP plugin ----------------------------------------------------------
 add_library(muhammad_clap MODULE
     src/clap_entry.cpp
@@ -299,6 +306,9 @@ if(MUHAMMAD_GUI AND NOT WIN32)   # links the X11-era GL panel lib
 add_executable(test_tune tests/test_tune.cpp src/p5_store.cpp)
 target_include_directories(test_tune PRIVATE src external ${NANOVG_DIR}/src ${NANOVG_DIR})
 target_link_libraries(test_tune PRIVATE p5_gui nanovg)
+add_test(NAME tune COMMAND test_tune)   # registration lives WITH the target's
+set_tests_properties(tune PROPERTIES    # guard - an unconditional add_test
+    ENVIRONMENT "P5_STORE_DIR=${CMAKE_BINARY_DIR}/ctest-store")   # poisons every GUI=OFF ctest
 endif()
 
 add_executable(test_mpe tests/test_mpe.cpp ${ENGINE_SOURCES} src/p5_store.cpp)
@@ -332,11 +342,12 @@ add_test(NAME mpe COMMAND test_mpe)
 add_test(NAME trimdrift COMMAND test_trimdrift)
 add_test(NAME quantnoise COMMAND test_quantnoise)
 add_test(NAME store COMMAND test_store)
-add_test(NAME tune COMMAND test_tune)
 set_tests_properties(store PROPERTIES ENVIRONMENT "P5_STORE_DIR=${CMAKE_BINARY_DIR}/ctest-store")
-set_tests_properties(tune PROPERTIES ENVIRONMENT "P5_STORE_DIR=${CMAKE_BINARY_DIR}/ctest-store")
 set_tests_properties(mpe PROPERTIES ENVIRONMENT "P5_STORE_DIR=${CMAKE_BINARY_DIR}/ctest-store")
-if(NOT WIN32)
+if(NOT WIN32 AND MUHAMMAD_GUI)
+# clap_smoke asserts the SHIPPED shape (GUI extension offered, X11/cocoa
+# api strings); a MUHAMMAD_GUI=OFF build legitimately declines them, so
+# register the smoke test only where it is the product.
 add_test(NAME smoke COMMAND clap_smoke $<TARGET_FILE:muhammad_clap>)
 set_tests_properties(smoke PROPERTIES
     ENVIRONMENT "P5_STORE_DIR=${CMAKE_BINARY_DIR}/ctest-store"
