@@ -201,7 +201,10 @@ if(APPLE)
 endif()
 
 # ---- the CLAP plugin ----------------------------------------------------------
-configure_file(${CMAKE_SOURCE_DIR}/factory/muhammad-factory.p5fac
+# beside EVERY build output — CMAKE_CURRENT_SOURCE_DIR, NOT CMAKE_SOURCE_DIR:
+# the wrapper project adds THIS repo as a subproject where CMAKE_SOURCE_DIR
+# points at tools/wrapper (broke all three platform wrapper jobs at once).
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/factory/muhammad-factory.p5fac
                ${CMAKE_BINARY_DIR}/muhammad-factory.p5fac COPYONLY)
 
 add_library(muhammad_clap MODULE
