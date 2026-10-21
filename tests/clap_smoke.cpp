@@ -138,8 +138,17 @@ int main(int argc, char **argv)
                 { "GLIDE", "0" }, { "RELEASE ON", "1" }, { "MASTER TUNE", "0" },
                 { "EDIT TUNE A", "0" }, { "DRIFT", "0" }, { "VINTAGE", "0" },
                 { "PAN WIDTH", "0" }, { "FEEDBACK", "0" } };
+            // reserve() FIRST: push_back beyond capacity MOVES the buffer and
+            // every ph entry collected so far becomes a dangling pointer -
+            // glibc's in-place realloc hid this on Linux, macOS libmalloc
+            // moved it and the prep silently became garbage there. This was
+            // the mac-vs-linux gate divergence: the law was never broken on
+            // arm64; the TEST had UB. (band 148 + rms 0.39 vs 0.16 = the
+            // UNISON seed surviving un-applied, beating voices.)
             std::vector<clap_event_param_value> prep;
+            prep.reserve(64);
             std::vector<const clap_event_header_t *> ph;
+            ph.reserve(64);
             for (auto &kv : kPrep)
             {   const clap_id cid = idByName(kv[0]); if (cid == (clap_id)-1) continue;
                 prep.push_back({});
