@@ -2,6 +2,7 @@
 // CLAP plugin wrapper for the Muhammad engine (see muhammad_plugin.hpp).
 #include "muhammad_plugin.hpp"
 #include "p5_store.hpp"
+#include "p5_factory.hpp"
 #include "p5_default.hpp"   // embedded boot patch (tools/gen_default_hdr.py)
 
 #include <cstdio>
@@ -565,9 +566,9 @@ static double paramValue(Plugin *s, clap_id id); // fwd (readback of model_)
 static p5::Patch factoryPatch(int k)          // mirror of Engine::loadFactory
 {
     p5::Patch p;
-    if (k < 0 || k >= (int)PW_FACTORY_N) { p5::patchInit(p); return p; }
+    if (k < 0 || k >= p5fac::count()) { p5::patchInit(p); return p; }   // strip-graceful
     std::memset(&p, 0, sizeof p);
-    std::memcpy(p.raw, PW_FACTORY_RAW[k], p5::WIRE_SIZE);
+    std::memcpy(p.raw, p5fac::raw(k), p5::WIRE_SIZE);
     p.raw[p5::P5_FEEDBACK] = 0;
     p.size = p5::RAW_MAX; p.model = 0x32; p.command = 2;
     p.group = (uint8_t)(k / 40u); p.program = (uint8_t)(k % 40u);
@@ -843,7 +844,7 @@ void Plugin::guiSync(clap_id id)
 void Plugin::loadProgram(int k)
 {
     loadTag_ = "fac";
-    if (k < 0 || k >= (int)PW_FACTORY_N) return;
+    if (k < 0 || k >= p5fac::count()) return;   // stripped build: factory programs do not exist
     postLoad(factoryPatch(k));              // audio owner applies at next block
     markSource(0, k, std::string());
     curSrc_.kind = p5store::SourceKind::Factory; curSrc_.factory = k; curSrc_.file.clear();
@@ -944,13 +945,14 @@ void Plugin::rebuildSlotCache()
         if (s.kind == p5store::SourceKind::File)
         {
             if (p5store::loadPatch(s.file, raw[i])) { codeB[i] = -3; }
-            else { std::memcpy(raw[i], PW_FACTORY_RAW[i], 133); raw[i][133] = 0;
-                   codeB[i] = (int16_t)i; }
+            else if (i < p5fac::count())
+            { std::memcpy(raw[i], p5fac::raw(i), 133); raw[i][133] = 0; codeB[i] = (int16_t)i; }
+            else { p5::Patch q; p5::patchInit(q); std::memcpy(raw[i], q.raw, 133); codeB[i] = -1; }
             continue;
         }
         code = s.factory;
-        if (code >= 0 && code < (int)PW_FACTORY_N)
-        {   std::memcpy(raw[i], PW_FACTORY_RAW[code], 133); raw[i][133] = 0; }
+        if (code >= 0 && code < p5fac::count())
+        {   std::memcpy(raw[i], p5fac::raw(code), 133); raw[i][133] = 0; }
         else { p5::Patch p; p5::patchInit(p); if (code != -1) p5::patchDefaultName(p);
                std::memcpy(raw[i], p.raw, 133); }
         codeB[i] = (int16_t)code;
@@ -1888,7 +1890,8 @@ static bool state_load_impl(const clap_plugin_t *p, const clap_istream_t *in)
     else s->tuneToneCount_ = 0;
     if (head[1] >= 9u) { s->tuneRoot_ = tmeta[0]; s->tuneMask_ = (uint16_t)tmeta[1]; s->tuneWalk_ = tmeta[2]; }
     s->markSource(0, s->program, s->srcFile_);   // restored session floats as saved
-    if (s->program >= 0 && !std::memcmp(patch.raw, PW_FACTORY_RAW[s->program], 133)
+    if (s->program >= 0 && s->program < p5fac::count()
+        && !std::memcmp(patch.raw, p5fac::raw(s->program), 133)
         && patch.raw[133] == 0)   // factory identity only while the extension byte is 0
     { s->curSrc_.kind = p5store::SourceKind::Factory; s->curSrc_.factory = s->program; }
     else if (!s->srcFile_.empty())

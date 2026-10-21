@@ -7,6 +7,9 @@ VER=$(sed -n 's/set(P5_VERSION "\(.*\)")/\1/p' "$(dirname "$0")/../CMakeLists.tx
 rm -rf "$DST"
 mkdir -p "$DST/Contents/MacOS"
 cp "$SRC" "$DST/Contents/MacOS/muhammad"
+# factory sidecar into Contents/Resources (loader: moduleDir/../Resources candidate)
+FAC="$(dirname "$SRC")/muhammad-factory.p5fac"
+if [ -f "$FAC" ]; then mkdir -p "$DST/Contents/Resources"; cp "$FAC" "$DST/Contents/Resources/muhammad-factory.p5fac"; fi
 cat > "$DST/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

@@ -6,13 +6,14 @@
 #include "muhammad_discovery.h"
 #include "p5_engine.hpp"
 #include "p5_store.hpp"
+#include "p5_factory.hpp"
 #include <string>
 #include <vector>
 
 namespace {
 
 constexpr const char *kProviderId = "muhammad.unresolvable.factory";
-constexpr uint32_t kPresetCount = 1 + PW_FACTORY_N;    // INIT + 200 programs
+static uint32_t presetCount() { return 1u + (uint32_t)p5fac::count(); }   // INIT + (0|200) factory
 
 struct Provider {
     const clap_preset_discovery_indexer_t *indexer = nullptr;
@@ -78,7 +79,7 @@ bool provider_get_metadata_impl(uint32_t location_kind, const char *location,
         }
         return true;
     }
-    for (uint32_t i = 0; i < kPresetCount; i++) {
+    for (uint32_t i = 0; i < presetCount(); i++) {
         char name[33];
         p5::Engine::patchNameAt(i, name);
         char key[8];

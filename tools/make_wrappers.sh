@@ -191,6 +191,12 @@ esac
 case " $FOUND " in *"$pat"*) :;;
     *) echo "[wrappers] ERROR: no standalone host collected (wanted$pat)"; ls -R "$ASSETS" | head -40; exit 1;;
 esac
+# The factory sidecar rides along: wrapper bundles embed the clap binary, so
+# dladdr lands inside the wrapper - users drop this beside their .clap install
+# or in ~/Documents/Muhammad Synth (both are loader candidates) to get the
+# bank; deleting/not-installing it leaves a wholly GPL artifact.
+cp "$REPO/factory/muhammad-factory.p5fac" "$DIST/muhammad-factory.p5fac" 2>/dev/null || true
+
 # Keep dist/wrappers LOOSE: actions/upload-artifact always wraps artifacts in
 # one zip of its own - a self-made zip inside produced a zip-of-a-zip (user-
 # observed). The release job stages explicit per-platform zips instead.

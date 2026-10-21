@@ -10,6 +10,7 @@
 #include <cstring>
 #include "p5_common.hpp"
 #include "p5_tables.h"
+#include "p5_factory.hpp"
 #include "p5_math.hpp"
 #include "p5_halfband.hpp"
 #include "p5_halfband.hpp"
@@ -77,9 +78,11 @@ public:
     void patchName(char *name) const { p5::patchName(name, patch_); }
     static void patchNameAt(uint32_t factoryIndex, char *name) {   // index 0 = INIT
         if (factoryIndex == 0) { std::snprintf(name, P5_NAME_LEN + 1, "Peace Be Upon Him"); return; }
+        if (!p5fac::loaded() || (int)(factoryIndex - 1) >= p5fac::count())
+        { std::snprintf(name, P5_NAME_LEN + 1, "(factory bank absent)"); return; }
         Patch p;
         std::memset(&p, 0, sizeof p);
-        std::memcpy(p.raw, PW_FACTORY_RAW[factoryIndex - 1], WIRE_SIZE);
+        std::memcpy(p.raw, p5fac::raw(factoryIndex - 1), WIRE_SIZE);
         p.raw[P5_FEEDBACK] = 0;   // factory wire data predates our extension
         p5::patchName(name, p);
     }

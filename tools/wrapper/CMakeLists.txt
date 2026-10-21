@@ -87,6 +87,7 @@ set(MUH_IMPL_SRCS
     ${MUH_REPO}/src/muhammad_plugin.cpp
     ${MUH_REPO}/src/muhammad_discovery.cpp
     ${MUH_REPO}/src/p5_store.cpp
+    ${MUH_REPO}/src/p5_factory.cpp
     ${MUH_REPO}/src/p5_engine.cpp
     ${MUH_REPO}/src/p5_kernel_scalar.cpp
     ${MUH_REPO}/src/p5_kernel_simd.cpp

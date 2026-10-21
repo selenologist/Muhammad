@@ -78,7 +78,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: muhammad-${{ needs.version.outputs.ver }}-linux-x64.clap
-          path: build/muhammad.clap
+          path: |
+            build/muhammad.clap
+            build/muhammad-factory.p5fac
       - name: wrappers (VST3 + standalone)
         run: bash tools/make_wrappers.sh
       - name: tar the wrappers (execute bits survive; upload-artifact flattens modes)
@@ -139,7 +141,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: muhammad-${{ needs.version.outputs.ver }}-win-x64.clap
-          path: build-win/muhammad.clap
+          path: |
+            build-win/muhammad.clap
+            build-win/muhammad-factory.p5fac
 
   windows-wrappers:
     needs: version

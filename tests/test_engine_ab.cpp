@@ -250,6 +250,11 @@ int main(int argc, char **argv)
 
     printf("%s\n", failures ? "A/B: DIFFERENCES FOUND" : "A/B: bit-exact");
     // ---- FULL factory sweep: all 200 programs, scalar vs wide, bit-exact --
+    // the bank is the strippable sidecar now: a sweep that silently sees zero
+    // programs would "pass" against nothing - load it, or fail loudly.
+    if (!p5fac::load() || p5fac::count() != 200)
+    {   std::fprintf(stderr, "factory sidecar missing (P5_FACTORY/module dir) - sweep cannot certify\n");
+        return 1; }
     // The old gate certified only INIT + program 0 while 61 programs route
     // the (at-rest) wheel/poly-mod path - exactly where the scalar kernel's
     // shortcut (`if (!x) return base`) diverges the wide kernel's float

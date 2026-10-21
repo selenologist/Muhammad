@@ -5,6 +5,7 @@
 #include <cstring>
 #include "muhammad_plugin.hpp"
 #include "muhammad_discovery.h"
+#include "p5_factory.hpp"
 
 namespace {
 
@@ -29,7 +30,11 @@ const clap_plugin_factory_t gFactory = {
     factory_create_plugin,
 };
 
-bool entry_init(const char *) { return true; }
+bool entry_init(const char *)
+{   // GPL-purity design: Sequential's factory bank is a STRIPPABLE sidecar, not
+    // compiled bytes. Resolve it once here (main thread, before any consumer).
+    p5fac::load();
+    return true; }
 void entry_deinit(void) {}
 
 const void *entry_get_factory(const char *factory_id)

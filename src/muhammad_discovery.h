@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// Preset discovery for the built-in Prophet-5 factory bank: INIT + Sequential's
-// 200 v1.03 programs, embedded in the plugin (PW_FACTORY_RAW), following the
-// vasynth CLAP provider pattern.
+// Preset discovery for the Prophet-5 bank: INIT (ours) + Sequential's 200
+// v1.03 programs - which are NOT embedded: they live in the strippable
+// sidecar (p5_factory) and the factory rows vanish when it is deleted.
+// Follows the vasynth CLAP provider pattern.
 #pragma once
 #include <clap/clap.h>
 #ifdef __cplusplus

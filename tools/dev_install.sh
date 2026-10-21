@@ -10,4 +10,7 @@ cd "$(dirname "$0")/.."
 cmake --build build -j8 --target muhammad_clap
 strings build/muhammad.clap | grep -m1 -oE "1\.[0-9]+\.[0-9]+-[a-z0-9]+" || true
 cp build/muhammad.clap "$HOME/.clap/muhammad.clap"
+# the factory bank is a sidecar (GPL-purity): install it beside the .clap so
+# the module-dir candidate finds it; deleting it leaves a fully GPL artifact
+cp build/muhammad-factory.p5fac "$HOME/.clap/muhammad-factory.p5fac" 2>/dev/null || true
 echo "dev-installed: a live Bitwig plugin host will fault + reload onto this build"

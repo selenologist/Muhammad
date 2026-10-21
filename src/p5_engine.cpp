@@ -272,9 +272,10 @@ void Engine::setPatch(const Patch &p)
 void Engine::loadFactory(uint32_t k)
 {
     Patch p;
-    if (k >= PW_FACTORY_N) { patchInit(p); setPatch(p); return; }
+    // sidecar absent (GPL-purity strip) or out of range: boot default, never garbage
+    if (!p5fac::loaded() || k >= (uint32_t)p5fac::count()) { patchInit(p); setPatch(p); return; }
     std::memset(&p, 0, sizeof p);
-    std::memcpy(p.raw, PW_FACTORY_RAW[k], WIRE_SIZE);
+    std::memcpy(p.raw, p5fac::raw(k), WIRE_SIZE);
     p.raw[P5_FEEDBACK] = 0;
     p.size = RAW_MAX; p.model = 0x32; p.command = 2;
     p.group = (uint8_t)(k / 40u); p.program = (uint8_t)(k % 40u);

@@ -65,6 +65,7 @@ set(ENGINE_SOURCES
     src/p5_engine.cpp
     src/p5_kernel_scalar.cpp
     src/p5_kernel_simd.cpp
+    src/p5_factory.cpp
 )
 
 # The engine's math contract (-O3 + no FMA contraction) rides the TARGET,
@@ -74,6 +75,9 @@ set(ENGINE_SOURCES
 # linking p5_engine inherits it.
 add_library(p5_engine STATIC ${ENGINE_SOURCES})
 target_include_directories(p5_engine PUBLIC src external)
+if(CMAKE_DL_LIBS)
+    target_link_libraries(p5_engine PUBLIC ${CMAKE_DL_LIBS})   # dladdr for the factory sidecar
+endif()
 target_compile_options(p5_engine PUBLIC
     $<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-O3;-ffp-contract=off>)
 if(MATH_LIBRARY)
@@ -197,6 +201,9 @@ if(APPLE)
 endif()
 
 # ---- the CLAP plugin ----------------------------------------------------------
+configure_file(${CMAKE_SOURCE_DIR}/factory/muhammad-factory.p5fac
+               ${CMAKE_BINARY_DIR}/muhammad-factory.p5fac COPYONLY)
+
 add_library(muhammad_clap MODULE
     src/clap_entry.cpp
     src/muhammad_plugin.cpp
@@ -319,6 +326,14 @@ add_test(NAME tune COMMAND test_tune)   # registration lives WITH the target's
 set_tests_properties(tune PROPERTIES    # guard - an unconditional add_test
     ENVIRONMENT "P5_STORE_DIR=${CMAKE_BINARY_DIR}/ctest-store")   # poisons every GUI=OFF ctest
 endif()
+
+add_executable(test_factory tests/test_factory.cpp)
+target_link_libraries(test_factory PRIVATE p5_engine)
+target_include_directories(test_factory PRIVATE src external)
+if(MATH_LIBRARY)
+    target_link_libraries(test_factory PRIVATE ${MATH_LIBRARY})
+endif()
+add_test(NAME factory COMMAND test_factory)
 
 add_executable(test_mpe tests/test_mpe.cpp ${ENGINE_SOURCES} src/p5_store.cpp)
 target_link_libraries(test_mpe PRIVATE p5_engine)

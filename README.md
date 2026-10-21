@@ -66,9 +66,14 @@ on the panel knob flips the flag; the dial renders white. Semantics:
   (`eng_prophet_test.c`, `voice.c`, `dsp.c`, `prophet_patch.c`). The PROPHET
   engine is bespoke Melodee work; Melodee's license text is inherited verbatim
   in `LICENSE`. Author of the upstream engine work: **keremimo** (Melodee).
-- Factory patch data (`p5_tables.h`, 200 programs): **Sequential's** 2025 v1.03
-  Prophet-5 Rev-4 SysEx program files, carried as raw wire bytes unmodified —
-  they are *not* part of the engine's authorship claim.
+- Factory patch data: **Sequential's** 2025 v1.03 Prophet-5 Rev-4 SysEx program
+  files (200 patches), carried as raw wire bytes unmodified — they are *not*
+  part of the engine's authorship claim, and they are **not compiled into the
+  binary**: they live in `factory/muhammad-factory.p5fac`, loaded at runtime.
+  A distributor who wants an artifact that is wholly GPL deletes that ONE
+  file; the plugin then boots its own original INIT patch, the factory bank
+  lists empty, user patches and tunings keep working (`tests/test_factory.cpp`
+  certifies both modes). Ship it, or don't - that is the whole policy.
 - "Prophet-5" / "PROPHET" appear only as statements of fact about wire formats
   and the upstream engine. This plugin is **Muhammad**; it is not a Prophet
   product and is not affiliated with Sequential.

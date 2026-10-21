@@ -27,6 +27,7 @@
 
 #include "muhammad_plugin.hpp"
 #include "p5_common.hpp"
+#include "p5_factory.hpp"
 #include "p5_stock_scales.hpp"
 
 namespace pw {
@@ -232,7 +233,7 @@ void fillState(GuiCore &c, p5ui::State &st)
         std::snprintf(title, sizeof title, "row = load   ASSIGN then 1-8");
         st.pickerTitle = title;
         st.pickerTab = c.pickerTab; st.pickerPage = c.pickerPage;
-        const int total = c.pickerTab == 0 ? (int)PW_FACTORY_N + 2 : (int)c.userRows.size();
+        const int total = c.pickerTab == 0 ? p5fac::count() + 2 : (int)c.userRows.size();
         st.pickerPages = total ? (total + p5ui::pick::rows - 1) / p5ui::pick::rows : 1;
         if (c.pickerPage >= st.pickerPages) c.pickerPage = st.pickerPages - 1;   // ">" clamps (5.12)
         if (c.pickerPage < 0) c.pickerPage = 0;
@@ -314,9 +315,14 @@ void fillState(GuiCore &c, p5ui::State &st)
         else
         {
             static char prompt[96];
-            std::snprintf(prompt, sizeof prompt,
-                          "slot %d-%d  <-  patch name   (or FAC:n for factory 0..%d)",
-                          c.modalSlot / 8 + 1, c.modalSlot % 8 + 1, (int)PW_FACTORY_N - 1);
+            if (p5fac::count())
+                std::snprintf(prompt, sizeof prompt,
+                              "slot %d-%d  <-  patch name   (or FAC:n for factory 0..%d)",
+                              c.modalSlot / 8 + 1, c.modalSlot % 8 + 1, p5fac::count() - 1);
+            else
+                std::snprintf(prompt, sizeof prompt,
+                              "slot %d-%d  <-  patch name   (factory bank absent)",
+                              c.modalSlot / 8 + 1, c.modalSlot % 8 + 1);
             st.modalPrompt = prompt;
         }
         st.modalText = c.modalBuf;
@@ -331,7 +337,7 @@ void fillState(GuiCore &c, p5ui::State &st)
     int bound = -1;
     bool bound_ok = p5store::findSlotFor(c.plugin->curSrc_, bound);
     if (!bound_ok && c.plugin->curSrc_.kind == p5store::SourceKind::Factory &&
-        c.plugin->curSrc_.factory >= 0 && c.plugin->curSrc_.factory < (int)PW_FACTORY_N &&
+        c.plugin->curSrc_.factory >= 0 && c.plugin->curSrc_.factory < p5fac::count() &&
         !p5store::hasSlot(c.plugin->curSrc_.factory))
     { bound = c.plugin->curSrc_.factory; bound_ok = true; }   // still on its implicit default slot
     if (bound_ok)
@@ -422,7 +428,8 @@ void actuate(GuiCore &c, int btnIdx, unsigned mods)
     }
     if (b.pid == PID_BANK)
     {
-        const int banks = (int)PW_FACTORY_N / 8;
+        const int banks = p5fac::count() / 8;
+        if (!banks) return;                    // stripped: no factory banks to walk
         const bool down = (mods & (P5_MOD_SHIFT | P5_MOD_RIGHT)) != 0;   // shift-click / right-click
         const int step = down ? banks - 1 : 1;
         c.plugin->guiSet(PID_BANK, (double)((c.plugin->bank + step) % banks));
@@ -537,7 +544,7 @@ bool onPointerPress(GuiCore &c, float px, float py, unsigned mods, unsigned time
             const int g = c.pickerPage * p5ui::pick::rows + row;
             if (c.pickerTab == 0)
             {
-                if (g >= (int)PW_FACTORY_N + 2) return false;
+                if (g >= p5fac::count() + 2) return false;
                 s.kind = p5store::SourceKind::Factory;
                 s.factory = g == 0 ? -2 : g == 1 ? -1 : g - 2;
             }
@@ -793,7 +800,7 @@ bool onWheel(GuiCore &c, float px, float py, int dir)   // dir: -1 up, +1 down/n
     }
     if (c.modal == 4)                     // patch picker likewise
     {
-        const int total = c.pickerTab == 0 ? (int)PW_FACTORY_N + 2 : (int)c.userRows.size();
+        const int total = c.pickerTab == 0 ? p5fac::count() + 2 : (int)c.userRows.size();
         const int pages = total ? (total + p5ui::pick::rows - 1) / p5ui::pick::rows : 1;
         c.pickerPage += dir;
         if (c.pickerPage < 0) c.pickerPage = 0;
