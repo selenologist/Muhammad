@@ -56,11 +56,15 @@ jobs:
           # libasound2-dev + libjack-jackd2-dev: ONLY needed by the
           # standalone wrapper (rtaudio hard-requests ALSA/JACK dev on Linux);
           # the plugin itself never touches audio APIs.
-          sudo apt-get install -y --no-install-recommends \
-            libx11-dev libgl1-mesa-dev libegl1-mesa-dev libglx-dev \
-            libegl1 libgl1 libglx-mesa0 mesa-libgallium libgl1-mesa-dri \
-            libasound2-dev libjack-jackd2-dev \
-            imagemagick x11-utils
+          # mesa-libgallium exists only from Ubuntu 23.10+ (pre-22.04 the
+          # Gallium runtime ships inside libgl1-mesa-dri) - and this job is
+          # pinned to 22.04 for the glibc ceiling. Install the superset, retry
+          # without the newer-distro-only name, so the list survives on both.
+          pkgs='libx11-dev libgl1-mesa-dev libegl1-mesa-dev libglx-dev
+                libegl1 libgl1 libglx-mesa0 libgl1-mesa-dri
+                libasound2-dev libjack-jackd2-dev imagemagick x11-utils'
+          sudo apt-get install -y --no-install-recommends $pkgs mesa-libgallium \
+            || sudo apt-get install -y --no-install-recommends $pkgs
       - run: cmake -B build -DCMAKE_BUILD_TYPE=Release
       - run: cmake --build build -j"$(nproc)"
       - name: "tests (ctest registry - a new test runs without YAML edits, B10)"
