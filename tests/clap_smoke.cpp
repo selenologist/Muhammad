@@ -90,11 +90,23 @@ int main(int argc, char **argv)
                 pr.audio_outputs = &oab; pr.audio_outputs_count = 1;
                 pr.in_events = &in0; pr.out_events = &odummy;
                 oct->process(oct, &pr);
-                float *seg = oL + b * 512;
-                if (b >= 16)
-                    for (int i = 1; i < 512; i++)
-                        if ((seg[i-1] < 0) != (seg[i] < 0)) zc++; }
-            return (double)zc * 44100.0 / (48.0 * 512.0) / 2.0; };
+            }
+            // band-hysteresis crossing count (Schmitt trigger at +/-peak/8):
+            // a raw sign-change counter reads ANY sub-band ripple as pitch -
+            // the mac leg (no MXCSR FTZ to speak of on arm64: the x86 denormal
+            // flush is a compile-guarded #ifdef) produced 281.7/346.3 Hz from
+            // one deterministic render. Band crossings are the professional
+            // definition of zero-crossing frequency and ignore the floor.
+            double peak = 0;
+            const int w0 = 16 * 512, w1 = 64 * 512;
+            for (int i = w0; i < w1; i++) { double a = std::fabs(oL[i]); if (a > peak) peak = a; }
+            const double band = peak * 0.125;
+            int state = 0;
+            for (int i = w0; i < w1; i++)
+            {   const double v = oL[i];
+                if (state <= 0 && v > band)  { state = 1; ++zc; }
+                else if (state >= 0 && v < -band) { state = -1; ++zc; } }
+            return (double)zc * 44100.0 / (double)(w1 - w0) / 2.0; };
         double semis = 999.0;
         clap_event_note on{};
         on.header.type = CLAP_EVENT_NOTE_ON; on.header.size = sizeof on;
