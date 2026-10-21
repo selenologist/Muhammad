@@ -14,6 +14,17 @@
 #include <cstdlib>
 #include <cstring>
 
+// env control with a minGW shim: no setenv/unsetenv there. An EMPTY value is
+// equivalent by contract - p5fac::load() treats set-but-empty as unset on
+// every platform.
+#ifdef _WIN32
+static void setEnv(const char *k, const char *v) { _putenv_s(k, v); }
+static void clrEnv(const char *k)                 { _putenv_s(k, ""); }
+#else
+static void setEnv(const char *k, const char *v)  { setenv(k, v, 1); }
+static void clrEnv(const char *k)                 { unsetenv(k); }
+#endif
+
 static void writeBlob(const char *path, uint32_t rec, uint32_t n,
                       long payload_bytes, const char *magic, uint8_t fill)
 {   FILE *f = fopen(path, "wb");
@@ -28,7 +39,7 @@ int main(int argc, char **argv)
     int fails = 0;
     const int hostile = argc > 1 && !std::strcmp(argv[1], "hostile");
     // ---- A: authoritative miss -> graceful emptiness ----
-    setenv("P5_FACTORY", "/nonexistent/muhammad-factory.p5fac", 1);
+    setEnv("P5_FACTORY", "/nonexistent/muhammad-factory.p5fac");
     if (p5fac::load()) { std::printf("stripped: load() unexpectedly true\n"); fails++; }
     if (p5fac::loaded() || p5fac::count() != 0)
     { std::printf("stripped: count != 0 (%d)\n", p5fac::count()); fails++; }
@@ -53,7 +64,7 @@ int main(int argc, char **argv)
     {   // attacker controls the file: shapes must be REJECTED, content must
         // be inert data. No attacker number ever sizes an allocation or picks
         // a read offset - tryFile reads a fixed 26,612-byte layout into .bss.
-        setenv("P5_FACTORY", "p5fac_probe.tmp", 1);
+        setEnv("P5_FACTORY", "p5fac_probe.tmp");
         struct { const char *magic; uint32_t rec, n; long payload; uint8_t fill; } bad[] = {
             { "P5FD", 133, 200, 133*200, 0xFF },          // wrong magic
             { "P5FC", 133, 200, 133*199, 0 },             // truncated body
@@ -95,7 +106,7 @@ int main(int argc, char **argv)
     }
 
     // ---- B: sidecar present (module-dir candidate, next to this binary) ----
-    unsetenv("P5_FACTORY");
+    clrEnv("P5_FACTORY");
     if (!p5fac::load() || p5fac::count() != 200)
     {   std::printf("present: sidecar not found beside the test binary (build-dir copy missing?)\n");
         return 1; }
