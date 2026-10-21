@@ -96,11 +96,9 @@ jobs:
   tsan:
     needs: version
     runs-on: ubuntu-22.04
-    needs: version
-    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: cmake -B build -DMUHAMMAD_TSAN=ON -DMUHAMMAD_GUI=OFF -DCMAKE_BUILD_TYPE=Release
+      - run: cmake -B build -DMUHAMMAD_TSAN=ON -DMUHAMMAD_GUI=OFF -DCMAKE_BUILD_TYPE=Debug
       - run: cmake --build build --target test_threadsan -j"$(nproc)"
       - name: "ThreadSanitizer stress (audio thread runs process+flush+reset; main runs the panel)"
         # setarch -R: some kernels lay out mmap() where GCC's libtsan shadow
@@ -119,7 +117,9 @@ jobs:
           cmake -B build -DCMAKE_BUILD_TYPE=Debug -DMUHAMMAD_GUI=OFF
           -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -O1"
           -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
-      - run: cmake --build build -j"$(nproc)" 2>&1 | tail -5 || true
+      - run: |
+          cmake --build build -j"$(nproc)" > build.log 2>&1 || { tail -40 build.log; exit 1; }
+          tail -3 build.log
       - name: state/preset parsers + engine under ASan+UBSan
         working-directory: build
         run: |
@@ -196,7 +196,7 @@ jobs:
           path: muhammad-${{ needs.version.outputs.ver }}-macos-wrappers.tar.gz
 
   release:
-    needs: [version, linux, windows, windows-wrappers, macos, tsan]   # B14: never ship a tag TSan red-flagged
+    needs: [version, linux, windows, windows-wrappers, macos, tsan, asan-ubsan]   # B14: never ship a tag the sanitizers red-flagged
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     permissions:
@@ -205,30 +205,26 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: assets
-      - name: "stage wrapper tars (jobs upload tarballs: modes survive)"
+      - name: "stage tar artifacts (jobs upload tarballs: modes survive)"
         run: |
-          for t in assets/*-wrappers-tar/*.tar.gz; do
+          for t in assets/*-wrappers-tar/*.tar.gz assets/*-universal-tar/*.tar.gz; do
             [ -f "$t" ] || continue
             cp "$t" .
           done
       - name: stage claps under unique names
-        # Two upload shapes to flatten: linux/windows upload the FILE
-        # muhammad.clap (artifact dir contains muhammad.clap); macOS uploads
-        # the BUNDLE DIRECTORY dist/muhammad.clap, and upload-artifact v4
-        # roots entries at the common ancestor - so the download contains
-        # Contents/... DIRECTLY and there is no inner muhammad.clap (this is
-        # what broke the first v0.1.2 run). Release assets must be files, so
-        # the bundle ships as .clap.zip containing muhammad.clap/.
-        # Flatten every form to a basename-unique asset: softprops keys
-        # assets by basename (three identical muhammad.clap silently
-        # clobbered each other before eea68ca).
+        # linux/windows upload the FILE muhammad.clap (artifact dir contains
+        # it); macOS ships the BUNDLE as a .clap.tar.gz staged above (tar
+        # preserves Contents/ modes - upload-artifact's zip flattening did
+        # not, review B4). Flatten the file forms to basename-unique assets:
+        # softprops keys assets by basename (three identical muhammad.clap
+        # silently clobbered each other before eea68ca).
         run: |
           for d in assets/*.clap; do
             [ -d "$d" ] || continue
             name=$(basename "$d")                        # muhammad-VER-PLATFORM.clap
             if [ -f "$d/muhammad.clap" ]; then           # linux / windows: one file
               mv "$d/muhammad.clap" "./$name"
-            elif [ -d "$d/Contents" ]; then              # macOS: the dir IS the bundle
+            elif [ -d "$d/Contents" ]; then              # legacy bundle shape (pre-tar runs)
               mv "$d" "./muhammad.clap"
               zip -qr "./$name.zip" "muhammad.clap"
               rm -rf "./muhammad.clap"
@@ -243,7 +239,8 @@ jobs:
           files: |
             muhammad-*.clap
             muhammad-*.clap.zip
-            muhammad-*-wrappers.zip
+            muhammad-*.clap.tar.gz
+            muhammad-*-wrappers.tar.gz
           body: >
             Muhammad ${{ needs.version.outputs.ver }} — CLAP for linux-x64,
             win-x64 and macos-universal, plus wrapper bundles (VST3 on all
