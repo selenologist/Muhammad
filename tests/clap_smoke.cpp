@@ -79,8 +79,9 @@ int main(int argc, char **argv)
 
         auto otry = [](const clap_output_events_t *, const clap_event_header_t *) -> bool { return true; };
         clap_output_events_t odummy{ nullptr, otry };
-        auto run2 = [&](const std::vector<const clap_event_header_t *> &first)->double
-        {   long zc = 0; const int blocks = 64;
+        struct Freq { double hzBand, hzAC, early, late; };
+        auto run2 = [&](const std::vector<const clap_event_header_t *> &first)->Freq
+        {   const int blocks = 64;
             for (int b = 0; b < blocks; b++)
             {   EventList due0;
                 if (b == 0) for (auto *e : first) due0.evs.push_back(e);
@@ -89,24 +90,33 @@ int main(int argc, char **argv)
                 clap_process_t pr{}; pr.frames_count = 512;
                 pr.audio_outputs = &oab; pr.audio_outputs_count = 1;
                 pr.in_events = &in0; pr.out_events = &odummy;
-                oct->process(oct, &pr);
-            }
-            // band-hysteresis crossing count (Schmitt trigger at +/-peak/8):
-            // a raw sign-change counter reads ANY sub-band ripple as pitch -
-            // the mac leg (no MXCSR FTZ to speak of on arm64: the x86 denormal
-            // flush is a compile-guarded #ifdef) produced 281.7/346.3 Hz from
-            // one deterministic render. Band crossings are the professional
-            // definition of zero-crossing frequency and ignore the floor.
-            double peak = 0;
+                oct->process(oct, &pr); }
+            Freq out{0.0, 0.0, 0.0, 0.0};
             const int w0 = 16 * 512, w1 = 64 * 512;
-            for (int i = w0; i < w1; i++) { double a = std::fabs(oL[i]); if (a > peak) peak = a; }
-            const double band = peak * 0.125;
-            int state = 0;
-            for (int i = w0; i < w1; i++)
-            {   const double v = oL[i];
-                if (state <= 0 && v > band)  { state = 1; ++zc; }
-                else if (state >= 0 && v < -band) { state = -1; ++zc; } }
-            return (double)zc * 44100.0 / (double)(w1 - w0) / 2.0; };
+            {   long zc = 0; double peak = 0;
+                for (int i = w0; i < w1; i++) { double a = std::fabs(oL[i]); if (a > peak) peak = a; }
+                const double band = peak * 0.125;
+                int state = 0;
+                for (int i = w0; i < w1; i++)
+                {   const double v = oL[i];
+                    if (state <= 0 && v > band)  { state = 1; ++zc; }
+                    else if (state >= 0 && v < -band) { state = -1; ++zc; } }
+                out.hzBand = (double)zc * 44100.0 / (double)(w1 - w0) / 2.0; }
+            {   static double d[12288];
+                for (int i = 0; i < 12288; i++) d[i] = oL[w0 + i];
+                double best = -1e30; int lag0 = 0;
+                for (int lag = 40; lag <= 900; lag++)
+                {   double s1 = 0, n1 = 0, n2 = 0;
+                    for (int i = 0; i + lag < 12288; i++)
+                    {   s1 += d[i] * d[i + lag]; n1 += d[i] * d[i]; n2 += d[i + lag] * d[i + lag]; }
+                    const double c = s1 / (std::sqrt(n1 * n2) + 1e-300);
+                    if (c > best) { best = c; lag0 = lag; } }
+                out.hzAC = 44100.0 / (double)lag0; }
+            {   double e = 0, l = 0;
+                for (int i = w0; i < w0 + 4096; i++) e += oL[i] * oL[i];
+                for (int i = w1 - 4096; i < w1; i++) l += oL[i] * oL[i];
+                out.early = std::sqrt(e / 4096.0); out.late = std::sqrt(l / 4096.0); }
+            return out; };
         double semis = 999.0;
         clap_event_note on{};
         on.header.type = CLAP_EVENT_NOTE_ON; on.header.size = sizeof on;
@@ -140,7 +150,12 @@ int main(int argc, char **argv)
                 e.channel = -1; e.key = -1; e.note_id = -1; e.port_index = -1;
                 ph.push_back(&e.header); }
             run2(ph);
-            double f0 = run2({ &on.header });
+            Freq m0 = run2({ &on.header });
+            static float keepL[64 * 512];
+            std::memcpy(keepL, oL, sizeof keepL);
+            double f0 = m0.hzBand;
+            std::printf("clap: gate diag f0: band=%.1f ac=%.1f rms %.5f->%.5f\n",
+                        m0.hzBand, m0.hzAC, m0.early, m0.late);
             clap_event_param_value pv{};
             pv.header.type = CLAP_EVENT_PARAM_VALUE; pv.header.size = sizeof pv;
             pv.header.space_id = CLAP_CORE_EVENT_SPACE_ID;
@@ -150,10 +165,15 @@ int main(int argc, char **argv)
             ck.header.type = CLAP_EVENT_NOTE_CHOKE; ck.header.size = sizeof ck;
             ck.header.space_id = CLAP_CORE_EVENT_SPACE_ID;
             ck.port_index = -1; ck.channel = 0; ck.key = 60; ck.note_id = 60;
-            double f1 = run2({ &pv.header, &ck.header, &on.header });
-            semis = 12.0 * std::log2(f1 / f0);
-            std::printf("clap: coarse bottom %.1f Hz vs keyboard %.1f Hz => %+0.2f st\n",
-                        f1, f0, semis);
+            std::memcpy(oL, keepL, sizeof keepL);          // run2 window is 32k: restore
+            Freq m1 = run2({ &pv.header, &ck.header, &on.header });
+            std::printf("clap: gate diag f1: band=%.1f ac=%.1f rms %.5f->%.5f\n",
+                        m1.hzBand, m1.hzAC, m1.early, m1.late);
+            const double bandSemis = 12.0 * std::log2(m1.hzBand / m0.hzBand);
+            const double acSemis   = 12.0 * std::log2(m1.hzAC / m0.hzAC);
+            semis = bandSemis;
+            std::printf("clap: coarse bottom band %.2f st, autocorr %.2f st (want -12)\n",
+                        bandSemis, acSemis);
         }
         check("OSC A COARSE bottom == one octave down",
               coarseId >= 0 && std::fabs(semis + 12.0) < 0.7);
@@ -190,13 +210,16 @@ int main(int argc, char **argv)
             p0.header.space_id = CLAP_CORE_EVENT_SPACE_ID;
             p0.param_id = coarseId; p0.value = 0.0;
             p0.channel = -1; p0.key = -1; p0.note_id = -1; p0.port_index = -1;
-            double fb = run2({ &p0.header, &on.header });
+            Freq mb = run2({ &p0.header, &on.header });
             back = p0; back.value = 24.0;
             clap_event_note ck2 = ck;
-            double fk = run2({ &back.header, &ck2.header, &on.header });
-            const double semis2 = 12.0 * std::log2(fb / fk);
-            std::printf("clap: poisoned-load bottom %.1f Hz vs keyboard %.1f Hz => %+0.2f st (load=%d)\n",
-                        fb, fk, semis2, (int)loaded);
+            Freq mk = run2({ &back.header, &ck2.header, &on.header });
+            const double semis2 = 12.0 * std::log2(mb.hzBand / mk.hzBand);
+            std::printf("clap: poisoned-load bottom band %.1f/ac %.1f  keyboard band %.1f/ac %.1f  => band %+0.2f st ac %+0.2f st (load=%d)\n",
+                        mb.hzBand, mb.hzAC, mk.hzBand, mk.hzAC, semis2,
+                        12.0 * std::log2(mb.hzAC / mk.hzAC), (int)loaded);
+            std::printf("clap: poisoned-load rms f1 %.5f->%.5f f0 %.5f->%.5f\n",
+                        mb.early, mb.late, mk.early, mk.late);
             check("legacy all-zero trim blob loads neutral (octave kept)",
                   loaded && std::fabs(semis2 + 12.0) < 0.7);
         }
