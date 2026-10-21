@@ -14,9 +14,19 @@
 #include <cstdlib>
 #include <cstring>
 
-int main()
+static void writeBlob(const char *path, uint32_t rec, uint32_t n,
+                      long payload_bytes, const char *magic, uint8_t fill)
+{   FILE *f = fopen(path, "wb");
+    fwrite(magic, 1, 4, f);
+    fwrite(&rec, 4, 1, f); fwrite(&n, 4, 1, f);
+    for (long i = 0; i < payload_bytes; i++) fputc((int)fill, f);
+    fclose(f);
+}
+
+int main(int argc, char **argv)
 {
     int fails = 0;
+    const int hostile = argc > 1 && !std::strcmp(argv[1], "hostile");
     // ---- A: authoritative miss -> graceful emptiness ----
     setenv("P5_FACTORY", "/nonexistent/muhammad-factory.p5fac", 1);
     if (p5fac::load()) { std::printf("stripped: load() unexpectedly true\n"); fails++; }
@@ -38,6 +48,51 @@ int main()
         (void)init;
     }
     std::printf("stripped mode: graceful %s\n", fails ? "FAIL" : "ok");
+
+    if (hostile)
+    {   // attacker controls the file: shapes must be REJECTED, content must
+        // be inert data. No attacker number ever sizes an allocation or picks
+        // a read offset - tryFile reads a fixed 26,612-byte layout into .bss.
+        setenv("P5_FACTORY", "p5fac_probe.tmp", 1);
+        struct { const char *magic; uint32_t rec, n; long payload; uint8_t fill; } bad[] = {
+            { "P5FD", 133, 200, 133*200, 0xFF },          // wrong magic
+            { "P5FC", 133, 200, 133*199, 0 },             // truncated body
+            { "P5FC", 133, 0xFFFFFFFFu, 0, 0 },           // absurd count (pre-read reject)
+            { "P5FC", 4, 200, 0, 0 },                     // absurd record size
+        };
+        for (auto &b : bad)
+        {   writeBlob("p5fac_probe.tmp", b.rec, b.n, b.payload, b.magic, b.fill);
+            if (p5fac::load() || p5fac::count() != 0)
+            { std::printf("hostile: shape accepted (%s %u %u)\n", b.magic, b.rec, b.n); fails++; } }
+        // fully hostile CONTENT in a VALID shape: every byte 0xFF is outside
+        // every wire field's legal set. Loader accepts (data, not code); the
+        // engine must treat it like any SysEx byte stream: bounded render.
+        writeBlob("p5fac_probe.tmp", 133, 200, 133*200, "P5FC", 0xFF);
+        if (!p5fac::load() || p5fac::count() != 200)
+        { std::printf("hostile: 0xFF-shaped blob not accepted\n"); return 1; }
+        {   p5::Engine e; e.activate(44100.0);
+            for (uint32_t prog = 0; prog < 200; prog++)
+            {   e.loadFactory(prog);
+                e.noteOn(36, 127, 0); e.noteOn(60, 100, 0); e.noteOn(95, 127, 0);
+                int32_t out[32];
+                for (int i = 0; i < 1024; i++)
+                {   e.process(out, 32);
+                    for (int j = 0; j < 32; j++)
+                        if (out[j] < -200000000 || out[j] > 200000000)
+                        { std::printf("hostile: prog %u sample %+d runaway\n", prog, out[j]);
+                          prog = 200; break; } }
+                e.noteOff(36); e.noteOff(60); e.noteOff(95); } }
+        {   char nm[64]; bool over = false;
+            for (uint32_t i = 1; i <= 200; i++)
+            {   p5::Engine::patchNameAt(i, nm);
+                if (std::strlen(nm) > 20) { std::printf("hostile: name overflow @%u\n", i); over = true; break; } }
+            if (over) fails++;
+            p5::Engine::patchNameAt(1, nm);
+            if (nm[0] != '\0') { std::printf("hostile: 0xFF name not all-space ('%s')\n", nm); fails++; } }
+        remove("p5fac_probe.tmp");
+        std::printf("hostile blob: %s\n", fails ? "FAILED" : "rejected shapes, inert content");
+        return fails ? 1 : 0;
+    }
 
     // ---- B: sidecar present (module-dir candidate, next to this binary) ----
     unsetenv("P5_FACTORY");

@@ -334,6 +334,7 @@ if(MATH_LIBRARY)
     target_link_libraries(test_factory PRIVATE ${MATH_LIBRARY})
 endif()
 add_test(NAME factory COMMAND test_factory)
+add_test(NAME factory_hostile COMMAND test_factory hostile)
 
 add_executable(test_mpe tests/test_mpe.cpp ${ENGINE_SOURCES} src/p5_store.cpp)
 target_link_libraries(test_mpe PRIVATE p5_engine)

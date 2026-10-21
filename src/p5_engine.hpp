@@ -79,7 +79,7 @@ public:
     static void patchNameAt(uint32_t factoryIndex, char *name) {   // index 0 = INIT
         if (factoryIndex == 0) { std::snprintf(name, P5_NAME_LEN + 1, "Peace Be Upon Him"); return; }
         if (!p5fac::loaded() || (int)(factoryIndex - 1) >= p5fac::count())
-        { std::snprintf(name, P5_NAME_LEN + 1, "(factory bank absent)"); return; }
+        { std::snprintf(name, P5_NAME_LEN + 1, "(factory absent)"); return; }
         Patch p;
         std::memset(&p, 0, sizeof p);
         std::memcpy(p.raw, p5fac::raw(factoryIndex - 1), WIRE_SIZE);

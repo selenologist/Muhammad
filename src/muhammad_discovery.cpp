@@ -82,7 +82,7 @@ bool provider_get_metadata_impl(uint32_t location_kind, const char *location,
     for (uint32_t i = 0; i < presetCount(); i++) {
         char name[33];
         p5::Engine::patchNameAt(i, name);
-        char key[8];
+        char key[16];   // runtime bound (presetCount) - gcc can no longer prove 8 fits
         std::snprintf(key, sizeof key, "%u", i);
         if (!receiver->begin_preset(receiver, name, key)) return false;
         clap_universal_plugin_id_t upid{};
